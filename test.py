@@ -15,10 +15,8 @@ def test1(arg1=None, arg2=True, arg3=False):
 
 def test2(arg, arg2):
   for x in [item[0] for item in arg if item[1]]:
-# comments don't have to follow indentation
     yield x
   for x, y in {item[0]: item[1] for item in arg2 if item[2]}.iteritems():
-# comments don't have to follow indentation
     yield (x, y)
 
 def test3(arg1, *args, kwarg1=False, **kwargs):

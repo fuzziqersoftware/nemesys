@@ -15,11 +15,15 @@ public:
   SourceFile(char* filename);
   ~SourceFile();
 
-  const char* data();
-  const char* line(int line_num);
-  const char* filename();
-  int filesize();
-  int num_lines();
+  const char* data() const;
+  const char* line(int line_num) const;
+  int line_offset(int line_num) const;
+  int line_end_offset(int line_num) const;
+  const char* filename() const;
+  int filesize() const;
+  int num_lines() const;
+
+  int line_number_of_offset(int offset) const;
 
 private:
   char* _filename;

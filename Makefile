@@ -1,6 +1,6 @@
 CC=g++
-OBJECTS=main.o source_file.o
-CFLAGS=-g -Wall
+OBJECTS=main.o lex.o source_file.o
+CPPFLAGS=-g -Wall
 LDFLAGS=
 EXECUTABLE=nemesys
 
