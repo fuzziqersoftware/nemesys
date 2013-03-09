@@ -254,9 +254,7 @@ static int get_line_indent(const char* str) {
 }
 
 void tokenize_string(const char* data, TokenizationResult* result) {
-  // tokenizes the given string into a stream of InputToken objects. if a part
-  // of the string can't be tokenized, returns the position where tokenization
-  // failed. on success, returns -1.
+  // tokenizes the given string into a stream of InputToken objects.
 
   result->tokens.clear();
   result->error = NoError;
@@ -517,5 +515,9 @@ void tokenize_string(const char* data, TokenizationResult* result) {
 
     delete token;
     token = NULL;
+  }
+  while (indent_levels.back() > 0) {
+    indent_levels.pop_back();
+    result->tokens.push_back(InputToken(_Unindent, "", 0, 0, position, 0));
   }
 }

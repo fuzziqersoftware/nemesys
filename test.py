@@ -150,14 +150,14 @@ this_not_in_2 = lambda x,y: x not in y
 
 not_equal = lambda x, y: x <> y # :(
 
+# multiline \
+comment \
+with \
+backslashes
+
 def test_tuples():
   assert list((10, 20, 30)) == [10, 20, 30, 40, 50][:3]
   assert list((10, 20, 30)) == [10, 20, 30][:]
   assert list((10, 20, 30)) == [1, 10, 20, 30][1:4]
   assert list((10, 20, 30)) == [1, 10, 20, 30][-3:]
   assert {1: 2, 3: 4} == {3: 4, 1: 2}
-
-# multiline \
-comment \
-with \
-backslashes
