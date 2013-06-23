@@ -79,7 +79,7 @@ int SourceFile::line_number_of_offset(int offset) const {
   // TODO: binary search or something better than what's currently here
   int line_num = 0;
   for (int x = 0; x < this->_line_begin_offset.size() - 1; x++)
-    if (this->_line_begin_offset[line_num + 1] < offset)
+    if (this->_line_begin_offset[line_num + 1] <= offset)
       line_num++;
   return line_num;
 }

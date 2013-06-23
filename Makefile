@@ -1,5 +1,5 @@
 CC=g++
-OBJECTS=main.o lex.o source_file.o
+OBJECTS=main.o lex.o ast.o parse.o source_file.o
 CPPFLAGS=-g -Wall
 LDFLAGS=
 EXECUTABLE=nemesys

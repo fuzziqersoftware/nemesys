@@ -1,3 +1,4 @@
+#include <set>
 #include <string>
 
 #include "lex.hh"
@@ -27,9 +28,11 @@ static const char* token_names[] = {
   "If",
   "Else",
   "Elif",
+  "With",
   "While",
   "For",
   "In",
+  "NotIn",
   "Not",
   "And",
   "Or",
@@ -37,13 +40,13 @@ static const char* token_names[] = {
   "Except",
   "Finally",
   "Lambda",
+  "_Colon",
   "Class",
   "Yield",
   "_At",
   "_OpenParen",
   "_CloseParen",
   "_Newline",
-  "_Colon",
   "_Equals",
   "_Comma",
   "_Asterisk",
@@ -74,6 +77,7 @@ static const char* token_names[] = {
   "_LessOrEqual",
   "_NotEqual",
   "Is",
+  "IsNot",
   "_Or",
   "_Xor",
   "_And",
@@ -86,10 +90,11 @@ static const char* token_names[] = {
   "_CloseBrace",
   "_Backtick",
   "_BackslashNewline",
+  "_InvalidToken",
 };
 
 static const char* error_names[] = {
-  "NoError",
+  "NoLexError",
   "UnmatchedParenthesis",
   "UnmatchedBrace",
   "UnmatchedBracket",
@@ -97,6 +102,7 @@ static const char* error_names[] = {
   "BadToken",
   "UnterminatedStringConstant",
   "BadScientificNotation",
+  "IncompleteLexing",
 };
 
 struct StaticTokenString {
@@ -122,6 +128,7 @@ StaticTokenString wordy_static_tokens[] = {
   {If,                  "if"},
   {Else,                "else"},
   {Elif,                "elif"},
+  {With,                "with"},
   {While,               "while"},
   {For,                 "for"},
   {In,                  "in"},
@@ -196,10 +203,37 @@ InputToken::InputToken(TokenType type, const string& string_data,
 
 InputToken::~InputToken() { }
 
+bool is_open_bracket_token(TokenType type) {
+  return (type == _OpenParen || type == _OpenBrace || type == _OpenBracket || type == _Indent || type == Lambda);
+}
+
+bool is_close_bracket_token(TokenType type) {
+  return (type == _CloseParen || type == _CloseBrace || type == _CloseBracket || type == _Unindent || type == _Colon);
+}
+
+bool token_requires_opener(TokenType type) {
+  return (type == _CloseParen || type == _CloseBrace || type == _CloseBracket || type == _Unindent);
+}
+
+TokenType get_closing_bracket_token_type(TokenType type) {
+  return (TokenType)((int)type + 1);
+}
+
 bool is_static_token(TokenType type) {
   if (type == _Dynamic || type == _StringConstant || type == _Integer || type == _Float || type == _Indent || type == _Unindent || type == _Comment)
     return false;
   return true;
+}
+
+bool is_operator_token(TokenType type) {
+  static TokenType operator_tokens_array[] = {
+    In, NotIn, Not, And, Or, _Asterisk, _DoubleAsterisk, _LeftShift,
+    _RightShift, _Dot, _Plus, _Minus, _Slash, _LessThan, _GreaterThan,
+    _Equality, _GreaterOrEqual, _LessOrEqual, _NotEqual, Is, IsNot, _Or, _Xor,
+    _And, _Percent, _DoubleSlash, _Tilde};
+  static set<TokenType> operator_tokens(operator_tokens_array, operator_tokens_array + (sizeof(operator_tokens_array) / sizeof(operator_tokens_array[0])));
+
+  return (operator_tokens.count(type) > 0);
 }
 
 const char* name_for_token_type(TokenType type) {
@@ -253,11 +287,11 @@ static int get_line_indent(const char* str) {
   return indent;
 }
 
-void tokenize_string(const char* data, TokenizationResult* result) {
+void tokenize_string(const char* data, TokenStream* result) {
   // tokenizes the given string into a stream of InputToken objects.
 
   result->tokens.clear();
-  result->error = NoError;
+  result->error = NoLexError;
   result->failure_offset = -1;
 
   vector<int> indent_levels;
@@ -336,10 +370,7 @@ void tokenize_string(const char* data, TokenizationResult* result) {
       bool float_match = false;
       bool hex_match = false;
 
-      // check for floats with leading .: [+-]?.[0-9]+([eE][+-]?[0-9]+)?
-      if (match[0] == '+' || match[0] == '-') {
-        match++;
-      }
+      // check for floats with leading .: .[0-9]+([eE][+-]?[0-9]+)?
       if (match[0] == '.' && is_digit(match[1])) {
         match++;
         while (is_digit(match[0]))
@@ -360,12 +391,9 @@ void tokenize_string(const char* data, TokenizationResult* result) {
         float_match = true;
       }
 
-      // check for floats: [+-]?[0-9]+.[0-9]*([eE][+-]?[0-9]+)?
+      // check for floats: [0-9]+.[0-9]*([eE][+-]?[0-9]+)?
       // also checks for ints; if it doesn't have a . or an e[] then it's an int
       match = str;
-      if (match[0] == '+' || match[0] == '-') {
-        match++;
-      }
       if (is_digit(match[0])) {
         match++;
         while (is_digit(match[0]))
@@ -393,11 +421,8 @@ void tokenize_string(const char* data, TokenizationResult* result) {
         match_length = match - str;
       }
 
-      // check for hexadecimal: [+-]?0x[0-9A-Fa-f]+
+      // check for hexadecimal: 0x[0-9A-Fa-f]+
       match = str;
-      if (match[0] == '+' || match[0] == '-') {
-        match++;
-      }
       if (match[0] == '0' && (match[1] == 'x' || match[1] == 'X') && is_hex_digit(match[2])) {
         match += 3;
         while (is_hex_digit(match[0]))
@@ -516,7 +541,54 @@ void tokenize_string(const char* data, TokenizationResult* result) {
     delete token;
     token = NULL;
   }
-  while (indent_levels.back() > 0) {
+
+  // postprocessing steps
+
+  // delete comments
+  for (int x = 0; x < result->tokens.size(); x++) {
+    if (result->tokens[x].type == _Comment) {
+      if (x == result->tokens.size() - 1)
+        result->tokens.pop_back(); // the last token is a comment; delete it
+      else {
+        if (result->tokens[x + 1].type != _Newline) {
+          result->error = IncompleteLexing;
+          result->failure_offset = x;
+          return;
+        }
+        result->tokens.erase(result->tokens.begin() + x, result->tokens.begin() + x + 1);
+        x--;
+      }
+    }
+  }
+
+  // remove leading newlines
+  while (result->tokens.size() > 0 && result->tokens[0].type == _Newline)
+    result->tokens.erase(result->tokens.begin());
+
+  // replace composite tokens, duplicate newlines, and semicolons
+  for (int x = 0; x < result->tokens.size() - 1; x++) {
+    if (result->tokens[x].type == Is && result->tokens[x + 1].type == Not) {
+      result->tokens.erase(result->tokens.begin() + x, result->tokens.begin() + x + 1);
+      result->tokens[x] = InputToken(IsNot, "", 0, 0, x, 0);
+    } else if (result->tokens[x].type == Not && result->tokens[x + 1].type == In) {
+      result->tokens.erase(result->tokens.begin() + x, result->tokens.begin() + x + 1);
+      result->tokens[x] = InputToken(NotIn, "", 0, 0, x, 0);
+    } else if (result->tokens[x].type == _Semicolon) {
+      result->tokens[x].type = _Newline;
+      x--;
+    } else if (result->tokens[x].type == _Newline && result->tokens[x + 1].type == _Newline) {
+      result->tokens.erase(result->tokens.begin() + x, result->tokens.begin() + x + 1);
+      x--;
+    }
+  }
+
+  // make sure it ends with a newline
+  if (result->tokens.size() == 0 || result->tokens.back().type != _Newline) {
+    result->tokens.push_back(InputToken(_Newline, "", 0, 0, result->tokens.size(), 0));
+  }
+
+  // close any indents that may be open
+    while (indent_levels.back() > 0) {
     indent_levels.pop_back();
     result->tokens.push_back(InputToken(_Unindent, "", 0, 0, position, 0));
   }

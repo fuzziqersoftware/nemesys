@@ -30,9 +30,11 @@ enum TokenType {
   If,
   Else,
   Elif,
+  With,
   While,
   For,
   In,
+  NotIn,
   Not,
   And,
   Or,
@@ -40,13 +42,13 @@ enum TokenType {
   Except,
   Finally,
   Lambda,
+  _Colon,
   Class,
   Yield,
   _At,
   _OpenParen,
   _CloseParen, // must be _OpenParen + 1
   _Newline,
-  _Colon,
   _Equals,
   _Comma,
   _Asterisk,
@@ -77,6 +79,7 @@ enum TokenType {
   _LessOrEqual,
   _NotEqual,
   Is,
+  IsNot,
   _Or,
   _Xor,
   _And,
@@ -89,6 +92,7 @@ enum TokenType {
   _CloseBrace, // must be _OpenBrace + 1
   _Backtick,
   _BackslashNewline, // these are eaten up by the lexer (not produced in output)
+  _InvalidToken, // these are guaranteed to never be produced by the lexer
 };
 
 struct InputToken {
@@ -107,7 +111,7 @@ struct InputToken {
 };
 
 enum TokenizationError {
-  NoError = 0,
+  NoLexError = 0,
   UnmatchedParenthesis,
   UnmatchedBrace,
   UnmatchedBracket,
@@ -115,17 +119,23 @@ enum TokenizationError {
   BadToken,
   UnterminatedStringConstant,
   BadScientificNotation,
+  IncompleteLexing,
 };
 
-struct TokenizationResult {
+struct TokenStream {
   vector<InputToken> tokens;
   TokenizationError error;
   int failure_offset;
 };
 
+bool is_open_bracket_token(TokenType);
+bool is_close_bracket_token(TokenType);
+bool token_requires_opener(TokenType);
+TokenType get_closing_bracket_token_type(TokenType);
 bool is_static_token(TokenType);
+bool is_operator_token(TokenType);
 const char* name_for_token_type(TokenType);
 const char* name_for_tokenization_error(TokenizationError);
-void tokenize_string(const char*, TokenizationResult*);
+void tokenize_string(const char*, TokenStream*);
 
 #endif // _LEX_HH

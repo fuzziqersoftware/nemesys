@@ -1,27 +1,30 @@
 # TODO: multiple decorators on function and on class
 
 # TODO: dotted imports
-import sys
-from os import path as os_path
+import sys, traceback
+import lol, omg as wtf, m8
+from os import path, kill as os_path, os_kill
 from gc import *
+
+a = -10
 
 def test1():
   pass
 
 def test1(arg1=None, arg2=True, arg3=False):
   # lol, a comment
-  print "arg1 is %s" % arg1 # lol, another comment
-  print "arg2 is %s and arg3 is %s" % (arg2, arg3)
+  print "arg1 is %s; " % arg1, # lol, another comment
+  print "arg2 is %s and arg3 is %s" % (arg2, arg3), "ok that's all"
 
 def test2(arg, arg2):
-  for x in [item[0] for item in arg if item[1]]:
-    yield x
+  for x in [a for a, b in arg if b]:
+    yield (x, y, z)
   for x, y in {item[0]: item[1] for item in arg2 if item[2]}.iteritems():
     yield (x, y)
 
 def test3(arg1, *args, kwarg1=False, **kwargs):
   """Prints args and kwargs to stdout and stderr."""
-  print 'arg1, kwarg1 = %s, %s', arg1, kwarg1
+  print 'arg1, kwarg1 = %s, %s' % (arg1, kwarg1)
   print 'args', args, kwargs
   print >> sys.stderr, "args:", args, kwargs
 
@@ -54,6 +57,7 @@ def testmath(x):
   yield x
   x //= 10
   yield x
+  return -2**-2
 
 def testloops(num):
   for x in range(num):
@@ -68,7 +72,7 @@ def testloops(num):
   return x * 2 if x < 5 else x * 3
 
 global_var = 0
-def test_keywords()
+def test_keywords():
   global global_var
   exec 'global_var = random.randint(1000)'
   iterations = 0
@@ -105,6 +109,10 @@ def test_try():
       print '3', e
   except (NameError, ImportError) as e:
         print '4', e
+  except KeyError:
+      raise
+  except:
+      yield
   else:
           print 'no exception'
   finally:
@@ -121,6 +129,7 @@ def memo(func):
 
 @memo
 class with_class:
+  hax = 9
   def __init__(self, lol):
     self.lol = lol
   def __enter__(self):
@@ -128,11 +137,21 @@ class with_class:
   def __exit__(self, t, v, tb):
     print '__exit__', self.lol, t, v, tb
 
+class omg(object):
+  pass
+
+class lol(object, omg, with_class):
+  x = 3
+
 def test_with():
   with with_class(31) as item:
     print item.lol
   with with_class(31) as item:
     assert False
+  with with_class(32), \
+      with_class(94) as omghax, \
+      lol(with_class):
+    pass
 
 test_lambda = lambda x, y: x + 3 * y['number']
 test_lambda_one = lambda y: 3 * y['number']
@@ -150,10 +169,30 @@ this_not_in_2 = lambda x,y: x not in y
 
 not_equal = lambda x, y: x <> y # :(
 
+lambda_with_defaults = lambda x, y=0: x + y * 4
+
 # multiline \
 comment \
 with \
 backslashes
+
+long_list_definition = [
+  1,
+  2,
+  3,
+  4,
+]
+
+long_dict_definition = {
+  1: 'a',
+  2: lambda x: x * 2,
+  3: 5,
+  4: None,
+}
+
+empty_tuple = ()
+empty_list = []
+empty_dict = {}
 
 def test_tuples():
   assert list((10, 20, 30)) == [10, 20, 30, 40, 50][:3]
@@ -161,3 +200,9 @@ def test_tuples():
   assert list((10, 20, 30)) == [1, 10, 20, 30][1:4]
   assert list((10, 20, 30)) == [1, 10, 20, 30][-3:]
   assert {1: 2, 3: 4} == {3: 4, 1: 2}
+  if False:
+    pass
+
+if __name__ == '__main__':
+  print test_tuples
+  print test_tuples()
