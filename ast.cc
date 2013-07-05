@@ -8,6 +8,7 @@ using namespace std;
 using namespace std::tr1;
 
 #include "ast.hh"
+#include "ast_visitor.hh"
 
 
 
@@ -57,6 +58,10 @@ string UnpackingTuple::str() const {
   return "(" + comma_str_list(objects) + ")";
 }
 
+void UnpackingTuple::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // UnpackingVariable
 
 string UnpackingVariable::str() const {
@@ -64,6 +69,10 @@ string UnpackingVariable::str() const {
 }
 
 UnpackingVariable::UnpackingVariable(string _name) : name(_name) {}
+
+void UnpackingVariable::accept(ASTVisitor* v) {
+  v->visit(this);
+}
 
 // Expression
 
@@ -98,6 +107,10 @@ string ArgumentDefinition::str() const {
 ArgumentDefinition::ArgumentDefinition(string _name, shared_ptr<Expression> _default_value, ArgumentMode _mode) :
     name(_name), default_value(_default_value), mode(_mode) {}
 
+void ArgumentDefinition::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // UnaryOperation
 
 const char* unary_operator_names[] = {
@@ -118,6 +131,10 @@ string UnaryOperation::str() const {
 UnaryOperation::UnaryOperation(UnaryOperator _oper, shared_ptr<Expression> _expr) :
     oper(_oper), expr(_expr) { }
 UnaryOperation::UnaryOperation() { }
+
+void UnaryOperation::accept(ASTVisitor* v) {
+  v->visit(this);
+}
 
 // BinaryOperation
 
@@ -157,6 +174,10 @@ BinaryOperation::BinaryOperation(BinaryOperator _oper, shared_ptr<Expression> _l
     oper(_oper), left(_left), right(_right) { }
 BinaryOperation::BinaryOperation() { }
 
+void BinaryOperation::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // TernaryOperation
 
 const char* ternary_operator_first_names[] = {
@@ -177,10 +198,18 @@ TernaryOperation::TernaryOperation(TernaryOperator _oper, shared_ptr<Expression>
     oper(_oper), left(_left), center(_center), right(_right) { }
 TernaryOperation::TernaryOperation() { }
 
+void TernaryOperation::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // ListConstructor
 
 string ListConstructor::str() const {
   return "[" + comma_str_list(items) + "]";
+}
+
+void ListConstructor::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // DictConstructor
@@ -197,10 +226,18 @@ string DictConstructor::str() const {
   return "{" + ret + "}";
 }
 
+void DictConstructor::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // SetConstructor
 
 string SetConstructor::str() const {
   return "set(" + comma_str_list(items) + ")";
+}
+
+void SetConstructor::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // TupleConstructor
@@ -217,10 +254,18 @@ bool TupleConstructor::valid_lvalue() const {
   return (items.size() > 0);
 }
 
+void TupleConstructor::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // ListComprehension
 
 string ListComprehension::str() const {
   return "[" + str_or_null(item_pattern) + " for " + str_or_null(variables) + " in " + str_or_null(source_data) + (!if_expr ? "" : (" if " + if_expr->str())) + "]";
+}
+
+void ListComprehension::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // DictComprehension
@@ -232,6 +277,10 @@ string DictComprehension::str() const {
 DictComprehension::DictComprehension(shared_ptr<Expression> _key_pattern, shared_ptr<Expression> _value_pattern, shared_ptr<UnpackingFormat> _variables, shared_ptr<Expression> _source_data, shared_ptr<Expression> _if_expr)
   : key_pattern(_key_pattern), value_pattern(_value_pattern), variables(_variables), source_data(_source_data), if_expr(_if_expr) {}
 
+void DictComprehension::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // SetComprehension
 
 string SetComprehension::str() const {
@@ -240,6 +289,10 @@ string SetComprehension::str() const {
 
 SetComprehension::SetComprehension(shared_ptr<Expression> _item_pattern, shared_ptr<UnpackingFormat> _variables, shared_ptr<Expression> _source_data, shared_ptr<Expression> _if_expr)
   : item_pattern(_item_pattern), variables(_variables), source_data(_source_data), if_expr(_if_expr) {}
+
+void SetComprehension::accept(ASTVisitor* v) {
+  v->visit(this);
+}
 
 // LambdaDefinition
 
@@ -250,13 +303,22 @@ string LambdaDefinition::str() const {
 LambdaDefinition::LambdaDefinition(const vector<shared_ptr<ArgumentDefinition> >& _args, shared_ptr<Expression> _result) : args(_args), result(_result) {}
 LambdaDefinition::LambdaDefinition() {}
 
+void LambdaDefinition::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // FunctionCall
 
 string FunctionCall::str() const {
   return function->str() + "(" + comma_str_list(args) + ")";
 }
 
+void FunctionCall::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // ArrayIndex
+
 string ArrayIndex::str() const {
   return array->str() + "[" + index->str() + "]";
 }
@@ -265,10 +327,18 @@ bool ArrayIndex::valid_lvalue() const {
   return true;
 }
 
+void ArrayIndex::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // ArraySlice
 
 string ArraySlice::str() const {
   return array->str() + "[" + str_or_null(slice_left) + ":" + str_or_null(slice_right) + "]";
+}
+
+void ArraySlice::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // IntegerConstant
@@ -282,6 +352,10 @@ string IntegerConstant::str() const {
 
 IntegerConstant::IntegerConstant(long _value) : value(_value) {}
 
+void IntegerConstant::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // FloatingConstant
 
 string FloatingConstant::str() const {
@@ -292,6 +366,10 @@ string FloatingConstant::str() const {
 
 FloatingConstant::FloatingConstant(float _value) : value(_value) {}
 
+void FloatingConstant::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // StringConstant
 
 string StringConstant::str() const {
@@ -300,10 +378,18 @@ string StringConstant::str() const {
 
 StringConstant::StringConstant(string _value) : value(_value) {}
 
+void StringConstant::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // TrueConstant
 
 string TrueConstant::str() const {
   return "True";
+}
+
+void TrueConstant::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // FalseConstant
@@ -312,10 +398,18 @@ string FalseConstant::str() const {
   return "False";
 }
 
+void FalseConstant::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // NoneConstant
 
 string NoneConstant::str() const {
   return "None";
+}
+
+void NoneConstant::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // VariableLookup
@@ -330,6 +424,10 @@ bool VariableLookup::valid_lvalue() const {
 
 VariableLookup::VariableLookup(string _name) : name(_name) {}
 
+void VariableLookup::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // AttributeLookup
 
 string AttributeLookup::str() const {
@@ -342,6 +440,10 @@ bool AttributeLookup::valid_lvalue() const {
 
 AttributeLookup::AttributeLookup(shared_ptr<Expression> _left, shared_ptr<Expression> _right) : left(_left), right(_right) {}
 AttributeLookup::AttributeLookup() {}
+
+void AttributeLookup::accept(ASTVisitor* v) {
+  v->visit(this);
+}
 
 
 
@@ -389,6 +491,10 @@ void ModuleStatement::print(int indent_level) const {
   }
 }
 
+void ModuleStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // ExpressionStatement
 
 string ExpressionStatement::str() const {
@@ -397,16 +503,28 @@ string ExpressionStatement::str() const {
 
 ExpressionStatement::ExpressionStatement(shared_ptr<Expression> _expr) : expr(_expr) {}
 
+void ExpressionStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // AssignmentStatement
 
 string AssignmentStatement::str() const {
   return comma_str_list(left) + " = " + comma_str_list(right);
 }
 
+void AssignmentStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // AugmentStatement
 
 string AugmentStatement::str() const {
   return comma_str_list(left) + " " + augment_operator_names[oper] + " " + comma_str_list(right);
+}
+
+void AugmentStatement::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // PrintStatement
@@ -417,16 +535,28 @@ string PrintStatement::str() const {
   return "print >> " + str_or_null(stream) + ", " + comma_str_list(items) + (suppress_newline ? "," : "");
 }
 
+void PrintStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // DeleteStatement
 
 string DeleteStatement::str() const {
   return "del " + comma_str_list(items);
 }
 
+void DeleteStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // PassStatement
 
 string PassStatement::str() const {
   return "pass";
+}
+
+void PassStatement::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // FlowStatement
@@ -445,10 +575,18 @@ string ImportStatement::str() const {
   return "import " + comma_list(module_names);
 }
 
+void ImportStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // GlobalStatement
 
 string GlobalStatement::str() const {
   return "global " + comma_list(names);
+}
+
+void GlobalStatement::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // ExecStatement
@@ -457,10 +595,18 @@ string ExecStatement::str() const {
   return "exec " + str_or_null(code) + ", " + str_or_null(globals) + ", " + str_or_null(locals);
 }
 
+void ExecStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // AssertStatement
 
 string AssertStatement::str() const {
   return "assert " + str_or_null(check) + ", " + str_or_null(failure_message);
+}
+
+void AssertStatement::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // BreakStatement
@@ -469,10 +615,18 @@ string BreakStatement::str() const {
   return "break";
 }
 
+void BreakStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // ContinueStatement
 
 string ContinueStatement::str() const {
   return "continue";
+}
+
+void ContinueStatement::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // ReturnStatement
@@ -481,10 +635,18 @@ string ReturnStatement::str() const {
   return "return " + comma_str_list(items);
 }
 
+void ReturnStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // RaiseStatement
 
 string RaiseStatement::str() const {
   return "raise " + str_or_null(type) + ", " + str_or_null(value) + ", " + str_or_null(traceback);
+}
+
+void RaiseStatement::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // YieldStatement
@@ -493,10 +655,18 @@ string YieldStatement::str() const {
   return "yield " + str_or_null(expr);
 }
 
+void YieldStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // SingleIfStatement
 
 string SingleIfStatement::str() const {
   return "if " + str_or_null(check) + ":";
+}
+
+void SingleIfStatement::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // ElseStatement
@@ -504,6 +674,10 @@ string SingleIfStatement::str() const {
 string ElseStatement::str() const {
   return "else:";
 };
+
+void ElseStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
 
 // IfStatement
 
@@ -523,10 +697,18 @@ void IfStatement::print(int indent_level) const {
     else_suite->print(indent_level);
 }
 
+void IfStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // ElifStatement
 
 string ElifStatement::str() const {
   return "elif " + str_or_null(check) + ":";
+}
+
+void ElifStatement::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // ForStatement
@@ -541,6 +723,10 @@ void ForStatement::print(int indent_level) const {
     else_suite->print(indent_level);
 }
 
+void ForStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // WhileStatement
 
 string WhileStatement::str() const {
@@ -553,6 +739,10 @@ void WhileStatement::print(int indent_level) const {
     else_suite->print(indent_level);
 }
 
+void WhileStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // ExceptStatement
 
 string ExceptStatement::str() const {
@@ -562,11 +752,19 @@ string ExceptStatement::str() const {
     return "except " + str_or_null(types) + " as " + name + ":";
 }
 
+void ExceptStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // FinallyStatement
 
 string FinallyStatement::str() const {
   return "finally:";
 };
+
+void FinallyStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
 
 // TryStatement
 
@@ -588,6 +786,10 @@ void TryStatement::print(int indent_level) const {
     finally_suite->print(indent_level);
 }
 
+void TryStatement::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // WithStatement
 
 string WithStatement::str() const {
@@ -603,6 +805,10 @@ string WithStatement::str() const {
     }
   }
   return ret + ":";
+}
+
+void WithStatement::accept(ASTVisitor* v) {
+  v->visit(this);
 }
 
 // FunctionDefinition
@@ -622,13 +828,17 @@ void FunctionDefinition::print(int indent_level) const {
   CompoundStatement::print(indent_level);
 }
 
+void FunctionDefinition::accept(ASTVisitor* v) {
+  v->visit(this);
+}
+
 // ClassDefinition
 
 string ClassDefinition::str() const {
   if (parent_types.size() == 0)
-    return "class " + class_name + ":";
+    return "class " + name + ":";
   else
-    return "class " + class_name + "(" + comma_str_list(parent_types) + "):";
+    return "class " + name + "(" + comma_str_list(parent_types) + "):";
 }
 
 void ClassDefinition::print(int indent_level) const {
@@ -640,4 +850,8 @@ void ClassDefinition::print(int indent_level) const {
       printf("@%s\n", decorators[x]->str().c_str());
   }
   CompoundStatement::print(indent_level);
+}
+
+void ClassDefinition::accept(ASTVisitor* v) {
+  v->visit(this);
 }

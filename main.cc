@@ -6,6 +6,7 @@
 #include "source_file.hh"
 #include "lex.hh"
 #include "parse.hh"
+#include "exec.hh"
 
 using namespace std;
 
@@ -30,6 +31,11 @@ int main(int argc, char* argv[]) {
   int x, y;
   for (x = 1; x < argc; x++) {
     SourceFile f(argv[x]);
+    if (!f.data()) {
+      printf(">>>>>>>>>> FILE: %s\n", argv[x]);
+      printf(">>>>> failed to load file\n");
+      continue;
+    }
     printf(">>>>>>>>>> FILE: %s\n", f.filename());
     printf(">>>>> filesize: %d\n", f.filesize());
     printf(">>>>> num_lines: %d\n", f.num_lines());
@@ -58,7 +64,8 @@ int main(int argc, char* argv[]) {
     }
 
     printf(">>>>> PARSER OUTPUT\n");
-    ast.root->print(0);
+    if (ast.root)
+      ast.root->print(0);
 
     if (ast.error != NoParseError) {
       printf(">>>>> LEXER OUTPUT NEAR PARSE ERROR (%d)\n", ast.failure_offset);
@@ -78,6 +85,13 @@ int main(int argc, char* argv[]) {
             y, name_for_token_type(tok.type), tok.string_data.c_str(),
             tok.float_data, tok.int_data, tok.text_offset, tok.text_length);
       }
+    }
+
+    if (ast.error == NoParseError && tokens.error == NoLexError) {
+      printf(">>>>> VISITOR OUTPUT\n");
+      GlobalEnvironment env;
+      // TODO: don't use .get() :(
+      import_module("__main__", ast.root.get(), &env);
     }
   }
 

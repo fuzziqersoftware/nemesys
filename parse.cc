@@ -1333,7 +1333,7 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
           break;
 
         shared_ptr<ClassDefinition> cls(new ClassDefinition());
-        cls->class_name = st->head_token().string_data;
+        cls->name = st->head_token().string_data;
         st->advance_token();
 
         if (st->head_token().type == _OpenParen) {

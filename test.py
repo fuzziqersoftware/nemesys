@@ -1,4 +1,4 @@
-# TODO: multiple decorators on function and on class
+# hey look it's a testing script lol ### #
 
 # TODO: dotted imports
 import sys, traceback
@@ -8,7 +8,7 @@ from gc import *
 
 a = -10
 
-def test1():
+def test0():
   pass
 
 def test1(arg1=None, arg2=True, arg3=False):
@@ -36,6 +36,7 @@ def test4(list1, dict1):
   assert 'name' in dict1, "field 'name' not in %r" % (dict1,)
   del dict1['name']
 
+@lol
 @memo
 def testmath(x):
   # wow, just look at all those semicolons
@@ -85,38 +86,45 @@ def test_keywords():
   else:
     print 'iterations: %d' % iterations
 
-def test_try():
-  # also tests nonuniform indentation
-  try:
-    i = random.randint(1, 7)
-    if i == 1:
-      raise NotImplementedError()
-    elif i == 2:
-      raise ValueError()
-    elif i == 3:
-      raise AttributeError()
-    elif i == 4:
-      raise AssertionError()
-    elif i == 5:
-      raise NameError()
-    elif i == 6:
-      raise ImportError()
-  except NotImplementedError, e:
-                      print '1', e
-  except ValueError as e:
-    print '2', e
-  except (AttributeError, AssertionError), e:
-      print '3', e
-  except (NameError, ImportError) as e:
-        print '4', e
-  except KeyError:
-      raise
-  except:
-      yield
-  else:
-          print 'no exception'
-  finally:
-            print 'finally'
+while a < 0:
+  a = a + 1
+else:
+  a = 1
+
+for x in range(10):
+  print x
+
+# also tests nonuniform indentation
+try:
+  i = random.randint(1, 7)
+  if i == 1:
+    raise NotImplementedError()
+  elif i == 2:
+    raise ValueError()
+  elif i == 3:
+    raise AttributeError()
+  elif i == 4:
+    raise AssertionError()
+  elif i == 5:
+    raise NameError()
+  elif i == 6:
+    raise ImportError()
+except NotImplementedError, e:
+                    print '1', e
+except ValueError as e:
+  print '2', e
+except (AttributeError, AssertionError), e:
+    print '3', e
+except (NameError, ImportError) as e:
+      print '4', e
+except KeyError:
+    raise
+except:
+    yield
+else:
+        print 'no exception'
+finally:
+          print 'finally'
 
 def memo(func):
     cache = {}
