@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include <set>
 #include <string>
 
@@ -197,7 +199,7 @@ StaticTokenString symbolic_static_tokens[] = {
 };
 
 InputToken::InputToken(TokenType type, const string& string_data,
-    float float_data, long long int_data, int text_offset, int text_length) :
+    float float_data, long long int_data, size_t text_offset, size_t text_length) :
   type(type), string_data(string_data), float_data(float_data),
   int_data(int_data), text_offset(text_offset), text_length(text_length) { }
 
@@ -237,15 +239,15 @@ bool is_operator_token(TokenType type) {
 }
 
 const char* name_for_token_type(TokenType type) {
-  int t = type;
-  if (t < 0 || t > sizeof(token_names) / sizeof(token_names[0]))
+  unsigned int t = type;
+  if (t > sizeof(token_names) / sizeof(token_names[0]))
     return NULL;
   return token_names[t];
 }
 
 const char* name_for_tokenization_error(TokenizationError type) {
-  int t = type;
-  if (t < 0 || t > sizeof(error_names) / sizeof(error_names[0]))
+  unsigned int t = type;
+  if (t > sizeof(error_names) / sizeof(error_names[0]))
     return NULL;
   return error_names[t];
 }
@@ -331,7 +333,7 @@ void tokenize_string(const char* data, TokenStream* result) {
 
       // if it's a wordy static token, use that token type instead
       TokenType type = _Dynamic;
-      for (int x = 0; x < sizeof(wordy_static_tokens) / sizeof(wordy_static_tokens[0]); x++)
+      for (size_t x = 0; x < sizeof(wordy_static_tokens) / sizeof(wordy_static_tokens[0]); x++)
         if (!strcmp(token_str.c_str(), wordy_static_tokens[x].text))
           type = wordy_static_tokens[x].type;
       token = new InputToken(type, (type == _Dynamic) ? token_str : "", 0, 0, position, len);
@@ -399,6 +401,7 @@ void tokenize_string(const char* data, TokenStream* result) {
         while (is_digit(match[0]))
           match++;
         if (match[0] == '.') {
+          match++;
           while (is_digit(match[0]))
             match++;
           float_match = true;
@@ -434,7 +437,7 @@ void tokenize_string(const char* data, TokenStream* result) {
       // if there was a match, parse out the number
       if (match_length && float_match) {
         double data;
-        sscanf(str, "%g", &data);
+        sscanf(str, "%lg", &data);
         token = new InputToken(_Float, string(str, match_length), data, 0, position, match_length);
       } else if (match_length && !float_match) {
         long long data;
@@ -447,7 +450,7 @@ void tokenize_string(const char* data, TokenStream* result) {
     if (!token) {
       TokenType type = _Dynamic;
       int len = 0;
-      for (int x = 0; x < sizeof(symbolic_static_tokens) / sizeof(symbolic_static_tokens[0]); x++) {
+      for (size_t x = 0; x < sizeof(symbolic_static_tokens) / sizeof(symbolic_static_tokens[0]); x++) {
         if (!memcmp(str, symbolic_static_tokens[x].text, strlen(symbolic_static_tokens[x].text))) {
           type = symbolic_static_tokens[x].type;
           len = strlen(symbolic_static_tokens[x].text);
@@ -545,7 +548,7 @@ void tokenize_string(const char* data, TokenStream* result) {
   // postprocessing steps
 
   // delete comments
-  for (int x = 0; x < result->tokens.size(); x++) {
+  for (size_t x = 0; x < result->tokens.size(); x++) {
     if (result->tokens[x].type == _Comment) {
       if (x == result->tokens.size() - 1)
         result->tokens.pop_back(); // the last token is a comment; delete it
@@ -566,7 +569,7 @@ void tokenize_string(const char* data, TokenStream* result) {
     result->tokens.erase(result->tokens.begin());
 
   // replace composite tokens, duplicate newlines, and semicolons
-  for (int x = 0; x < result->tokens.size() - 1; x++) {
+  for (size_t x = 0; x < result->tokens.size() - 1; x++) {
     if (result->tokens[x].type == Is && result->tokens[x + 1].type == Not) {
       result->tokens.erase(result->tokens.begin() + x, result->tokens.begin() + x + 1);
       result->tokens[x] = InputToken(IsNot, "", 0, 0, x, 0);

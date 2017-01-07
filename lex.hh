@@ -98,7 +98,7 @@ enum TokenType {
 struct InputToken {
   // struct to represent a token in an input stream.
 
-  InputToken(TokenType, const string&, float, long long, int, int);
+  InputToken(TokenType, const string&, float, long long, size_t, size_t);
   ~InputToken();
 
   TokenType type;
@@ -106,8 +106,8 @@ struct InputToken {
   double float_data;
   long long int_data;
 
-  int text_offset;
-  int text_length;
+  size_t text_offset;
+  size_t text_length;
 };
 
 enum TokenizationError {
@@ -125,7 +125,7 @@ enum TokenizationError {
 struct TokenStream {
   vector<InputToken> tokens;
   TokenizationError error;
-  int failure_offset;
+  size_t failure_offset;
 };
 
 bool is_open_bracket_token(TokenType);

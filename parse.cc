@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "parse.hh"
 
 // PythonAST
@@ -116,11 +118,11 @@ static shared_ptr<Expression> parse_binary_operator(ParserState* st, int operato
   shared_ptr<BinaryOperation> binary(new BinaryOperation());
   binary->oper = oper;
   binary->left = parse_expression(st, operator_offset);
-  if (!expect_offset(st, operator_offset, IncompleteParsing))
+  if (!expect_offset(st, operator_offset, IncompleteParsing, "left side of binary operator is incomplete"))
     return shared_ptr<Expression>();
   st->advance_token();
   binary->right = parse_expression(st, end_offset);
-  if (!expect_offset(st, end_offset, IncompleteParsing))
+  if (!expect_offset(st, end_offset, IncompleteParsing, "right side of binary operator is incomplete"))
     return shared_ptr<Expression>();
   return binary;
 }
@@ -131,7 +133,7 @@ static shared_ptr<Expression> parse_unary_operator(ParserState* st, int end_offs
   shared_ptr<UnaryOperation> unary(new UnaryOperation());
   unary->oper = oper;
   unary->expr = parse_expression(st, end_offset);
-  if (!expect_offset(st, end_offset, IncompleteParsing))
+  if (!expect_offset(st, end_offset, IncompleteParsing, "argument of unary operator is incomplete"))
     return shared_ptr<Expression>();
   return unary;
 }
@@ -142,7 +144,7 @@ static void parse_expression_list(ParserState* st, vector<shared_ptr<Expression>
     if (comma_offset < 0)
       comma_offset = end_offset;
     items.push_back(parse_expression(st, comma_offset));
-    if (!expect_offset(st, comma_offset, IncompleteParsing))
+    if (!expect_offset(st, comma_offset, IncompleteParsing, "expression in list is incomplete"))
       return;
     if (comma_offset < end_offset)
       st->advance_token();
@@ -159,11 +161,11 @@ static void parse_dict_item_list(ParserState* st, vector<pair<shared_ptr<Express
       return;
 
     shared_ptr<Expression> key = parse_expression(st, colon_offset);
-    if (!expect_offset(st, colon_offset, IncompleteParsing))
+    if (!expect_offset(st, colon_offset, IncompleteParsing, "key in dict definition is incomplete"))
       return;
     st->advance_token();
     shared_ptr<Expression> value = parse_expression(st, comma_offset);
-    if (!expect_offset(st, comma_offset, IncompleteParsing))
+    if (!expect_offset(st, comma_offset, IncompleteParsing, "value in dict definition is incomplete"))
       return;
     if (comma_offset < end_offset)
       st->advance_token();
@@ -208,7 +210,7 @@ static void parse_function_argument_definition(ParserState* st, vector<shared_pt
     }
 
     if (comma_offset < end_offset) {
-      if (!expect_token_type(st, _Comma, IncompleteParsing))
+      if (!expect_token_type(st, _Comma, IncompleteParsing, "function argument is incomplete"))
         return;
       st->advance_token(); // skip comma
     }
@@ -252,7 +254,7 @@ static void parse_function_call_arguments(ParserState* st, vector<shared_ptr<Arg
     args.push_back(shared_ptr<ArgumentDefinition>(new ArgumentDefinition(name, default_value, mode)));
 
     if (comma_offset < end_offset) {
-      if (!expect_token_type(st, _Comma, IncompleteParsing))
+      if (!expect_token_type(st, _Comma, IncompleteParsing, "function call argument is incomplete"))
         return;
       st->advance_token(); // skip comma
     }
@@ -282,7 +284,7 @@ static shared_ptr<UnpackingFormat> parse_unpacking_format(ParserState* st, int e
       if (!expect_condition(st, st->token_at(comma_offset - 1).type == _CloseParen, BracketingError, "found a tuple but it does not cover the entire region"))
         shared_ptr<UnpackingFormat>();
       tuple->objects.push_back(parse_unpacking_format(st, comma_offset - 1));
-      if (!expect_offset(st, comma_offset - 1, IncompleteParsing))
+      if (!expect_offset(st, comma_offset - 1, IncompleteParsing, "inner unpacking format is incomplete"))
         return shared_ptr<UnpackingFormat>();
     } else {
       if (!expect_condition(st, st->token_num == comma_offset - 1, SyntaxError, "multiple tokens before comma"))
@@ -294,7 +296,7 @@ static shared_ptr<UnpackingFormat> parse_unpacking_format(ParserState* st, int e
 
     st->advance_token(); // skip close paren
     if (comma_offset < end_offset) {
-      if (!expect_token_type(st, _Comma, IncompleteParsing))
+      if (!expect_token_type(st, _Comma, IncompleteParsing, "unpacking format is incomplete"))
         return shared_ptr<UnpackingFormat>();
       st->advance_token(); // skip comma
     }
@@ -314,11 +316,11 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
       return shared_ptr<Expression>();
 
     parse_function_argument_definition(st, lambda->args, colon_offset);
-    if (!expect_offset(st, colon_offset, IncompleteParsing))
+    if (!expect_offset(st, colon_offset, IncompleteParsing, "lambda argspec is incomplete"))
       return shared_ptr<Expression>();
     st->advance_token();
     lambda->result = parse_expression(st, end_offset);
-    if (!expect_offset(st, end_offset, IncompleteParsing))
+    if (!expect_offset(st, end_offset, IncompleteParsing, "lambda body is incomplete"))
       return shared_ptr<Expression>();
     return lambda;
   }
@@ -333,15 +335,15 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
     shared_ptr<TernaryOperation> ternary(new TernaryOperation());
     ternary->oper = IfElseOperator;
     ternary->left = parse_expression(st, if_offset);
-    if (!expect_offset(st, if_offset, IncompleteParsing))
+    if (!expect_offset(st, if_offset, IncompleteParsing, "left side of ternary operation is incomplete"))
       return shared_ptr<Expression>();
     st->advance_token();
     ternary->center = parse_expression(st, else_offset);
-    if (!expect_offset(st, else_offset, IncompleteParsing))
+    if (!expect_offset(st, else_offset, IncompleteParsing, "center side of ternary operation is incomplete"))
       return shared_ptr<Expression>();
     st->advance_token();
     ternary->right = parse_expression(st, end_offset);
-    if (!expect_offset(st, end_offset, IncompleteParsing))
+    if (!expect_offset(st, end_offset, IncompleteParsing, "right side of ternary operation is incomplete"))
       return shared_ptr<Expression>();
     return ternary;
   }
@@ -434,7 +436,7 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
 
       // parse array expr first
       shared_ptr<Expression> array = parse_expression(st, bracket_offset);
-      if (!expect_offset(st, bracket_offset, IncompleteParsing))
+      if (!expect_offset(st, bracket_offset, IncompleteParsing, "array reference is incomplete"))
         return shared_ptr<Expression>();
       st->advance_token();
 
@@ -449,12 +451,12 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
         shared_ptr<ArraySlice> slice(new ArraySlice());
         if (colon_offset > bracket_offset + 1)
           slice->slice_left = parse_expression(st, colon_offset);
-        if (!expect_offset(st, colon_offset, IncompleteParsing))
+        if (!expect_offset(st, colon_offset, IncompleteParsing, "left side of slice is incomplete"))
           return shared_ptr<Expression>();
         st->advance_token();
         if (colon_offset < bracket_end_offset - 1)
           slice->slice_right = parse_expression(st, bracket_end_offset);
-        if (!expect_offset(st, bracket_end_offset, IncompleteParsing))
+        if (!expect_offset(st, bracket_end_offset, IncompleteParsing, "right side of slice is incomplete"))
           return shared_ptr<Expression>();
         st->advance_token();
         slice->array = array;
@@ -464,7 +466,7 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
       } else {
         shared_ptr<ArrayIndex> index(new ArrayIndex());
         index->index = parse_expression(st, bracket_end_offset);
-        if (!expect_offset(st, bracket_end_offset, IncompleteParsing))
+        if (!expect_offset(st, bracket_end_offset, IncompleteParsing, "array index is incomplete"))
           return shared_ptr<Expression>();
         st->advance_token();
         index->array = array;
@@ -476,7 +478,7 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
       shared_ptr<FunctionCall> call(new FunctionCall());
 
       call->function = parse_expression(st, paren_offset);
-      if (!expect_offset(st, paren_offset, IncompleteParsing))
+      if (!expect_offset(st, paren_offset, IncompleteParsing, "function reference is incomplete"))
         return shared_ptr<Expression>();
       st->advance_token();
 
@@ -485,7 +487,7 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
         return shared_ptr<Expression>();
 
       parse_function_call_arguments(st, call->args, paren_end_offset);
-      if (!expect_offset(st, paren_end_offset, IncompleteParsing))
+      if (!expect_offset(st, paren_end_offset, IncompleteParsing, "function argument list is incomplete"))
         return shared_ptr<Expression>();
       st->advance_token();
       return call;
@@ -493,13 +495,17 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
     // attribute lookup
     } else if (effective_offset == dot_offset) {
       shared_ptr<AttributeLookup> attr(new AttributeLookup());
+
       attr->left = parse_expression(st, dot_offset);
-      if (!expect_offset(st, dot_offset, IncompleteParsing))
+      if (!expect_offset(st, dot_offset, IncompleteParsing, "left side of attribute lookup is incomplete"))
         return shared_ptr<Expression>();
       st->advance_token();
-      attr->right = parse_expression(st, end_offset);
-      if (!expect_offset(st, end_offset, IncompleteParsing))
+
+      attr->right = st->head_token().string_data;
+      st->advance_token();
+      if (!expect_offset(st, end_offset, IncompleteParsing, "right side of attribute lookup is incomplete"))
         return shared_ptr<Expression>();
+
       return attr;
     }
   }
@@ -509,7 +515,7 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
 
   // list constructor/comprehension
   if (bracket_offset == st->token_num) {
-    if (!expect_condition(st, st->token_at(end_offset - 1).type == _CloseBracket, IncompleteParsing))
+    if (!expect_condition(st, st->token_at(end_offset - 1).type == _CloseBracket, IncompleteParsing, "bracketed section is incomplete"))
       return shared_ptr<Expression>();
     st->advance_token();
 
@@ -524,7 +530,7 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
     if (for_offset >= 0 && for_offset < end_offset) {
       shared_ptr<ListComprehension> comp(new ListComprehension());
       comp->item_pattern = parse_expression(st, for_offset);
-      if (!expect_offset(st, for_offset, IncompleteParsing))
+      if (!expect_offset(st, for_offset, IncompleteParsing, "list comprehension expression is incomplete"))
         return comp;
       st->advance_token();
 
@@ -532,7 +538,7 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
       if (!expect_condition(st, in_offset > for_offset && in_offset < end_offset, IncompleteGeneratorExpression))
         return comp;
       comp->variables = parse_unpacking_format(st, in_offset);
-      if (!expect_offset(st, in_offset, IncompleteParsing))
+      if (!expect_offset(st, in_offset, IncompleteParsing, "list comprehension unpacking format is incomplete"))
         return comp;
       st->advance_token();
 
@@ -542,12 +548,12 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
         expr_end_offset = if_offset;
 
       comp->source_data = parse_expression(st, expr_end_offset);
-      if (expect_offset(st, expr_end_offset, IncompleteParsing))
+      if (expect_offset(st, expr_end_offset, IncompleteParsing, "list comprehension source is incomplete"))
         st->advance_token();
 
       if (if_offset > in_offset && in_offset < end_offset) {
         comp->if_expr = parse_expression(st, end_offset - 1);
-        if (expect_offset(st, end_offset - 1, IncompleteParsing))
+        if (expect_offset(st, end_offset - 1, IncompleteParsing, "list comprehension condition is incomplete"))
           st->advance_token();
       }
       return comp;
@@ -556,13 +562,13 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
     // parse the list values
     shared_ptr<ListConstructor> list(new ListConstructor());
     parse_expression_list(st, list->items, end_offset - 1);
-    if (expect_offset(st, end_offset - 1, IncompleteParsing))
+    if (expect_offset(st, end_offset - 1, IncompleteParsing, "list constructor is incomplete"))
       st->advance_token();
     return list;
 
   // dict/set constructor/comprehension
   } else if (brace_offset == st->token_num) {
-    if (!expect_condition(st, st->token_at(end_offset - 1).type == _CloseBrace, IncompleteParsing))
+    if (!expect_condition(st, st->token_at(end_offset - 1).type == _CloseBrace, IncompleteParsing, "braced section is incomplete"))
       return shared_ptr<Expression>();
     st->advance_token();
 
@@ -587,17 +593,17 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
       shared_ptr<UnpackingFormat> variables;
       if (is_dict) {
         key_pattern = parse_expression(st, colon_offset);
-        if (!expect_offset(st, colon_offset, IncompleteParsing))
+        if (!expect_offset(st, colon_offset, IncompleteParsing, "dict comprehension key is incomplete"))
           return shared_ptr<Expression>();
         st->advance_token();
       }
       item_pattern = parse_expression(st, for_offset);
-      if (!expect_offset(st, for_offset, IncompleteParsing))
+      if (!expect_offset(st, for_offset, IncompleteParsing, "dict/set comprehension value is incomplete"))
         return shared_ptr<Expression>();
       st->advance_token();
 
       variables = parse_unpacking_format(st, in_offset);
-      if (!expect_offset(st, in_offset, IncompleteParsing))
+      if (!expect_offset(st, in_offset, IncompleteParsing, "dict/set comprehension unpacking format is incomplete"))
         return shared_ptr<Expression>();
       st->advance_token();
 
@@ -607,12 +613,12 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
         expr_end_offset = if_offset;
 
       source_data = parse_expression(st, expr_end_offset);
-      if (expect_offset(st, expr_end_offset, IncompleteParsing))
+      if (expect_offset(st, expr_end_offset, IncompleteParsing, "dict/set comprehension source is incomplete"))
         st->advance_token();
 
       if (if_offset > in_offset && in_offset < end_offset) {
         if_expr = parse_expression(st, end_offset - 1);
-        if (expect_offset(st, end_offset - 1, IncompleteParsing))
+        if (expect_offset(st, end_offset - 1, IncompleteParsing, "dict/set comprehension condition is incomplete"))
           st->advance_token();
       }
 
@@ -625,27 +631,27 @@ static shared_ptr<Expression> parse_expression(ParserState* st, int end_offset) 
     if (is_dict) {
       shared_ptr<DictConstructor> dict(new DictConstructor());
       parse_dict_item_list(st, dict->items, end_offset - 1);
-      if (expect_offset(st, end_offset - 1, IncompleteParsing))
+      if (expect_offset(st, end_offset - 1, IncompleteParsing, "dict constructor is incomplete"))
         st->advance_token();
       return dict;
     } else {
       shared_ptr<SetConstructor> set_const(new SetConstructor());
       parse_expression_list(st, set_const->items, end_offset - 1);
-      if (expect_offset(st, end_offset - 1, IncompleteParsing))
+      if (expect_offset(st, end_offset - 1, IncompleteParsing, "set constructor is incomplete"))
         st->advance_token();
       return set_const;
     }
 
   // tuple constructor
   } else if (paren_offset == st->token_num) {
-    if (!expect_condition(st, st->token_at(end_offset - 1).type == _CloseParen, IncompleteParsing))
+    if (!expect_condition(st, st->token_at(end_offset - 1).type == _CloseParen, IncompleteParsing, "parenthesized section is incomplete"))
       return shared_ptr<Expression>();
     st->advance_token();
 
     // parse the tuple values
     shared_ptr<TupleConstructor> tuple(new TupleConstructor());
     parse_expression_list(st, tuple->items, end_offset - 1);
-    if (expect_offset(st, end_offset - 1, IncompleteParsing))
+    if (expect_offset(st, end_offset - 1, IncompleteParsing, "tuple constructor is incomplete"))
       st->advance_token();
     return tuple;
   }
@@ -733,7 +739,7 @@ static void parse_suite_from_colon(ParserState* st, shared_ptr<CompoundStatement
     if (!expect_condition(st, suite_end_offset >= 0, BracketingError))
       return;
     parse_compound_statement_suite(st, i, suite_end_offset);
-    if (!expect_offset(st, suite_end_offset, IncompleteParsing))
+    if (!expect_offset(st, suite_end_offset, IncompleteParsing, "compound statement is incomplete"))
       return;
 
     // better end with an _Unindent
@@ -747,42 +753,10 @@ static void parse_suite_from_colon(ParserState* st, shared_ptr<CompoundStatement
     if (!expect_condition(st, suite_end_offset >= 0, BracketingError))
       return;
     parse_compound_statement_suite(st, i, suite_end_offset + 1);
-    if (!expect_offset(st, suite_end_offset + 1, IncompleteParsing))
+    if (!expect_offset(st, suite_end_offset + 1, IncompleteParsing, "inline compound statement is incomplete"))
       return;
   }
 }
-
-#if 0
-
-static void parse_equals_left(ParserState* st, int end_offset, shared_ptr<Expression>& array, shared_ptr<Expression>& index, shared_ptr<UnpackingFormat>& format) {
-
-  // it's a setitem
-  int bracket_offset = find_bracketed_end(st, _OpenBracket, end_offset);
-  if (bracket_offset >= 0 && bracket_offset < end_offset) {
-    format = shared_ptr<UnpackingFormat>();
-
-    array = parse_expression(st, bracket_offset);
-    if (!expect_token_type(st, _OpenBracket, IncompleteParsing))
-      return;
-    st->advance_token();
-
-    int close_bracket_offset = find_bracketed_end(st, _CloseBracket, end_offset);
-    if (!expect_condition(st, close_bracket_offset >= 0 && close_bracket_offset < end_offset, SyntaxError))
-      return;
-    index = parse_expression(st, close_bracket_offset);
-    if (!expect_token_type(st, _CloseBracket, IncompleteParsing))
-      return;
-    st->advance_token();
-
-  // it's an unpackingformat
-  } else {
-    array = shared_ptr<Expression>();
-    index = shared_ptr<Expression>();
-    format = parse_unpacking_format(st, end_offset);
-  }
-}
-
-#endif
 
 static shared_ptr<SimpleStatement> parse_simple_statement(ParserState* st, int end_offset) {
 
@@ -808,10 +782,10 @@ static shared_ptr<SimpleStatement> parse_simple_statement(ParserState* st, int e
     shared_ptr<AssignmentStatement> stmt(new AssignmentStatement());
     parse_expression_list(st, stmt->left, operator_offset);
 
-    for (int x = 0; x < stmt->left.size(); x++)
+    for (size_t x = 0; x < stmt->left.size(); x++)
       if (!expect_condition(st, stmt->left[x]->valid_lvalue(), InvalidAssignment))
         return shared_ptr<SimpleStatement>();
-    if (!expect_token_type(st, _Equals, IncompleteParsing))
+    if (!expect_token_type(st, _Equals, IncompleteParsing, "left side of assignment is incomplete"))
       return shared_ptr<SimpleStatement>();
     st->advance_token();
 
@@ -824,10 +798,10 @@ static shared_ptr<SimpleStatement> parse_simple_statement(ParserState* st, int e
     stmt->oper = (AugmentOperator)operator_type;
     parse_expression_list(st, stmt->left, operator_offset);
 
-    for (int x = 0; x < stmt->left.size(); x++)
+    for (size_t x = 0; x < stmt->left.size(); x++)
       if (!expect_condition(st, stmt->left[x]->valid_lvalue(), InvalidAssignment))
         return shared_ptr<SimpleStatement>();
-    if (!expect_token_type(st, augment_operator_tokens[operator_type], IncompleteParsing))
+    if (!expect_token_type(st, augment_operator_tokens[operator_type], IncompleteParsing, "left side of augment is incomplete"))
       return shared_ptr<SimpleStatement>();
     st->advance_token();
 
@@ -835,70 +809,6 @@ static shared_ptr<SimpleStatement> parse_simple_statement(ParserState* st, int e
     return stmt;
 
   }
-
-#if 0
-
-  shared_ptr<Expression> array, index;
-  shared_ptr<UnpackingFormat> format;
-  parse_equals_left(st, operator_offset, array, index, format);
-
-  // there are some special cases for the equals-statement
-  if (operator_type == -1) {
-    if (!expect_token_type(st, _Equals, IncompleteParsing))
-      return shared_ptr<SimpleStatement>();
-    st->advance_token();
-
-    // if it's a setitem-statement, just parse the right and we're done
-    if (array && index && !format) {
-      shared_ptr<SetitemAssignmentStatement> stmt(new SetitemAssignmentStatement());
-      stmt->array = array;
-      stmt->index = index;
-      parse_expression_list(st, stmt->right, end_offset);
-      return stmt;
-
-    // if it's a normal statement, expect some more equalses maybe
-    } else if (!array && !index && format) {
-      shared_ptr<SimpleAssignmentStatement> stmt(new SimpleAssignmentStatement());
-      stmt->left.push_back(format);
-      while ((operator_offset = find_bracketed_end(st, _Equals, end_offset)) >= 0) {
-        parse_equals_left(st, operator_offset, array, index, format);
-        if (!expect_condition(st, !array && !index && format, SyntaxError))
-          return shared_ptr<SimpleStatement>();
-        stmt->left.push_back(format);
-        if (!expect_token_type(st, _Equals, IncompleteParsing))
-          return shared_ptr<SimpleStatement>();
-        st->advance_token();
-      }
-      parse_expression_list(st, stmt->right, end_offset);
-      return stmt;
-    }
-
-  } else {
-
-    if (!expect_token_type(st, augment_operator_tokens[operator_type], IncompleteParsing))
-      return shared_ptr<SimpleStatement>();
-    st->advance_token();
-
-    // if it's a setitem-statement, just parse the right and we're done
-    if (array && index && !format) {
-      shared_ptr<SetitemAugmentStatement> stmt(new SetitemAugmentStatement());
-      stmt->oper = (AugmentOperator)operator_type;
-      stmt->array = array;
-      stmt->index = index;
-      parse_expression_list(st, stmt->right, end_offset);
-      return stmt;
-
-    // if it's a normal statement, oh hey we're also done in this case
-    } else if (!array && !index && format) {
-      shared_ptr<SimpleAugmentStatement> stmt(new SimpleAugmentStatement());
-      stmt->oper = (AugmentOperator)operator_type;
-      stmt->left = format;
-      parse_expression_list(st, stmt->right, end_offset);
-      return stmt;
-    }
-  }
-
-#endif
 
   st->set_parse_error(IncompleteParsing, "no simple-statement parsing rules matched");
   return shared_ptr<SimpleStatement>();
@@ -946,7 +856,7 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
           if (!expect_condition(st, (comma_offset >= 0) && (comma_offset <= line_end_offset), SyntaxError))
             break;
           print->stream = parse_expression(st, comma_offset);
-          if (!expect_offset(st, comma_offset, IncompleteParsing))
+          if (!expect_offset(st, comma_offset, IncompleteParsing, "print stream is incomplete"))
             break;
           st->advance_token();
         }
@@ -961,7 +871,7 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
         parse_expression_list(st, print->items, line_end_offset);
 
         // if we suppress the newline, expect a comma
-        if (print->suppress_newline && expect_token_type(st, _Comma, IncompleteParsing))
+        if (print->suppress_newline && expect_token_type(st, _Comma, IncompleteParsing, "print expression list is incomplete"))
           st->advance_token();
 
         compound->suite.push_back(print);
@@ -1086,7 +996,7 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
         if (!expect_condition(st, args_end_offset >= 0, BracketingError))
           break;
         parse_function_argument_definition(st, fd->args, args_end_offset);
-        if (!expect_offset(st, args_end_offset, IncompleteParsing))
+        if (!expect_offset(st, args_end_offset, IncompleteParsing, "function argspec is incomplete"))
           break;
 
         // close paren
@@ -1150,7 +1060,7 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
         if (!expect_condition(st, colon_offset >= 0, SyntaxError))
           break;
         i->check = parse_expression(st, colon_offset);
-        if (!expect_offset(st, colon_offset, IncompleteParsing))
+        if (!expect_offset(st, colon_offset, IncompleteParsing, "if expression is incomplete"))
           break;
 
         parse_suite_from_colon(st, i, end_offset);
@@ -1190,14 +1100,14 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
           break;
 
         st->advance_token();
-        shared_ptr<SingleIfStatement> i(new ElifStatement());
+        shared_ptr<ElifStatement> i(new ElifStatement());
 
         // parse the expression
         int colon_offset = find_bracketed_end(st, _Colon, end_offset);
         if (!expect_condition(st, colon_offset >= 0, SyntaxError))
           break;
         i->check = parse_expression(st, colon_offset);
-        if (!expect_offset(st, colon_offset, IncompleteParsing))
+        if (!expect_offset(st, colon_offset, IncompleteParsing, "elif expression is incomplete"))
           break;
 
         parse_suite_from_colon(st, i, end_offset);
@@ -1216,7 +1126,7 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
         if (!expect_condition(st, colon_offset >= 0, SyntaxError))
           break;
         w->condition = parse_expression(st, colon_offset);
-        if (!expect_offset(st, colon_offset, IncompleteParsing))
+        if (!expect_offset(st, colon_offset, IncompleteParsing, "while expression is incomplete"))
           break;
 
         parse_suite_from_colon(st, w, end_offset);
@@ -1247,7 +1157,7 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
         if (!expect_condition(st, colon_offset >= 0, SyntaxError))
           break;
         parse_expression_list(st, fr->in_exprs, colon_offset);
-        if (!expect_offset(st, colon_offset, IncompleteParsing))
+        if (!expect_offset(st, colon_offset, IncompleteParsing, "for expression list is incomplete"))
           break;
 
         parse_suite_from_colon(st, fr, end_offset);
@@ -1292,7 +1202,7 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
 
         if (as_offset != st->token_num) {
           e->types = parse_expression(st, as_offset);
-          if (!expect_offset(st, as_offset, IncompleteParsing))
+          if (!expect_offset(st, as_offset, IncompleteParsing, "exception expression is incomplete"))
             break;
           if (as_offset != colon_offset)
             st->advance_token();
@@ -1343,7 +1253,7 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
             break;
 
           parse_expression_list(st, cls->parent_types, close_paren_offset);
-          if (!expect_offset(st, close_paren_offset, IncompleteParsing))
+          if (!expect_offset(st, close_paren_offset, IncompleteParsing, "class parent type list is incomplete"))
             break;
           st->advance_token();
         }
@@ -1375,12 +1285,12 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
             as_offset = comma_offset;
 
           w->items.push_back(parse_expression(st, as_offset));
-          if (!expect_offset(st, as_offset, IncompleteParsing))
+          if (!expect_offset(st, as_offset, IncompleteParsing, "with context expression is incomplete"))
             break;
 
           if (as_offset != comma_offset) {
             st->advance_token();
-            if (!expect_token_type(st, _Dynamic, IncompleteParsing))
+            if (!expect_token_type(st, _Dynamic, IncompleteParsing, "excess tokens after \'as\'"))
               break;
             w->names.push_back(st->head_token().string_data);
             st->advance_token();
@@ -1388,7 +1298,7 @@ static void parse_compound_statement_suite(ParserState* st, shared_ptr<CompoundS
           } else
             w->names.push_back("");
 
-          if (!expect_offset(st, comma_offset, IncompleteParsing))
+          if (!expect_offset(st, comma_offset, IncompleteParsing, "with context definition is incomplete"))
             break;
 
           if (comma_offset != colon_offset) {
@@ -1467,8 +1377,8 @@ static const char* error_names[] = {
 };
 
 const char* name_for_parse_error(ParseError type) {
-  int t = type;
-  if (t < 0 || t > sizeof(error_names) / sizeof(error_names[0]))
+  unsigned int t = type;
+  if (t > sizeof(error_names) / sizeof(error_names[0]))
     return NULL;
   return error_names[t];
 }

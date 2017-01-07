@@ -6,7 +6,7 @@
 #include "source_file.hh"
 #include "lex.hh"
 #include "parse.hh"
-#include "exec.hh"
+#include "compile.hh"
 
 using namespace std;
 
@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
     return (-1);
   }
 
-  int x, y;
+  long x, y;
   for (x = 1; x < argc; x++) {
     SourceFile f(argv[x]);
     if (!f.data()) {
@@ -37,14 +37,14 @@ int main(int argc, char* argv[]) {
       continue;
     }
     printf(">>>>>>>>>> FILE: %s\n", f.filename());
-    printf(">>>>> filesize: %d\n", f.filesize());
-    printf(">>>>> num_lines: %d\n", f.num_lines());
+    printf(">>>>> filesize: %lu\n", f.filesize());
+    printf(">>>>> num_lines: %lu\n", f.num_lines());
 
     TokenStream tokens;
     PythonAST ast;
     tokenize_string(f.data(), &tokens);
     if (tokens.error != NoLexError) {
-      printf("Lexer failed with error %s at %s:%d (%s$%d)\n",
+      printf("Lexer failed with error %s at %s:%lu (%s$%lu)\n",
           name_for_tokenization_error(tokens.error), f.filename(),
           f.line_number_of_offset(tokens.failure_offset), f.filename(),
           tokens.failure_offset);
@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
       printf(">>>>> lex completed; tokens:%lu\n", tokens.tokens.size());
       parse_token_stream(&tokens, &ast);
       if (ast.error != NoParseError) {
-        printf("Parser failed with error %s at #%d, which is %s:%d (%s$%d)\n",
+        printf("Parser failed with error %s at #%lu, which is %s:%lu (%s$%lu)\n",
             name_for_parse_error(ast.error), ast.failure_offset, f.filename(),
             f.line_number_of_offset(tokens.tokens[ast.failure_offset].text_offset),
             f.filename(), tokens.tokens[ast.failure_offset].text_offset);
@@ -68,7 +68,7 @@ int main(int argc, char* argv[]) {
       ast.root->print(0);
 
     if (ast.error != NoParseError) {
-      printf(">>>>> LEXER OUTPUT NEAR PARSE ERROR (%d)\n", ast.failure_offset);
+      printf(">>>>> LEXER OUTPUT NEAR PARSE ERROR (%lu)\n", ast.failure_offset);
       int current_line;
       y = ast.failure_offset - 5;
       if (y < 0)
@@ -81,7 +81,7 @@ int main(int argc, char* argv[]) {
           print_line(&f, current_line);
         }
         InputToken& tok = tokens.tokens[y];
-        printf("      n:%5d type:%15s s:%s f:%lf i:%lld off:%d len:%d\n",
+        printf("      n:%5lu type:%15s s:%s f:%lf i:%lld off:%lu len:%lu\n",
             y, name_for_token_type(tok.type), tok.string_data.c_str(),
             tok.float_data, tok.int_data, tok.text_offset, tok.text_length);
       }
@@ -89,9 +89,7 @@ int main(int argc, char* argv[]) {
 
     if (ast.error == NoParseError && tokens.error == NoLexError) {
       printf(">>>>> VISITOR OUTPUT\n");
-      GlobalEnvironment env;
-      // TODO: don't use .get() :(
-      import_module("__main__", ast.root.get(), &env);
+      compile_module(ast.root);
     }
   }
 

@@ -16,20 +16,20 @@ public:
   ~SourceFile();
 
   const char* data() const;
-  const char* line(int line_num) const;
-  int line_offset(int line_num) const;
-  int line_end_offset(int line_num) const;
+  const char* line(size_t line_num) const;
+  size_t line_offset(size_t line_num) const;
+  size_t line_end_offset(size_t line_num) const;
   const char* filename() const;
-  int filesize() const;
-  int num_lines() const;
+  size_t filesize() const;
+  size_t num_lines() const;
 
-  int line_number_of_offset(int offset) const;
+  size_t line_number_of_offset(size_t offset) const;
 
 private:
   char* _filename;
   char* _contents;
-  int _filesize;
-  vector<int> _line_begin_offset;
+  size_t _filesize;
+  vector<size_t> _line_begin_offset;
 
   void _count_lines();
   void _clear();

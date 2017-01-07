@@ -30,7 +30,7 @@ enum ParseError {
 struct PythonAST {
   shared_ptr<ModuleStatement> root;
   ParseError error;
-  int failure_offset;
+  size_t failure_offset;
   string failure_explanation;
 
   PythonAST();
