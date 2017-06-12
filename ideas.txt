@@ -1,0 +1,69 @@
+AMD64Assembler requires ExecutableBuffer
+
+ExpressionCompiler requires the following:
+- AMD64Assembler
+- LocalScopeAssignment
+- GlobalScopeAssignment
+
+StatementCompiler requires the same things and uses ExpressionCompiler
+- maybe collapse the two classes if they're too similar
+
+LocalScopeAssignment
+- contains the type and relative memory location of all variables in a scope
+
+GlobalScopeAssignment
+- contains the type and memory location of all global variables
+- figure out how gcc does this in C++ programs and use that
+
+how to generate GlobalScopeAssignment
+- use a permanent register for globals (r15) and use mmap to expand the global space if needed
+
+how to generate LocalScopeAssignment
+- collect all args and local vars, decide on calling convention, assign args to space above the return addr on the stack, assign rbp if and only if the function calls other functions, assign other locals below this
+- caller needs the callee's LocalScopeAssignment when calling a function
+- the args part of LocalScopeAssignment can be known without compiling the function, so uncompiled functions can still be called. put the addr of the function name in r14 and call nemesys_compile_function (with the function's args) instead of the actual function
+- at call time, we know the types of all function arguments; types "trickle down" from the root function call
+- - built-in functions and variables (e.g. sys.argv) have fixed return types
+
+define calling convention like system v (linux/osx)
+- ints: rdi, rsi, rdx, rcx, r8, r9
+- floats: xmm0-7
+- return: rax, rdx
+- callee-save: rbp, rbx, r12-r15; all others caller-save
+- no variadic functions (for now)
+
+writing ExpressionCompiler
+- don't bother optimizing at first - just compile variable references directly into mov opcodes, use add to combine registers, etc. code will be slow and large but functional
+- what to do about exceptions? need to unwind the stack; find out how gcc implements this
+- calls to uncompiled functions become calls to nemesys_compile_function; this function preserves the args it's given and replaces the callsite with a call opcode to the compiled function
+- - watch out for concurrent calls; may need a mutex on a per-function basis
+- register assignment: maybe have target reg and filter that down to the leaves
+
+nemesys_compile_function roughly does this:
+- parse and lex
+- collect variables
+- figure out types for local vars based on expression return types
+- compile
+- patch callsites
+
+will need implementations of basic types like string, list, dict, etc.
+- need some attention to refcounting... trivial stuff (ints, bools, floats) doesn't need this, but anything heap-allocated does. maybe all built-in types and class defs automatically get a refcount as the first field?
+- - remember to use atomic opcodes with refcounts
+
+python classes can be converted to structs by finding all self.x references within them, or just require that all fields are set in __init__ and throw compile errors otherwise (this is easier)
+
+don't support longs at all; all ints are 64-bit signed
+
+AMD64Assembler should also have an analogous disassembler (which doesn't need to support all opcodes, just the ones that AMD64Assembler generates) for ease of debugging
+
+at entry point, load the module's source and compile the global scope, then convert all locals into globals for the modul
+- lambdas become function pointers. closures will need a separate type defined for them (e.g. class def like c++ uses)
+- - for now don't support lambdas/closures that leave the enclosing scope (e.g. are returned). this means no decorators yet :(
+- - but a decorator really just replaces a function with another function (or class instance/closure), so maybe we can exec the decorator code at compile time to generate the instance, then compile that?
+
+what are the possible return types for an unknown function?
+- always None (e.g. no return statements)
+- always some other fixed type
+- the return type of another function
+- the type of one of the arguments
+- some other horseshit (e.g. pickle.loads); for now don't support this I guess

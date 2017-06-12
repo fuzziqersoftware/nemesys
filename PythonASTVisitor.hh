@@ -1,14 +1,19 @@
 #pragma once
 
-#include "ASTNodes.hh"
+#include <memory>
+#include <vector>
+
+#include "PythonASTNodes.hh"
 
 struct ASTVisitor {
 
-  template <typename T> void visit_list(vector<shared_ptr<T>>& list);
+  template <typename T> void visit_list(std::vector<std::shared_ptr<T>>& list);
 
   // expression visitation
-  virtual void visit(UnpackingTuple*);
-  virtual void visit(UnpackingVariable*);
+  virtual void visit(AttributeLValueReference*);
+  virtual void visit(ArrayIndexLValueReference*);
+  virtual void visit(ArraySliceLValueReference*);
+  virtual void visit(TupleLValueReference*);
   virtual void visit(ArgumentDefinition*);
   virtual void visit(UnaryOperation*);
   virtual void visit(BinaryOperation*);
@@ -25,8 +30,9 @@ struct ASTVisitor {
   virtual void visit(ArrayIndex*);
   virtual void visit(ArraySlice*);
   virtual void visit(IntegerConstant*);
-  virtual void visit(FloatingConstant*);
-  virtual void visit(StringConstant*);
+  virtual void visit(FloatConstant*);
+  virtual void visit(BytesConstant*);
+  virtual void visit(UnicodeConstant*);
   virtual void visit(TrueConstant*);
   virtual void visit(FalseConstant*);
   virtual void visit(NoneConstant*);
@@ -38,7 +44,6 @@ struct ASTVisitor {
   virtual void visit(ExpressionStatement*);
   virtual void visit(AssignmentStatement*);
   virtual void visit(AugmentStatement*);
-  virtual void visit(PrintStatement*);
   virtual void visit(DeleteStatement*);
   virtual void visit(PassStatement*);
   virtual void visit(ImportStatement*);
@@ -66,8 +71,10 @@ struct ASTVisitor {
 
 struct RecursiveASTVisitor : ASTVisitor {
   // expression visitation
-  virtual void visit(UnpackingTuple*);
-  virtual void visit(UnpackingVariable*);
+  virtual void visit(AttributeLValueReference*);
+  virtual void visit(ArrayIndexLValueReference*);
+  virtual void visit(ArraySliceLValueReference*);
+  virtual void visit(TupleLValueReference*);
   virtual void visit(ArgumentDefinition*);
   virtual void visit(UnaryOperation*);
   virtual void visit(BinaryOperation*);
@@ -83,13 +90,6 @@ struct RecursiveASTVisitor : ASTVisitor {
   virtual void visit(FunctionCall*);
   virtual void visit(ArrayIndex*);
   virtual void visit(ArraySlice*);
-  virtual void visit(IntegerConstant*);
-  virtual void visit(FloatingConstant*);
-  virtual void visit(StringConstant*);
-  virtual void visit(TrueConstant*);
-  virtual void visit(FalseConstant*);
-  virtual void visit(NoneConstant*);
-  virtual void visit(VariableLookup*);
   virtual void visit(AttributeLookup*);
 
   // statement visitation
@@ -97,7 +97,6 @@ struct RecursiveASTVisitor : ASTVisitor {
   virtual void visit(ExpressionStatement*);
   virtual void visit(AssignmentStatement*);
   virtual void visit(AugmentStatement*);
-  virtual void visit(PrintStatement*);
   virtual void visit(DeleteStatement*);
   virtual void visit(PassStatement*);
   virtual void visit(ImportStatement*);

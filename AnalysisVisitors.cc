@@ -121,7 +121,8 @@ struct ExecutionVisitor : ASTVisitor {
   void visit(ArraySlice* a) {}
   void visit(IntegerConstant* a) {}
   void visit(FloatingConstant* a) {}
-  void visit(StringConstant* a) {}
+  void visit(BytesConstant* a) {}
+  void visit(UnicodeConstant* a) {}
   void visit(TrueConstant* a) {}
   void visit(FalseConstant* a) {}
   void visit(NoneConstant* a) {}
@@ -139,10 +140,6 @@ struct ExecutionVisitor : ASTVisitor {
   }
   void visit(AugmentStatement* a) {
     // evaluate the RHSes, then match them with the LHSes
-  }
-  void visit(PrintStatement* a) {
-    // evaluate the stream, then str() each expression on the RHS and call write() on the stream
-    // also write "\n" if a->suppress_newline is false
   }
   void visit(DeleteStatement* a) {
     // unbind the given variables

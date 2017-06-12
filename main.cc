@@ -3,94 +3,102 @@
 #include <stdlib.h>
 #include <signal.h>
 
-#include "source_file.hh"
-#include "lex.hh"
-#include "parse.hh"
-#include "compile.hh"
+#include "SourceFile.hh"
+#include "PythonLexer.hh"
+#include "PythonParser.hh"
+#include "Environment.hh"
+#include "CompilationVisitors.hh"
 
 using namespace std;
 
-void print_line(SourceFile* f, int line_no) {
-  const char* line_data = f->line(line_no);
-  int line_len = 0;
-  printf("%5d ", line_no);
-  while (line_data[line_len] && line_data[line_len] != '\n') {
-    putc(line_data[line_len], stdout);
-    line_len++;
-  }
-  putc('\n', stdout);
-}
 
 int main(int argc, char* argv[]) {
 
   if (argc < 2) {
-    printf("Usage: %s file1 [file2 ...]\n", argv[0]);
+    printf("Usage: %s --phase=PHASE module_name [module_name ...]\n", argv[0]);
     return (-1);
   }
 
-  long x, y;
-  for (x = 1; x < argc; x++) {
-    SourceFile f(argv[x]);
-    if (!f.data()) {
-      printf(">>>>>>>>>> FILE: %s\n", argv[x]);
-      printf(">>>>> failed to load file\n");
-      continue;
-    }
-    printf(">>>>>>>>>> FILE: %s\n", f.filename());
-    printf(">>>>> filesize: %lu\n", f.filesize());
-    printf(">>>>> num_lines: %lu\n", f.num_lines());
-
-    TokenStream tokens;
-    PythonAST ast;
-    tokenize_string(f.data(), &tokens);
-    if (tokens.error != NoLexError) {
-      printf("Lexer failed with error %s at %s:%lu (%s$%lu)\n",
-          name_for_tokenization_error(tokens.error), f.filename(),
-          f.line_number_of_offset(tokens.failure_offset), f.filename(),
-          tokens.failure_offset);
-    } else {
-      printf(">>>>> lex completed; tokens:%lu\n", tokens.tokens.size());
-      parse_token_stream(&tokens, &ast);
-      if (ast.error != NoParseError) {
-        printf("Parser failed with error %s at #%lu, which is %s:%lu (%s$%lu)\n",
-            name_for_parse_error(ast.error), ast.failure_offset, f.filename(),
-            f.line_number_of_offset(tokens.tokens[ast.failure_offset].text_offset),
-            f.filename(), tokens.tokens[ast.failure_offset].text_offset);
-        if (ast.failure_explanation.length())
-          printf("  Parser gave explanation: %s\n", ast.failure_explanation.c_str());
+  GlobalAnalysis global;
+  ModuleAnalysis::Phase target_phase = ModuleAnalysis::Phase::Initial;
+  vector<string> module_names;
+  for (size_t x = 1; x < argc; x++) {
+    if (!strncmp(argv[x], "--phase=", 8)) {
+      if (!strcasecmp(&argv[x][8], "Initial")) {
+        target_phase = ModuleAnalysis::Phase::Initial;
+      } else if (!strcasecmp(&argv[x][8], "Parsed")) {
+        target_phase = ModuleAnalysis::Phase::Parsed;
+      } else if (!strcasecmp(&argv[x][8], "Annotated")) {
+        target_phase = ModuleAnalysis::Phase::Annotated;
+      } else if (!strcasecmp(&argv[x][8], "Analyzed")) {
+        target_phase = ModuleAnalysis::Phase::Analyzed;
       } else {
-        printf(">>>>> parse completed\n");
+        throw invalid_argument("unknown phase");
       }
+    } else if (!strcmp(argv[x], "--debug-find-file")) {
+      global.debug_find_file = true;
+    } else if (!strcmp(argv[x], "--debug-source")) {
+      global.debug_source = true;
+    } else if (!strcmp(argv[x], "--debug-lexer")) {
+      global.debug_lexer = true;
+    } else if (!strcmp(argv[x], "--debug-parser")) {
+      global.debug_parser = true;
+    } else if (!strcmp(argv[x], "--debug-annotation")) {
+      global.debug_annotation = true;
+    } else if (!strcmp(argv[x], "--debug-analysis")) {
+      global.debug_analysis = true;
+    } else {
+      module_names.emplace_back(argv[x]);
     }
+  }
 
-    printf(">>>>> PARSER OUTPUT\n");
-    if (ast.root)
-      ast.root->print(0);
+  for (const string& module_name : module_names) {
+    global.get_module_at_phase(module_name, target_phase);
+    /* TODO: fix this code and uncomment it
+    try {
+      global.get_module_at_phase(module_name, target_phase);
 
-    if (ast.error != NoParseError) {
-      printf(">>>>> LEXER OUTPUT NEAR PARSE ERROR (%lu)\n", ast.failure_offset);
-      int current_line;
-      y = ast.failure_offset - 5;
-      if (y < 0)
+    } catch (const PythonLexer::tokenization_error& e) {
+      printf("# >>>>> lex failed with error %s at %s:%zu (%s$%zu)\n",
+          PythonLexer::name_for_tokenization_error(e.error),
+          f.filename().c_str(), f.line_number_of_offset(e.offset),
+          f.filename().c_str(), e.offset);
+
+    } catch (const PythonParser::parse_error& e) {
+      const auto& all = lexer->all();
+      printf("# >>>>> parse failed with error %s (%s) at #%zu, which is %s:%lu (%s$%lu)\n",
+          PythonParser::name_for_parse_error(e.error), e.explanation.c_str(),
+          e.offset, f.filename().c_str(),
+          f.line_number_of_offset(all[e.offset].text_offset),
+          f.filename().c_str(), all[e.offset].text_offset);
+
+      printf("# >>>>> lexer output near parse error\n");
+      ssize_t current_line;
+      ssize_t y = e.offset - 5;
+      if (y < 0) {
         y = 0;
-      for (current_line = 0; tokens.tokens[y].text_offset > f.line_end_offset(current_line); current_line++);
-      print_line(&f, current_line);
-      for (; y < tokens.tokens.size(); y++) {
-        while (tokens.tokens[y].text_offset > f.line_end_offset(current_line)) {
-          current_line++;
-          print_line(&f, current_line);
-        }
-        InputToken& tok = tokens.tokens[y];
-        printf("      n:%5lu type:%15s s:%s f:%lf i:%lld off:%lu len:%lu\n",
-            y, name_for_token_type(tok.type), tok.string_data.c_str(),
-            tok.float_data, tok.int_data, tok.text_offset, tok.text_length);
       }
-    }
+      for (current_line = 0;
+          all[y].text_offset > f.line_end_offset(current_line);
+          current_line++);
 
-    if (ast.error == NoParseError && tokens.error == NoLexError) {
-      printf(">>>>> VISITOR OUTPUT\n");
-      compile_module(ast.root);
-    }
+      {
+        string line_data = f.line(current_line);
+        fprintf(stdout, "%5d %s\n", current_line, line_data.c_str());
+      }
+      for (; y < lexer->all().size(); y++) {
+        while (all[y].text_offset > f.line_end_offset(current_line)) {
+          current_line++;
+          string line_data = f.line(current_line);
+          fprintf(stdout, "%5d %s\n", current_line, line_data.c_str());
+        }
+        const auto& tok = all[y];
+        printf("      n:%5lu type:%15s s:%s f:%lf i:%lld off:%lu len:%lu\n",
+            y, PythonLexer::Token::name_for_token_type(tok.type),
+            tok.string_data.c_str(), tok.float_data, tok.int_data,
+            tok.text_offset, tok.text_length);
+      }
+    } */
   }
 
   return 0;
