@@ -5,19 +5,146 @@
 using namespace std;
 
 
-MemoryReference::MemoryReference(Register base_register,
-    Register index_register, uint8_t field_size, int64_t offset) :
-    is_memory_reference(true), base_register(base_register),
+MemoryReference::MemoryReference(Register base_register, int64_t offset,
+    Register index_register, uint8_t field_size) : base_register(base_register),
     index_register(index_register), field_size(field_size), offset(offset) { }
-MemoryReference::MemoryReference(Register base_register,
-    bool is_memory_reference) : is_memory_reference(is_memory_reference),
-    base_register(base_register), index_register(Register::None), field_size(1),
+MemoryReference::MemoryReference(Register base_register) :
+    base_register(base_register), index_register(Register::None), field_size(0),
     offset(0) { }
 
 static inline bool is_extension_register(Register r) {
   int8_t rn = static_cast<int8_t>(r);
   return rn >= 8;
 }
+
+
+
+static string generate_rm(Operation op, const MemoryReference& mem,
+    Register reg, OperandSize size) {
+  uint16_t opcode = static_cast<uint16_t>(op);
+
+  string ret;
+  if (!mem.field_size) { // behavior = 3 (register reference)
+    bool mem_ext = is_extension_register(mem.base_register);
+    bool reg_ext = is_extension_register(reg);
+
+    uint8_t prefix_byte = 0x40 | (mem_ext ? 0x01 : 0) | (reg_ext ? 0x04 : 0);
+    if (size == OperandSize::QuadWord) {
+      prefix_byte |= 0x08;
+      opcode |= 0x01;
+    } else if (size == OperandSize::DoubleWord) {
+      opcode |= 0x01;
+    } else if (size == OperandSize::Word) {
+      ret += 0x66;
+      opcode |= 0x01;
+    }
+
+    if (prefix_byte != 0x40) {
+      ret += prefix_byte;
+    }
+    if (opcode > 0xFF) {
+      ret += (opcode >> 8);
+    }
+    ret += (opcode & 0xFF);
+    ret += static_cast<char>(0xC0 | ((reg & 7) << 3) | (mem.base_register & 7));
+    return ret;
+  }
+
+  // TODO: we currently don't implement the SIB byte
+  if (mem.base_register == Register::None) {
+    throw invalid_argument("memory references without base not supported");
+  }
+  if ((mem.base_register == Register::RSP) ||
+      (mem.base_register == Register::R12)) {
+    throw invalid_argument("scaled index references not supported");
+  }
+  if (mem.index_register != Register::None) {
+    throw invalid_argument("indexed memory references not supported");
+  }
+
+  bool reg_ext = is_extension_register(reg);
+  bool mem_index_ext = false; // TODO
+  bool mem_base_ext = is_extension_register(mem.base_register);
+
+  uint8_t rm_byte = ((reg & 7) << 3) | (mem.base_register & 7);
+
+  // if an offset was given, update the behavior appropriately
+  if (mem.offset == 0) {
+    // behavior is 0; nothing to do
+  } else if ((mem.offset <= 0x7F) && (mem.offset >= -0x80)) {
+    rm_byte |= 0x40;
+  } else if ((mem.offset <= 0x7FFFFFFFLL) && (mem.offset >= -0x80000000LL)) {
+    rm_byte |= 0x80;
+  } else {
+    throw invalid_argument("offset must fit in 32 bits");
+  }
+
+  // if no offset was given and the sib byte was not used and the base reg is
+  // RSP, then add a fake offset of 0 to the opcode (this is because this case
+  // is shadowed by a special case above)
+  if ((mem.offset == 0) && ((rm_byte & 7) != 0x04) &&
+      (mem.base_register == Register::RSP)) {
+    rm_byte |= 0x40;
+  }
+
+  // fill in the ret string
+  uint8_t prefix_byte = 0x40 | (reg_ext ? 0x04 : 0) | (mem_index_ext ? 0x02 : 0) |
+      (mem_base_ext ? 0x01 : 0);
+  if (size == OperandSize::QuadWord) {
+    prefix_byte |= 0x08;
+    opcode |= 0x01;
+  } else if (size == OperandSize::DoubleWord) {
+    opcode |= 0x01;
+  } else if (size == OperandSize::Word) {
+    ret += 0x66;
+    opcode |= 0x01;
+  }
+
+  if (prefix_byte != 0x40) {
+    ret += prefix_byte;
+  }
+
+  if (opcode > 0xFF) {
+    ret += (opcode >> 8);
+  }
+  ret += (opcode & 0xFF);
+
+  ret += rm_byte;
+  if (rm_byte & 0x40) {
+    ret.append(reinterpret_cast<const char*>(&mem.offset), 1);
+  } else if (rm_byte & 0x80) {
+    ret.append(reinterpret_cast<const char*>(&mem.offset), 4);
+  }
+  return ret;
+}
+
+static inline string generate_rm(Operation op, const MemoryReference& mem,
+    uint8_t z, OperandSize size) {
+  return generate_rm(op, mem, static_cast<Register>(z), size);
+}
+
+
+
+Operation load_store_oper_for_args(Operation op, const MemoryReference& to,
+    const MemoryReference& from, OperandSize size) {
+  return static_cast<Operation>(op | ((size != OperandSize::Byte) ? 1 : 0) |
+      (from.field_size ? 2 : 0));
+}
+
+string generate_load_store(Operation base_op, const MemoryReference& to,
+    const MemoryReference& from, OperandSize size) {
+  if (to.field_size && from.field_size) {
+    throw invalid_argument("load/store opcodes can have at most one memory reference");
+  }
+
+  Operation op = load_store_oper_for_args(Operation::MOV_STORE8, to, from, size);
+  if (!from.field_size) {
+    return generate_rm(op, to, from.base_register, size);
+  }
+  return generate_rm(op, from, to.base_register, size);
+}
+
+
 
 string generate_push(Register r) {
   string ret;
@@ -41,130 +168,83 @@ string generate_pop(Register r) {
   return ret;
 }
 
-string generate_rm64(Operation op, const MemoryReference& to,
-    const MemoryReference& from) {
-  if (to.is_memory_reference && from.is_memory_reference) {
-    throw invalid_argument("mov opcode can have at most one memory reference");
-  }
 
-  string ret;
-  if (!to.is_memory_reference && !from.is_memory_reference) {
-    // behavior = 3
-    bool from_ext = is_extension_register(from.base_register);
-    bool to_ext = is_extension_register(to.base_register);
-    ret += 0x48 | (to_ext ? 0x04 : 0) | (from_ext ? 0x01 : 0);
-    ret += 0x89;
-    ret += static_cast<char>(0xC0 | ((from.base_register & 7) << 3) |
-        (to.base_register & 7));
-    return ret;
-  }
 
-  const MemoryReference* mem;
-  Register reg;
-  if (to.is_memory_reference) {
-    // this is a store opcode; we only implement load below. fortunately they're
-    // exactly the same except for a bit being flipped in the first byte
-    reg = from.base_register;
-    mem = &to;
-  } else {
-    reg = to.base_register;
-    mem = &from;
-  }
-
-  // if there's no base register and no inde register, then it's just an addr
-  if ((mem->index_register == Register::None) &&
-      (mem->base_register == Register::None)) {
-    throw invalid_argument("moves without registers not supported");
-  }
-
-  bool is_load = from.is_memory_reference;
-  bool reg_ext = is_extension_register(to.base_register);
-  bool mem_index_ext = is_extension_register(mem->index_register);
-  bool mem_base_ext = is_extension_register(mem->base_register);
-
-  uint8_t rm_byte = ((to.base_register & 7) << 3);
-  uint8_t sib_byte = 0;
-
-  // if an index register was given OR the base register is RSP, we'll have to
-  // use the sib byte
-  if (mem->index_register != Register::None) {
-    rm_byte |= 0x04;
-    sib_byte = ((mem->index_register & 7) << 3) | (mem->base_register & 7);
-    if (mem->field_size == 1) {
-      // nothing to do; m=0
-    } else if (mem->field_size == 1) {
-      sib_byte |= 0x40;
-    } else if (mem->field_size == 1) {
-      sib_byte |= 0x80;
-    } else if (mem->field_size == 1) {
-      sib_byte |= 0xC0;
-    } else {
-      throw invalid_argument("field_size must be 1, 2, 4, or 8");
-    }
-  }
-
-  // if an offset was given, update the behavior appropriately
-  if (mem->offset == 0) {
-    // behavior is 0; nothing to do
-  } else if ((mem->offset <= 0x7F) && (mem->offset >= -0x80)) {
-    rm_byte |= 0x40;
-    ret.append(reinterpret_cast<const char*>(&mem->offset), 1);
-  } else if ((mem->offset <= 0x7FFFFFFF) && (mem->offset >= -0x80000000)) {
-    rm_byte |= 0x80;
-    ret.append(reinterpret_cast<const char*>(&mem->offset), 4);
-  } else {
-    throw invalid_argument("offset must fit in 32 bits");
-  }
-
-  // if no offset was given and the sib byte was not used and the base reg is
-  // RSP, then add a fake offset of 0 to the opcode (this is because this case
-  // is shadowed by a special case above)
-  if ((mem->offset == 0) && ((rm_byte & 7) != 0x04) &&
-      (mem->base_register == Register::RSP)) {
-    rm_byte |= 0x40;
-  }
-
-  // fill in the ret string
-  ret += 0x48 | (reg_ext ? 0x04 : 0) | (mem_index_ext ? 0x02 : 0) |
-      (mem_base_ext ? 0x01 : 0);
-  ret += 0x01 | (op << 3) | (is_load ? 0x02 : 0);
-  ret += rm_byte;
-  if ((rm_byte & 7) == 0x04) {
-    ret += sib_byte;
-  }
-  if (rm_byte & 0x40) {
-    ret.append(reinterpret_cast<const char*>(&mem->offset), 1);
-  } else if (rm_byte & 0x80) {
-    ret.append(reinterpret_cast<const char*>(&mem->offset), 4);
-  }
-  return ret;
+string generate_mov(const MemoryReference& to, const MemoryReference& from,
+    OperandSize size) {
+  return generate_load_store(Operation::MOV_STORE8, to, from, size);
 }
 
-string generate_mov_imm64(Register reg, uint64_t value) {
+string generate_mov(Register reg, int64_t value, OperandSize size) {
   if (value == 0) {
     // xor reg, reg
     MemoryReference r(reg);
-    return generate_rm64(Operation::XOR, r, r);
+    return generate_xor(r, r, size);
   }
 
-  // TODO: we can use C7 instead of B8 for small numbers
-  string ret;
-  ret += static_cast<char>(0x48 | (is_extension_register(reg) ? 0x01 : 0));
-  ret += static_cast<char>(0xB8 + (reg & 7));
-  ret.append(reinterpret_cast<const char*>(&value), 8);
-  return ret;
+  if (size == OperandSize::QuadWord) {
+    // TODO: we can optimize for code size by not using movabs for small values,
+    // but for now I'm lazy
+    string ret;
+    ret += 0x48 | (is_extension_register(reg) ? 0x01 : 0);
+    ret += 0xB8 | (reg & 7);
+    ret.append(reinterpret_cast<const char*>(&value), 8);
+    return ret;
+
+  } else if (size == OperandSize::DoubleWord) {
+    string ret;
+    if (is_extension_register(reg)) {
+      ret += 0x41;
+    }
+    ret += 0xB8 | (reg & 7);
+    ret.append(reinterpret_cast<const char*>(&value), 4);
+    return ret;
+
+  } else if (size == OperandSize::Word) {
+    string ret;
+    ret += 0x66;
+    if (is_extension_register(reg)) {
+      ret += 0x41;
+    }
+    ret += 0xB8 | (reg & 7);
+    ret.append(reinterpret_cast<const char*>(&value), 2);
+    return ret;
+
+  } else if (size == OperandSize::Byte) {
+    string ret;
+    if (is_extension_register(reg)) {
+      ret += 0x41;
+    }
+    ret += 0xB0 | (reg & 7);
+    ret += static_cast<int8_t>(value);
+    return ret;
+  } else {
+    throw invalid_argument("unknown operand size");
+  }
+}
+
+
+
+string generate_jmp(const MemoryReference& mem) {
+  return generate_rm(Operation::CALL_JMP_ABS, mem, 4, OperandSize::DoubleWord);
 }
 
 string generate_jmp(int64_t offset) {
   string ret;
-  if ((offset >= -0x80) && (offset <= 0x7F)) {
-    ret += 0xEB;
-    ret.append(reinterpret_cast<const char*>(&offset), 1);
-  } else {
+  if ((offset > 0x7FFFFFFFLL) || (offset < -0x80000000LL)) {
+    throw invalid_argument("jump offset too large");
+  } else if ((offset > 0x7F) || (offset < -0x80)) {
     ret += 0xE9;
     ret.append(reinterpret_cast<const char*>(&offset), 4);
+  } else {
+    ret += 0xEB;
+    ret.append(reinterpret_cast<const char*>(&offset), 1);
   }
   return ret;
+}
+
+string generate_call(const MemoryReference& mem) {
+  return generate_rm(Operation::CALL_JMP_ABS, mem, 2, OperandSize::DoubleWord);
 }
 
 string generate_call(int64_t offset) {
@@ -182,6 +262,402 @@ string generate_ret(uint16_t stack_bytes) {
   } else {
     return string("\xC3", 1);
   }
+}
+
+
+
+static string generate_jcc(Operation op8, Operation op, int64_t offset) {
+  string ret;
+  if ((offset > 0x7FFFFFFFLL) || (offset < -0x80000000LL)) {
+    throw invalid_argument("jump offset too large");
+  } else if ((offset > 0x7F) || (offset < -0x80)) {
+    if (op > 0xFF) {
+      ret += (op >> 8);
+    }
+    ret += (op & 0xFF);
+    ret.append(reinterpret_cast<const char*>(&offset), 4);
+  } else {
+    if (op8 > 0xFF) {
+      ret += (op8 >> 8);
+    }
+    ret += (op8 & 0xFF);
+    ret += static_cast<int8_t>(offset);
+  }
+  return ret;
+}
+
+std::string generate_jo(int64_t offset) {
+  return generate_jcc(Operation::JO8, Operation::JO, offset);
+}
+
+std::string generate_jno(int64_t offset) {
+  return generate_jcc(Operation::JNO8, Operation::JNO, offset);
+}
+
+std::string generate_jb(int64_t offset) {
+  return generate_jcc(Operation::JB8, Operation::JB, offset);
+}
+
+std::string generate_jnae(int64_t offset) {
+  return generate_jcc(Operation::JNAE8, Operation::JNAE, offset);
+}
+
+std::string generate_jc(int64_t offset) {
+  return generate_jcc(Operation::JC8, Operation::JC, offset);
+}
+
+std::string generate_jnb(int64_t offset) {
+  return generate_jcc(Operation::JNB8, Operation::JNB, offset);
+}
+
+std::string generate_jae(int64_t offset) {
+  return generate_jcc(Operation::JAE8, Operation::JAE, offset);
+}
+
+std::string generate_jnc(int64_t offset) {
+  return generate_jcc(Operation::JNC8, Operation::JNC, offset);
+}
+
+std::string generate_jz(int64_t offset) {
+  return generate_jcc(Operation::JZ8, Operation::JZ, offset);
+}
+
+std::string generate_je(int64_t offset) {
+  return generate_jcc(Operation::JE8, Operation::JE, offset);
+}
+
+std::string generate_jnz(int64_t offset) {
+  return generate_jcc(Operation::JNZ8, Operation::JNZ, offset);
+}
+
+std::string generate_jne(int64_t offset) {
+  return generate_jcc(Operation::JNE8, Operation::JNE, offset);
+}
+
+std::string generate_jbe(int64_t offset) {
+  return generate_jcc(Operation::JBE8, Operation::JBE, offset);
+}
+
+std::string generate_jna(int64_t offset) {
+  return generate_jcc(Operation::JNA8, Operation::JNA, offset);
+}
+
+std::string generate_jnbe(int64_t offset) {
+  return generate_jcc(Operation::JNBE8, Operation::JNBE, offset);
+}
+
+std::string generate_ja(int64_t offset) {
+  return generate_jcc(Operation::JA8, Operation::JA, offset);
+}
+
+std::string generate_js(int64_t offset) {
+  return generate_jcc(Operation::JS8, Operation::JS, offset);
+}
+
+std::string generate_jns(int64_t offset) {
+  return generate_jcc(Operation::JNS8, Operation::JNS, offset);
+}
+
+std::string generate_jp(int64_t offset) {
+  return generate_jcc(Operation::JP8, Operation::JP, offset);
+}
+
+std::string generate_jpe(int64_t offset) {
+  return generate_jcc(Operation::JPE8, Operation::JPE, offset);
+}
+
+std::string generate_jnp(int64_t offset) {
+  return generate_jcc(Operation::JNP8, Operation::JNP, offset);
+}
+
+std::string generate_jpo(int64_t offset) {
+  return generate_jcc(Operation::JPO8, Operation::JPO, offset);
+}
+
+std::string generate_jl(int64_t offset) {
+  return generate_jcc(Operation::JL8, Operation::JL, offset);
+}
+
+std::string generate_jnge(int64_t offset) {
+  return generate_jcc(Operation::JNGE8, Operation::JNGE, offset);
+}
+
+std::string generate_jnl(int64_t offset) {
+  return generate_jcc(Operation::JNL8, Operation::JNL, offset);
+}
+
+std::string generate_jge(int64_t offset) {
+  return generate_jcc(Operation::JGE8, Operation::JGE, offset);
+}
+
+std::string generate_jle(int64_t offset) {
+  return generate_jcc(Operation::JLE8, Operation::JLE, offset);
+}
+
+std::string generate_jng(int64_t offset) {
+  return generate_jcc(Operation::JNG8, Operation::JNG, offset);
+}
+
+std::string generate_jnle(int64_t offset) {
+  return generate_jcc(Operation::JNLE8, Operation::JNLE, offset);
+}
+
+std::string generate_jg(int64_t offset) {
+  return generate_jcc(Operation::JG8, Operation::JG, offset);
+}
+
+
+
+
+
+static string generate_imm_math(Operation math_op, const MemoryReference& to,
+    int64_t value, OperandSize size) {
+  if (math_op & 0xC7) {
+    throw invalid_argument("immediate math opcodes must use basic Operation types");
+  }
+
+  Operation op;
+  if (size == OperandSize::Byte) {
+    op = Operation::MATH8_IMM8;
+  } else if ((value > 0x7FFFFFFFLL) || (value < -0x80000000LL)) {
+    throw invalid_argument("immediate value out of range");
+  } else if ((value > 0x7F) || (value < -0x80)) {
+    op = Operation::MATH_IMM32;
+  } else {
+    op = Operation::MATH_IMM8;
+  }
+
+  uint8_t z = (math_op >> 3) & 7;
+  string ret = generate_rm(op, to, z, size);
+  if ((op == Operation::MATH8_IMM8) || (op == Operation::MATH_IMM8)) {
+    ret += static_cast<uint8_t>(value);
+  } else if (op == Operation::MATH_IMM32) {
+    ret.append(reinterpret_cast<const char*>(&value), 4);
+  }
+  return ret;
+}
+
+
+
+string generate_add(const MemoryReference& to, const MemoryReference& from,
+    OperandSize size) {
+  return generate_load_store(Operation::ADD_STORE8, to, from, size);
+}
+
+string generate_add(const MemoryReference& to, int64_t value,
+    OperandSize size) {
+  return generate_imm_math(Operation::ADD_STORE8, to, value, size);
+}
+
+string generate_or(const MemoryReference& to, const MemoryReference& from,
+    OperandSize size) {
+  return generate_load_store(Operation::OR_STORE8, to, from, size);
+}
+
+string generate_or(const MemoryReference& to, int64_t value,
+    OperandSize size) {
+  return generate_imm_math(Operation::OR_STORE8, to, value, size);
+}
+
+string generate_adc(const MemoryReference& to, const MemoryReference& from,
+    OperandSize size) {
+  return generate_load_store(Operation::ADC_STORE8, to, from, size);
+}
+
+string generate_adc(const MemoryReference& to, int64_t value,
+    OperandSize size) {
+  return generate_imm_math(Operation::ADC_STORE8, to, value, size);
+}
+
+string generate_sbb(const MemoryReference& to, const MemoryReference& from,
+    OperandSize size) {
+  return generate_load_store(Operation::SBB_STORE8, to, from, size);
+}
+
+string generate_sbb(const MemoryReference& to, int64_t value,
+    OperandSize size) {
+  return generate_imm_math(Operation::SBB_STORE8, to, value, size);
+}
+
+string generate_and(const MemoryReference& to, const MemoryReference& from,
+    OperandSize size) {
+  return generate_load_store(Operation::AND_STORE8, to, from, size);
+}
+
+string generate_and(const MemoryReference& to, int64_t value,
+    OperandSize size) {
+  return generate_imm_math(Operation::AND_STORE8, to, value, size);
+}
+
+string generate_sub(const MemoryReference& to, const MemoryReference& from,
+    OperandSize size) {
+  return generate_load_store(Operation::SUB_STORE8, to, from, size);
+}
+
+string generate_sub(const MemoryReference& to, int64_t value,
+    OperandSize size) {
+  return generate_imm_math(Operation::SUB_STORE8, to, value, size);
+}
+
+string generate_xor(const MemoryReference& to, const MemoryReference& from,
+    OperandSize size) {
+  return generate_load_store(Operation::XOR_STORE8, to, from, size);
+}
+
+string generate_xor(const MemoryReference& to, int64_t value,
+    OperandSize size) {
+  return generate_imm_math(Operation::XOR_STORE8, to, value, size);
+}
+
+string generate_cmp(const MemoryReference& to, const MemoryReference& from,
+    OperandSize size) {
+  return generate_load_store(Operation::CMP_STORE8, to, from, size);
+}
+
+string generate_cmp(const MemoryReference& to, int64_t value,
+    OperandSize size) {
+  return generate_imm_math(Operation::CMP_STORE8, to, value, size);
+}
+
+string generate_not(const MemoryReference& target, OperandSize size) {
+  return generate_rm(Operation::NOT_NEG, target, 2, size);
+}
+
+string generate_neg(const MemoryReference& target, OperandSize size) {
+  return generate_rm(Operation::NOT_NEG, target, 3, size);
+}
+
+
+
+string generate_test(const MemoryReference& a, const MemoryReference& b,
+    OperandSize size) {
+  if (a.field_size && b.field_size) {
+    throw invalid_argument("test opcode can have at most one memory reference");
+  }
+  if (a.field_size) {
+    return generate_rm(Operation::TEST, a, b.base_register, size);
+  }
+  return generate_rm(Operation::TEST, b, a.base_register, size);
+}
+
+string generate_seto(const MemoryReference& target) {
+  return generate_rm(Operation::SETO, target, 0, OperandSize::Byte);
+}
+
+string generate_setno(const MemoryReference& target) {
+  return generate_rm(Operation::SETNO, target, 0, OperandSize::Byte);
+}
+
+string generate_setb(const MemoryReference& target) {
+  return generate_rm(Operation::SETB, target, 0, OperandSize::Byte);
+}
+
+string generate_setnae(const MemoryReference& target) {
+  return generate_rm(Operation::SETNAE, target, 0, OperandSize::Byte);
+}
+
+string generate_setc(const MemoryReference& target) {
+  return generate_rm(Operation::SETC, target, 0, OperandSize::Byte);
+}
+
+string generate_setnb(const MemoryReference& target) {
+  return generate_rm(Operation::SETNB, target, 0, OperandSize::Byte);
+}
+
+string generate_setae(const MemoryReference& target) {
+  return generate_rm(Operation::SETAE, target, 0, OperandSize::Byte);
+}
+
+string generate_setnc(const MemoryReference& target) {
+  return generate_rm(Operation::SETNC, target, 0, OperandSize::Byte);
+}
+
+string generate_setz(const MemoryReference& target) {
+  return generate_rm(Operation::SETZ, target, 0, OperandSize::Byte);
+}
+
+string generate_sete(const MemoryReference& target) {
+  return generate_rm(Operation::SETE, target, 0, OperandSize::Byte);
+}
+
+string generate_setnz(const MemoryReference& target) {
+  return generate_rm(Operation::SETNZ, target, 0, OperandSize::Byte);
+}
+
+string generate_setne(const MemoryReference& target) {
+  return generate_rm(Operation::SETNE, target, 0, OperandSize::Byte);
+}
+
+string generate_setbe(const MemoryReference& target) {
+  return generate_rm(Operation::SETBE, target, 0, OperandSize::Byte);
+}
+
+string generate_setna(const MemoryReference& target) {
+  return generate_rm(Operation::SETNA, target, 0, OperandSize::Byte);
+}
+
+string generate_setnbe(const MemoryReference& target) {
+  return generate_rm(Operation::SETNBE, target, 0, OperandSize::Byte);
+}
+
+string generate_seta(const MemoryReference& target) {
+  return generate_rm(Operation::SETA, target, 0, OperandSize::Byte);
+}
+
+string generate_sets(const MemoryReference& target) {
+  return generate_rm(Operation::SETS, target, 0, OperandSize::Byte);
+}
+
+string generate_setns(const MemoryReference& target) {
+  return generate_rm(Operation::SETNS, target, 0, OperandSize::Byte);
+}
+
+string generate_setp(const MemoryReference& target) {
+  return generate_rm(Operation::SETP, target, 0, OperandSize::Byte);
+}
+
+string generate_setpe(const MemoryReference& target) {
+  return generate_rm(Operation::SETPE, target, 0, OperandSize::Byte);
+}
+
+string generate_setnp(const MemoryReference& target) {
+  return generate_rm(Operation::SETNP, target, 0, OperandSize::Byte);
+}
+
+string generate_setpo(const MemoryReference& target) {
+  return generate_rm(Operation::SETPO, target, 0, OperandSize::Byte);
+}
+
+string generate_setl(const MemoryReference& target) {
+  return generate_rm(Operation::SETL, target, 0, OperandSize::Byte);
+}
+
+string generate_setnge(const MemoryReference& target) {
+  return generate_rm(Operation::SETNGE, target, 0, OperandSize::Byte);
+}
+
+string generate_setnl(const MemoryReference& target) {
+  return generate_rm(Operation::SETNL, target, 0, OperandSize::Byte);
+}
+
+string generate_setge(const MemoryReference& target) {
+  return generate_rm(Operation::SETGE, target, 0, OperandSize::Byte);
+}
+
+string generate_setle(const MemoryReference& target) {
+  return generate_rm(Operation::SETLE, target, 0, OperandSize::Byte);
+}
+
+string generate_setng(const MemoryReference& target) {
+  return generate_rm(Operation::SETNG, target, 0, OperandSize::Byte);
+}
+
+string generate_setnle(const MemoryReference& target) {
+  return generate_rm(Operation::SETNLE, target, 0, OperandSize::Byte);
+}
+
+string generate_setg(const MemoryReference& target) {
+  return generate_rm(Operation::SETG, target, 0, OperandSize::Byte);
 }
 
 

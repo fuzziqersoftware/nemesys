@@ -16,10 +16,11 @@ def test1(arg1=None, arg2=True, arg3=False):
   print("arg2 is %s and arg3 is %s" % (arg2, arg3), "ok that's all")
 
 def test2(arg, arg2):
+  d = {item[0]: item[1] for item in arg2 if item[2]}
   for x in [a for a, b in arg if b]:
-    yield (x, y, z)
-  for x, y in {item[0]: item[1] for item in arg2 if item[2]}.iteritems():
-    yield (x, y)
+    yield (x, y, y_from_test)
+  for x in d:
+    yield (x, d[y])
 
 def test3(arg1, *args, kwarg1=False, **kwargs):
   """Prints args and kwargs to stdout and stderr."""
@@ -30,41 +31,42 @@ def test3(arg1, *args, kwarg1=False, **kwargs):
 def test4(list1, dict1):
   '''Deletes things from lists & dicts given as arguments.'''
   if list1 is not None:
-    del list1[0]
+    pass  # del list1[0]
   assert dict1 is not None
   assert 'name' in dict1, "field 'name' not in %r" % (dict1,)
-  del dict1['name']
+  # del dict1['name']
 
 def test5():
   a.b.c.d.e = 15
   a.c['omg'] = 'lolz'
 
-@lol
-@memo
-def testmath(x):
-  # wow, just look at all those semicolons
-  x += 1 ; yield x
-  x -= 1;yield x
-  x *= x ;yield x
-  x /= 2; yield x
-  x %= 100 ; yield x ;
-  x &= 0xF ; yield x;
-  x |= 0x20
-  yield x
-  x ^= 4
-  yield x
-  x <<= 2
-  yield x
-  x >>= 1
-  yield x
-  x **= 2
-  yield x
-  x //= 10
-  yield x
-  return -2**-2
+# TODO: uncomment when decorators and AugmentStatement are implemented
+# @lol
+# @memo
+# def testmath(x):
+#   # wow, just look at all those semicolons
+#   x += 1 ; yield x
+#   x -= 1;yield x
+#   x *= x ;yield x
+#   x /= 2; yield x
+#   x %= 100 ; yield x ;
+#   x &= 0xF ; yield x;
+#   x |= 0x20
+#   yield x
+#   x ^= 4
+#   yield x
+#   x <<= 2
+#   yield x
+#   x >>= 1
+#   yield x
+#   x **= 2
+#   yield x
+#   x //= 10
+#   yield x
+#   return -2**-2
 
 def testloops(num):
-  for x in range(num):
+  for x in [1, 2, 3]:  # TODO: range(num):
     if 2 == x:
       continue
     elif x > 10:
@@ -78,14 +80,14 @@ def testloops(num):
 global_var = 0
 def test_keywords():
   global global_var
-  exec 'global_var = random.randint(1000)'
+  # exec 'global_var = random.randint(1000)'
   iterations = 0
   while global_var > 1:
     if global_var % 2:
       global_var /= 2
     else:
       global_var = global_var * 3 + 1
-    iterations += 1
+    iterations = iterations + 1
   else:
     print('iterations: %d' % iterations)
 
@@ -99,18 +101,18 @@ for x in range(10):
 
 # also tests nonuniform indentation
 try:
-  i = random.randint(1, 7)
-  if i == 1:
+  i = 4  # os.getpid() % 6
+  if i == 0:
     raise NotImplementedError()
-  elif i == 2:
+  elif i == 1:
     raise ValueError()
-  elif i == 3:
+  elif i == 2:
     raise AttributeError()
-  elif i == 4:
+  elif i == 3:
     raise AssertionError()
-  elif i == 5:
+  elif i == 4:
     raise NameError()
-  elif i == 6:
+  elif i == 5:
     raise ImportError()
 except NotImplementedError, e:
                     print('1', e)
@@ -123,22 +125,22 @@ except (NameError, ImportError) as e:
 except KeyError:
     raise
 except:
-    yield
+    print(wtf)
 else:
         print('no exception')
 finally:
           print('finally')
 
-def memo(func):
-    cache = {}
-    @wraps(func)
-    def wrap(*args):
-        if args not in cache:
-            cache[args] = func(*args)
-        return cache[args]
-    return wrap
+# def memo(func):
+#     cache = {}
+#     @wraps(func)
+#     def wrap(*args):
+#         if args not in cache:
+#             cache[args] = func(*args)
+#         return cache[args]
+#     return wrap
 
-@memo
+# @memo
 class with_class:
   hax = 9
   def __init__(self, lol):

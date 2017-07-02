@@ -11,12 +11,6 @@ struct ASTVisitor; // forward declaration since the visitor type depends on type
 
 
 
-enum class ArgumentMode {
-  DefaultArgMode = 0, // normal (named arg or kwarg)
-  ArgListMode,        // *args
-  KeywordArgListMode, // **kwargs
-};
-
 enum class UnaryOperator {
   LogicalNot = 0, // not
   Not,            // ~
@@ -77,17 +71,17 @@ BinaryOperator binary_operator_for_augment_operator(AugmentOperator oper);
 
 
 
-struct TreeNode {
+struct ASTNode {
   size_t file_offset;
 
-  TreeNode() = delete;
-  TreeNode(size_t file_offset);
+  ASTNode() = delete;
+  ASTNode(size_t file_offset);
 
   virtual std::string str() const = 0;
   virtual void accept(ASTVisitor* v) = 0;
 };
 
-struct Expression : TreeNode {
+struct Expression : ASTNode {
   Expression(size_t file_offset);
 
   virtual bool valid_lvalue() const;
@@ -155,22 +149,12 @@ struct TupleLValueReference : LValueReference {
 
 
 
-struct ArgumentDefinition : TreeNode {
-  std::string name;
-  std::shared_ptr<Expression> default_value;
-  ArgumentMode mode;
-
-  ArgumentDefinition(const std::string& name,
-      std::shared_ptr<Expression> default_value, ArgumentMode mode,
-      size_t file_offset);
-
-  virtual std::string str() const;
-  virtual void accept(ASTVisitor* v);
-};
-
 struct UnaryOperation : Expression {
   UnaryOperator oper;
   std::shared_ptr<Expression> expr;
+
+  // annotations
+  int64_t split_id; // only used if oper == YieldOperator
 
   UnaryOperation(UnaryOperator oper, std::shared_ptr<Expression> expr,
       size_t file_offset);
@@ -298,15 +282,36 @@ struct SetComprehension : Expression {
   virtual void accept(ASTVisitor* v);
 };
 
+struct FunctionArguments {
+  struct Argument {
+    std::string name;
+    std::shared_ptr<Expression> default_value; // NULL for non-keyword args
+
+    Argument(const std::string& name, std::shared_ptr<Expression> default_value);
+
+    std::string str() const;
+  };
+
+  // guarantee: all positional arguments appear before keyword arguments in args
+  std::vector<Argument> args;
+  std::string varargs_name;
+  std::string varkwargs_name;
+
+  FunctionArguments(std::vector<Argument>&& args,
+      const std::string& varargs_name, const std::string& varkwargs_name);
+
+  std::string str() const;
+};
+
 struct LambdaDefinition : Expression {
-  std::vector<std::shared_ptr<ArgumentDefinition>> args;
+  FunctionArguments args;
   std::shared_ptr<Expression> result;
 
   // annotations
-  uint64_t function_id;
+  int64_t function_id;
 
-  LambdaDefinition(std::vector<std::shared_ptr<ArgumentDefinition>> args,
-      std::shared_ptr<Expression> result, size_t file_offset);
+  LambdaDefinition(FunctionArguments&& args, std::shared_ptr<Expression> result,
+      size_t file_offset);
 
   virtual std::string str() const;
   virtual void accept(ASTVisitor* v);
@@ -314,14 +319,22 @@ struct LambdaDefinition : Expression {
 
 struct FunctionCall : Expression {
   std::shared_ptr<Expression> function;
-  std::vector<std::shared_ptr<ArgumentDefinition>> args;
+  std::vector<std::shared_ptr<Expression>> args;
+  std::unordered_map<std::string, std::shared_ptr<Expression>> kwargs;
+  std::shared_ptr<Expression> varargs;
+  std::shared_ptr<Expression> varkwargs;
 
   // annotations
-  uint64_t function_id;
+  int64_t function_id;
+  int64_t split_id;
+
+  int64_t callee_function_id;
 
   FunctionCall(std::shared_ptr<Expression> function,
-      std::vector<std::shared_ptr<ArgumentDefinition>> args,
-      size_t file_offset);
+      std::vector<std::shared_ptr<Expression>>&& args,
+      std::unordered_map<std::string, std::shared_ptr<Expression>>&& kwargs,
+      std::shared_ptr<Expression> varargs,
+      std::shared_ptr<Expression> varkwargs, size_t file_offset);
 
   virtual std::string str() const;
   virtual void accept(ASTVisitor* v);
@@ -431,7 +444,7 @@ struct AttributeLookup : Expression {
 };
 
 
-struct Statement : TreeNode {
+struct Statement : ASTNode {
   Statement(size_t file_offset);
 
   virtual void print(FILE* stream, size_t indent_level = 0) const = 0;
@@ -613,6 +626,9 @@ struct YieldStatement : FlowStatement {
   std::shared_ptr<Expression> expr; // if NULL, yields None
   bool from;
 
+  // annotations
+  int64_t split_id;
+
   YieldStatement(std::shared_ptr<Expression> expr, bool from,
       size_t file_offset);
 
@@ -735,13 +751,13 @@ struct WithStatement : CompoundStatement {
 struct FunctionDefinition : CompoundStatement {
   std::vector<std::shared_ptr<Expression>> decorators;
   std::string name;
-  std::vector<std::shared_ptr<ArgumentDefinition>> args;
+  FunctionArguments args;
 
   // annotations
-  uint64_t function_id;
+  int64_t function_id;
 
   FunctionDefinition(std::vector<std::shared_ptr<Expression>>&& decorators,
-      const std::string& name, std::vector<std::shared_ptr<ArgumentDefinition>>&& args,
+      const std::string& name, FunctionArguments&& args,
       std::vector<std::shared_ptr<Statement>>&& items, size_t file_offset);
 
   virtual std::string str() const;
@@ -754,7 +770,7 @@ struct ClassDefinition : CompoundStatement {
   std::vector<std::shared_ptr<Expression>> parent_types;
 
   // annotations
-  uint64_t class_id;
+  int64_t class_id;
 
   ClassDefinition(std::vector<std::shared_ptr<Expression>>&& decorators,
       const std::string& name, std::vector<std::shared_ptr<Expression>>&& parent_types,

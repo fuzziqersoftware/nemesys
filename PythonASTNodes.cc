@@ -32,6 +32,18 @@ static string comma_str_list(const vector<shared_ptr<T>>& l) {
   return ret;
 }
 
+template<typename T>
+static string comma_str_list(const vector<T>& l) {
+  string ret;
+  for (int x = 0; x < l.size(); x++) {
+    if (x > 0) {
+      ret += ", ";
+    }
+    ret += l[x].str();
+  }
+  return ret;
+}
+
 static string comma_list(const vector<string>& l) {
   string ret;
   for (int x = 0; x < l.size(); x++) {
@@ -75,11 +87,11 @@ BinaryOperator binary_operator_for_augment_operator(AugmentOperator oper) {
 
 
 
-TreeNode::TreeNode(size_t file_offset) : file_offset(file_offset) { }
+ASTNode::ASTNode(size_t file_offset) : file_offset(file_offset) { }
 
 
 
-Expression::Expression(size_t file_offset) : TreeNode(file_offset) { }
+Expression::Expression(size_t file_offset) : ASTNode(file_offset) { }
 
 bool Expression::valid_lvalue() const {
   return false;
@@ -100,7 +112,7 @@ AttributeLValueReference::AttributeLValueReference(shared_ptr<Expression> base,
     const string& name, size_t file_offset) : LValueReference(file_offset),
     base(base), name(name) { }
 
-std::string AttributeLValueReference::str() const {
+string AttributeLValueReference::str() const {
   if (this->base.get()) {
     return this->base->str() + "." + this->name + " /*lv*/";
   }
@@ -118,7 +130,7 @@ ArrayIndexLValueReference::ArrayIndexLValueReference(
     size_t file_offset) : LValueReference(file_offset), array(array),
     index(index) { }
 
-std::string ArrayIndexLValueReference::str() const {
+string ArrayIndexLValueReference::str() const {
   return this->array->str() + "[" + this->index->str() + "] /*lv*/";
 }
 
@@ -134,7 +146,7 @@ ArraySliceLValueReference::ArraySliceLValueReference(
     size_t file_offset) : LValueReference(file_offset), array(array),
     start_index(start_index), end_index(end_index), step_size(step_size) { }
 
-std::string ArraySliceLValueReference::str() const {
+string ArraySliceLValueReference::str() const {
   string ret = this->array->str() + "[";
   if (this->start_index.get()) {
     ret += this->start_index->str();
@@ -170,7 +182,7 @@ bool TupleLValueReference::valid_lvalue() const {
   return true;
 }
 
-std::string TupleLValueReference::str() const {
+string TupleLValueReference::str() const {
   return comma_str_list(this->items);
 }
 
@@ -180,46 +192,9 @@ void TupleLValueReference::accept(ASTVisitor* v) {
 
 
 
-ArgumentDefinition::ArgumentDefinition(const string& name,
-    shared_ptr<Expression> default_value, ArgumentMode mode, size_t file_offset)
-    : TreeNode(file_offset), name(name), default_value(default_value),
-    mode(mode) { }
-
-string ArgumentDefinition::str() const {
-  switch (this->mode) {
-    case ArgumentMode::DefaultArgMode:
-      if (!this->name.empty()) {
-        return this->name + (!this->default_value ? "" :
-            ("=" + this->default_value->str()));
-      } else {
-        return str_or_null(this->default_value);
-      }
-
-    case ArgumentMode::ArgListMode:
-      if (!this->default_value) {
-        return "*" + this->name;
-      } else {
-        return "*" + str_or_null(this->default_value);
-      }
-
-    case ArgumentMode::KeywordArgListMode:
-      if (!this->default_value) {
-        return "**" + this->name;
-      } else {
-        return "**" + str_or_null(this->default_value);
-      }
-  }
-  return "(BAD ARGUMENT DEFINITION)";
-}
-
-void ArgumentDefinition::accept(ASTVisitor* v) {
-  v->visit(this);
-}
-
-
-
 UnaryOperation::UnaryOperation(UnaryOperator oper, shared_ptr<Expression> expr,
-    size_t file_offset) : Expression(file_offset), oper(oper), expr(expr) { }
+    size_t file_offset) : Expression(file_offset), oper(oper), expr(expr),
+    split_id(0) { }
 
 static const char* unary_operator_names[] = {
   "not ",
@@ -235,6 +210,10 @@ string UnaryOperation::str() const {
   auto expr_str = this->expr->str();
   if (this->oper == UnaryOperator::Representation) {
     return string_printf("repr(%s)", expr_str.c_str());
+  }
+  if (this->oper == UnaryOperator::Yield) {
+    string split_id_str = this->split_id ? string_printf("/*split=%" PRIu64 "*/ ", this->split_id) : "";
+    return string_printf("(yield %s%s)", split_id_str.c_str(), expr_str.c_str());
   }
   return string_printf("(%s%s)",
       unary_operator_names[static_cast<size_t>(this->oper)], expr_str.c_str());
@@ -460,12 +439,53 @@ void SetComprehension::accept(ASTVisitor* v) {
 
 
 
-LambdaDefinition::LambdaDefinition(vector<shared_ptr<ArgumentDefinition>> args,
+FunctionArguments::Argument::Argument(const string& name,
+    std::shared_ptr<Expression> default_value) : name(name),
+    default_value(default_value) { }
+
+string FunctionArguments::Argument::str() const {
+  if (this->default_value.get()) {
+    return this->name + "=" + this->default_value->str();
+  }
+  return this->name;
+}
+
+
+
+
+FunctionArguments::FunctionArguments(std::vector<Argument>&& args,
+    const std::string& varargs_name, const std::string& varkwargs_name) :
+    args(move(args)), varargs_name(varargs_name),
+    varkwargs_name(varkwargs_name) { }
+
+string FunctionArguments::str() const {
+  string ret = comma_str_list(this->args);
+  if (!this->varargs_name.empty()) {
+    if (!ret.empty()) {
+      ret += ", ";
+    }
+    ret += '*';
+    ret += this->varargs_name;
+  }
+  if (!this->varkwargs_name.empty()) {
+    if (!ret.empty()) {
+      ret += ", ";
+    }
+    ret += "**";
+    ret += this->varkwargs_name;
+  }
+  return ret;
+}
+
+
+
+
+LambdaDefinition::LambdaDefinition(FunctionArguments&& args,
     shared_ptr<Expression> result, size_t file_offset) :
-    Expression(file_offset), args(args), result(result) { }
+    Expression(file_offset), args(move(args)), result(result) { }
 
 string LambdaDefinition::str() const {
-  return "lambda " + comma_str_list(this->args) + ": " + this->result->str();
+  return "lambda " + this->args.str() + ": " + this->result->str();
 }
 
 void LambdaDefinition::accept(ASTVisitor* v) {
@@ -475,11 +495,19 @@ void LambdaDefinition::accept(ASTVisitor* v) {
 
 
 FunctionCall::FunctionCall(shared_ptr<Expression> function,
-    vector<shared_ptr<ArgumentDefinition>> args, size_t file_offset) :
-    Expression(file_offset), function(function), args(args) { }
+    vector<shared_ptr<Expression>>&& args,
+    unordered_map<string, shared_ptr<Expression>>&& kwargs,
+    shared_ptr<Expression> varargs, shared_ptr<Expression> varkwargs,
+    size_t file_offset) : Expression(file_offset), function(function),
+    args(move(args)), kwargs(move(kwargs)), varargs(varargs),
+    varkwargs(varkwargs), function_id(0), split_id(0), callee_function_id(0) { }
 
 string FunctionCall::str() const {
-  return this->function->str() + "(" + comma_str_list(this->args) + ")";
+  string split_id_str = this->split_id ?
+      string_printf("/*split=%" PRId64 "*/", this->split_id) : "";
+  string callee_id_str = this->callee_function_id ?
+      string_printf("/*callee=%" PRId64 "*/", this->callee_function_id) : "";
+  return this->function->str() + split_id_str + callee_id_str + "(" + comma_str_list(this->args) + ")";
 }
 
 void FunctionCall::accept(ASTVisitor* v) {
@@ -646,7 +674,7 @@ void AttributeLookup::accept(ASTVisitor* v) {
 
 
 
-Statement::Statement(size_t file_offset) : TreeNode(file_offset) { }
+Statement::Statement(size_t file_offset) : ASTNode(file_offset) { }
 
 
 
@@ -933,14 +961,16 @@ void RaiseStatement::accept(ASTVisitor* v) {
 
 
 YieldStatement::YieldStatement(shared_ptr<Expression> expr, bool from,
-    size_t file_offset) : FlowStatement(file_offset), expr(expr), from(from) { }
+    size_t file_offset) : FlowStatement(file_offset), expr(expr), from(from),
+    split_id(0) { }
 
 string YieldStatement::str() const {
   string prefix = "yield ";
   if (this->from) {
     prefix += "from ";
   }
-  return prefix + str_or_null(this->expr);
+  string split_id_str = this->split_id ? string_printf("/*split=%" PRIu64 "*/ ", this->split_id) : "";
+  return prefix + split_id_str + str_or_null(this->expr);
 }
 
 void YieldStatement::accept(ASTVisitor* v) {
@@ -1028,7 +1058,7 @@ ForStatement::ForStatement(shared_ptr<Expression> variable,
     collection(collection) { }
 
 string ForStatement::str() const {
-  return "for " + this->variable->str() + " in " + this->variable->str() + ":";
+  return "for " + this->variable->str() + " in " + this->collection->str() + ":";
 }
 
 void ForStatement::print(FILE* stream, size_t indent_level) const {
@@ -1164,18 +1194,17 @@ void WithStatement::accept(ASTVisitor* v) {
 
 FunctionDefinition::FunctionDefinition(
     vector<shared_ptr<Expression>>&& decorators, const string& name,
-    vector<shared_ptr<ArgumentDefinition>>&& args,
-    vector<shared_ptr<Statement>>&& items, size_t file_offset) :
-    CompoundStatement(move(items), file_offset), decorators(move(decorators)),
-    name(name), args(move(args)) { }
+    FunctionArguments&& args, vector<shared_ptr<Statement>>&& items,
+    size_t file_offset) : CompoundStatement(move(items), file_offset),
+    decorators(move(decorators)), name(name), args(move(args)) { }
 
 string FunctionDefinition::str() const {
   string prefix;
   for (const auto& decorator : this->decorators) {
     prefix += "@" + decorator->str() + "\n";
   }
-  string args_str = comma_str_list(this->args);
-  return prefix + string_printf("def %s(%s) is %" PRIu64 ":",
+  string args_str = this->args.str();
+  return prefix + string_printf("def %s(%s) /*id=%" PRIu64 "*/:",
       this->name.c_str(), args_str.c_str(), this->function_id);
 }
 

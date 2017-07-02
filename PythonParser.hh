@@ -95,10 +95,7 @@ private:
   std::vector<std::pair<std::shared_ptr<Expression>, std::shared_ptr<Expression>>>
       parse_dict_item_list(ssize_t end_offset);
 
-  std::vector<std::shared_ptr<ArgumentDefinition>>
-      parse_function_argument_definition(ssize_t end_offset);
-  std::vector<std::shared_ptr<ArgumentDefinition>>
-      parse_function_call_arguments(ssize_t end_offset);
+  FunctionArguments parse_function_argument_definition(ssize_t end_offset);
   std::shared_ptr<Expression> parse_expression(ssize_t end_offset,
       bool lvalue_reference = false);
 

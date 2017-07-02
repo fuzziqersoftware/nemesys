@@ -14,7 +14,6 @@ struct ASTVisitor {
   virtual void visit(ArrayIndexLValueReference*);
   virtual void visit(ArraySliceLValueReference*);
   virtual void visit(TupleLValueReference*);
-  virtual void visit(ArgumentDefinition*);
   virtual void visit(UnaryOperation*);
   virtual void visit(BinaryOperation*);
   virtual void visit(TernaryOperation*);
@@ -75,7 +74,6 @@ struct RecursiveASTVisitor : ASTVisitor {
   virtual void visit(ArrayIndexLValueReference*);
   virtual void visit(ArraySliceLValueReference*);
   virtual void visit(TupleLValueReference*);
-  virtual void visit(ArgumentDefinition*);
   virtual void visit(UnaryOperation*);
   virtual void visit(BinaryOperation*);
   virtual void visit(TernaryOperation*);

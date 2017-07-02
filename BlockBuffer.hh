@@ -12,7 +12,7 @@ public:
   void* append(const std::string& data);
   void* append(const void* data, size_t size);
 
-  void set_protection(bool writable, bool readable);
+  void set_protection(bool writable, bool executable);
 
   size_t total_size() const;
   size_t total_free_bytes() const;

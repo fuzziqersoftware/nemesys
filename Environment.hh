@@ -38,8 +38,8 @@ struct Variable {
     std::vector<std::shared_ptr<Variable>>* list_value; // also used for Tuple
     std::unordered_set<Variable>* set_value;
     std::unordered_map<Variable, std::shared_ptr<Variable>>* dict_value;
-    uint64_t function_id;
-    uint64_t class_id;
+    int64_t function_id;
+    int64_t class_id;
   };
 
   // unknown value constructors
@@ -64,7 +64,7 @@ struct Variable {
   Variable(std::unordered_set<Variable>&& set_value);
   Variable(const std::unordered_map<Variable, std::shared_ptr<Variable>>& dict_value);
   Variable(std::unordered_map<Variable, std::shared_ptr<Variable>>&& dict_value);
-  Variable(uint64_t function_or_class_id, bool is_class);
+  Variable(int64_t function_or_class_id, bool is_class);
 
   // copy/move constructors
   Variable(const Variable&);
@@ -80,6 +80,7 @@ struct Variable {
 
   bool truth_value() const;
   bool operator==(const Variable& other) const;
+  bool operator!=(const Variable& other) const;
 };
 
 namespace std {
@@ -88,6 +89,8 @@ namespace std {
     size_t operator()(const Variable& k) const;
   };
 }
+
+std::string type_signature_for_variables(const std::vector<Variable>& vars);
 
 Variable execute_unary_operator(UnaryOperator oper, const Variable& var);
 Variable execute_binary_operator(BinaryOperator oper, const Variable& left,

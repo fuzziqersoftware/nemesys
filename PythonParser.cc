@@ -253,32 +253,35 @@ PythonParser::parse_dict_item_list(ssize_t end_offset) {
   return ret;
 }
 
-vector<shared_ptr<ArgumentDefinition>>
-PythonParser::parse_function_argument_definition(ssize_t end_offset) {
-  vector<shared_ptr<ArgumentDefinition>> ret;
+FunctionArguments PythonParser::parse_function_argument_definition(
+    ssize_t end_offset) {
+
+  std::vector<FunctionArguments::Argument> args;
+  std::string varargs_name;
+  std::string varkwargs_name;
+
   while (this->token_num < end_offset) {
     ssize_t comma_offset = this->find_bracketed_end(TokenType::_Comma, end_offset);
     if (comma_offset == -1) {
       comma_offset = end_offset;
     }
-    size_t offset = this->head_token().text_offset;
 
     // if there's a * or **, it's a *args or **kwargs. expect a _Dynamic
     // followed by maybe a _Comma
-    ArgumentMode mode = ArgumentMode::DefaultArgMode;
+    string* var_target = NULL;
     if (this->head_token().type == TokenType::_Asterisk) {
-      mode = ArgumentMode::ArgListMode;
+      var_target = &varargs_name;
     }
     if (this->head_token().type == TokenType::_DoubleAsterisk) {
-      mode = ArgumentMode::KeywordArgListMode;
+      var_target = &varkwargs_name;
     }
-
-    if (mode != ArgumentMode::DefaultArgMode) {
+    if (var_target) {
       this->advance_token();
       this->expect_token_type(TokenType::_Dynamic, ParseError::SyntaxError,
           "expected name for args/kwargs variable");
-      ret.emplace_back(new ArgumentDefinition(this->head_token().string_data,
-          NULL, mode, offset));
+      this->expect_condition(var_target->empty(), ParseError::SyntaxError,
+          "multiple variadic names given of the same type");
+      *var_target = this->head_token().string_data;
       this->advance_token();
 
     // else it's a normal arg
@@ -292,7 +295,7 @@ PythonParser::parse_function_argument_definition(ssize_t end_offset) {
         this->advance_token();
         default_value = parse_expression(comma_offset);
       }
-      ret.emplace_back(new ArgumentDefinition(name, default_value, mode, offset));
+      args.emplace_back(name, default_value);
     }
 
     if (comma_offset < end_offset) {
@@ -301,57 +304,7 @@ PythonParser::parse_function_argument_definition(ssize_t end_offset) {
       this->advance_token(); // skip comma
     }
   }
-  return ret;
-}
-
-vector<shared_ptr<ArgumentDefinition>>
-PythonParser::parse_function_call_arguments(ssize_t end_offset) {
-  // TODO: reduce code duplication with this function and the ebove
-  vector<shared_ptr<ArgumentDefinition>> ret;
-  while (this->token_num < end_offset) {
-    ssize_t comma_offset = this->find_bracketed_end(TokenType::_Comma, end_offset);
-    if (comma_offset == -1) {
-      comma_offset = end_offset;
-    }
-    size_t offset = this->head_token().text_offset;
-
-    // if there's a * or **, it's a *args or **kwargs; change the arg mode
-    ArgumentMode mode = ArgumentMode::DefaultArgMode;
-    if (this->head_token().type == TokenType::_Asterisk) {
-      mode = ArgumentMode::ArgListMode;
-      this->advance_token();
-    }
-    if (this->head_token().type == TokenType::_DoubleAsterisk) {
-      mode = ArgumentMode::KeywordArgListMode;
-      this->advance_token();
-    }
-
-    // if there's a top-level =, then it's a kwarg
-    string name;
-    ssize_t equals_offset = find_bracketed_end(TokenType::_Equals, comma_offset);
-    if (equals_offset >= 0) {
-      this->expect_condition((mode == ArgumentMode::DefaultArgMode) &&
-          (equals_offset == this->token_num + 1), ParseError::SyntaxError,
-          "found =, but not immediately following name");
-      this->expect_token_type(TokenType::_Dynamic, ParseError::SyntaxError,
-          "expected name for keyword argument");
-      name = this->head_token().string_data;
-      this->advance_token();
-      this->expect_token_type(TokenType::_Equals, ParseError::SyntaxError,
-          "expected = immediately following keyword argument name");
-      this->advance_token();
-    }
-
-    shared_ptr<Expression> default_value = this->parse_expression(comma_offset);
-    ret.emplace_back(new ArgumentDefinition(name, default_value, mode, offset));
-
-    if (comma_offset < end_offset) {
-      this->expect_token_type(TokenType::_Comma, ParseError::IncompleteParsing,
-          "function call argument is incomplete");
-      this->advance_token(); // skip comma
-    }
-  }
-  return ret;
+  return FunctionArguments(move(args), varargs_name, varkwargs_name);
 }
 
 shared_ptr<Expression> PythonParser::parse_expression(ssize_t end_offset,
@@ -375,7 +328,8 @@ shared_ptr<Expression> PythonParser::parse_expression(ssize_t end_offset,
       auto result = this->parse_expression(end_offset);
       this->expect_offset(end_offset, ParseError::IncompleteParsing,
           "lambda body is incomplete");
-      return shared_ptr<LambdaDefinition>(new LambdaDefinition(args, result, offset));
+      return shared_ptr<LambdaDefinition>(new LambdaDefinition(move(args),
+          result, offset));
     }
 
     // 15. x if y else z
@@ -639,11 +593,70 @@ shared_ptr<Expression> PythonParser::parse_expression(ssize_t end_offset,
       this->expect_condition((paren_end_offset > paren_offset) &&
           (paren_end_offset < end_offset), ParseError::BracketingError);
 
-      auto args = this->parse_function_call_arguments(paren_end_offset);
+      // parse function call arguments
+      vector<shared_ptr<Expression>> args;
+      unordered_map<string, shared_ptr<Expression>> kwargs;
+      shared_ptr<Expression> varargs;
+      shared_ptr<Expression> varkwargs;
+      while (this->token_num < paren_end_offset) {
+        ssize_t comma_offset = this->find_bracketed_end(TokenType::_Comma, paren_end_offset);
+        if (comma_offset == -1) {
+          comma_offset = paren_end_offset;
+        }
+
+        // if there's a * or **, it's a *args or **kwargs
+        shared_ptr<Expression>* var_target = NULL;
+        if (this->head_token().type == TokenType::_Asterisk) {
+          this->advance_token();
+          var_target = &varargs;
+        }
+        if (this->head_token().type == TokenType::_DoubleAsterisk) {
+          this->advance_token();
+          var_target = &varkwargs;
+        }
+        if (var_target) {
+          this->expect_condition(!var_target->get(), ParseError::SyntaxError,
+              "multiple variadic names given of the same type");
+          *var_target = this->parse_expression(comma_offset);
+          this->advance_token();
+
+        } else {
+          // if there's a top-level =, then it's a kwarg
+          string name;
+          ssize_t equals_offset = find_bracketed_end(TokenType::_Equals, comma_offset);
+          if (equals_offset >= 0) {
+            this->expect_condition((equals_offset == this->token_num + 1),
+                ParseError::SyntaxError, "found =, but not immediately following name");
+            this->expect_token_type(TokenType::_Dynamic, ParseError::SyntaxError,
+                "expected name for keyword argument");
+            name = this->head_token().string_data;
+            this->advance_token();
+            this->expect_token_type(TokenType::_Equals, ParseError::SyntaxError,
+                "expected = immediately following keyword argument name");
+            this->advance_token();
+          }
+
+          shared_ptr<Expression> default_value = this->parse_expression(comma_offset);
+
+          if (name.empty()) {
+            args.emplace_back(default_value);
+          } else {
+            kwargs.emplace(name, default_value);
+          }
+        }
+
+        if (comma_offset < paren_end_offset) {
+          this->expect_token_type(TokenType::_Comma, ParseError::IncompleteParsing,
+              "function call argument is incomplete");
+          this->advance_token(); // skip comma
+        }
+      }
+
       this->expect_offset(paren_end_offset, ParseError::IncompleteParsing,
-          "function argument list is incomplete");
+          "function call argument list is incomplete");
       this->advance_token();
-      return shared_ptr<Expression>(new FunctionCall(function, args, offset));
+      return shared_ptr<Expression>(new FunctionCall(function, move(args),
+          move(kwargs), varargs, varkwargs, offset));
 
     // attribute lookup
     } else if (effective_offset == dot_offset) {
@@ -982,7 +995,6 @@ shared_ptr<SimpleStatement> PythonParser::parse_simple_statement(
 
 vector<shared_ptr<Statement>> PythonParser::parse_compound_statement_suite(
     ssize_t end_offset) {
-  size_t offset = this->head_token().text_offset;
   vector<shared_ptr<Statement>> ret;
 
   // parser state local to the current indentation level
@@ -1031,6 +1043,8 @@ vector<shared_ptr<Statement>> PythonParser::parse_compound_statement_suite(
     if (line_end_offset < 0) {
       line_end_offset = end_offset;
     }
+
+    size_t offset = this->head_token().text_offset;
 
     switch (this->head_token().type) {
 

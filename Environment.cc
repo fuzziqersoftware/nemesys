@@ -28,7 +28,8 @@ static int64_t ipow(int64_t base, int64_t exponent) {
 
 
 Variable::Variable() : type(ValueType::Indeterminate), value_known(false) { }
-Variable::Variable(ValueType type) : type(type), value_known(false) { }
+Variable::Variable(ValueType type) : type(type),
+    value_known(type == ValueType::None) { }
 
 Variable::Variable(bool bool_value) : type(ValueType::Bool),
     value_known(true), int_value(bool_value) { }
@@ -70,7 +71,7 @@ Variable::Variable(const unordered_map<Variable, shared_ptr<Variable>>& dict_val
     value_known(true), dict_value(new unordered_map<Variable, shared_ptr<Variable>>(dict_value)) { }
 Variable::Variable(unordered_map<Variable, shared_ptr<Variable>>&& dict_value) : type(ValueType::Dict),
     value_known(true), dict_value(new unordered_map<Variable, shared_ptr<Variable>>(move(dict_value))) { }
-Variable::Variable(uint64_t function_or_class_id, bool is_class) :
+Variable::Variable(int64_t function_or_class_id, bool is_class) :
     type(is_class ? ValueType::Class : ValueType::Function),
     value_known(true), function_id(function_or_class_id) { }
 
@@ -268,7 +269,7 @@ string Variable::str() const {
     case ValueType::Unicode:
       if (this->value_known) {
         string ret = "\'";
-        for (wchar_t ch : *this->bytes_value) {
+        for (wchar_t ch : *this->unicode_value) {
           if ((ch < 0x20) || (ch > 0x7E) || (ch == '\'')) {
             ret += string_printf("\\x%0" PRId16, ch);
           } else {
@@ -351,7 +352,7 @@ string Variable::str() const {
 bool Variable::truth_value() const {
   switch (this->type) {
     case ValueType::Indeterminate:
-      throw logic_error("variable with indeterminate type has no truth value");
+      throw logic_error("variable with Indeterminate type has no truth value");
     case ValueType::None:
       return false;
     case ValueType::Bool:
@@ -415,6 +416,76 @@ bool Variable::operator==(const Variable& other) const {
   }
 }
 
+bool Variable::operator!=(const Variable& other) const {
+  return !this->operator==(other);
+}
+
+
+
+std::string type_signature_for_variables(const vector<Variable>& vars) {
+  string ret;
+  for (const Variable& var : vars) {
+    switch (var.type) {
+      case ValueType::None:
+        ret += 'n';
+        break;
+
+      case ValueType::Bool:
+        ret += 'b';
+        break;
+
+      case ValueType::Int:
+        ret += 'i';
+        break;
+
+      case ValueType::Float:
+        ret += 'f';
+        break;
+
+      case ValueType::Bytes:
+        ret += 'B';
+        break;
+
+      case ValueType::Module:
+        ret += 'M';
+        break;
+
+      case ValueType::Unicode:
+        ret += 'U';
+        break;
+
+      case ValueType::List:
+        // TODO
+        throw invalid_argument("type signatures for Lists not implemented");
+
+      case ValueType::Tuple:
+        // TODO
+        throw invalid_argument("type signatures for Tuples not implemented");
+
+      case ValueType::Set:
+        // TODO
+        throw invalid_argument("type signatures for Sets not implemented");
+
+      case ValueType::Dict:
+        // TODO
+        throw invalid_argument("type signatures for Dicts not implemented");
+
+      case ValueType::Function:
+        ret += 'F';
+        break;
+
+      case ValueType::Class:
+        // TODO
+        throw invalid_argument("type signatures for Classes not implemented");
+
+      default:
+        throw logic_error("variable has invalid type");
+    }
+  }
+
+  return ret;
+}
+
 
 
 namespace std {
@@ -447,9 +518,9 @@ namespace std {
         }
         return h;
       case ValueType::Function:
-        return h ^ hash<uint64_t>()(var.class_id);
+        return h ^ hash<int64_t>()(var.class_id);
       case ValueType::Class:
-        return h ^ hash<uint64_t>()(var.function_id);
+        return h ^ hash<int64_t>()(var.function_id);
       default:
         throw logic_error("variable has invalid type for hashing");
     }
@@ -466,7 +537,7 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
       }
       return Variable(!var.truth_value());
 
-    case UnaryOperator::Not:
+    case UnaryOperator::Not: {
       // this operator only works on bools and ints
       if (var.type == ValueType::Bool) {
         if (var.value_known) {
@@ -488,9 +559,15 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
         }
       }
 
-      throw invalid_argument("Not doesn\'t work on this type");
+      if (var.type == ValueType::Indeterminate) {
+        return Variable(ValueType::Int); // assume it's the right type
+      }
 
-    case UnaryOperator::Positive:
+      string var_str = var.str();
+      throw invalid_argument(string_printf("can\'t compute bitwise not of %s", var_str.c_str()));
+    }
+
+    case UnaryOperator::Positive: {
       // this operator only works on bools, ints, and floats
       // bools turn into ints; ints and floats are returned verbatim
       if (var.type == ValueType::Bool) {
@@ -509,9 +586,11 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
         return var;
       }
 
-      throw invalid_argument("Positive doesn\'t work on this type");
+      string var_str = var.str();
+      throw invalid_argument(string_printf("can\'t compute arithmetic positive of %s", var_str.c_str()));
+    }
 
-    case UnaryOperator::Negative:
+    case UnaryOperator::Negative: {
       // this operator only works on bools, ints, and floats
       if (var.type == ValueType::Bool) {
         if (var.value_known) {
@@ -540,7 +619,9 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
         }
       }
 
-      throw invalid_argument("Negative doesn\'t work on this type");
+      string var_str = var.str();
+      throw invalid_argument(string_printf("can\'t compute arithmetic negative of %s", var_str.c_str()));
+    }
 
     case UnaryOperator::Representation:
       // TODO: the parser should just convert these to function calls instead
@@ -603,38 +684,54 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
       switch (left.type) {
         case ValueType::Bool:
-        case ValueType::Int:
+        case ValueType::Int: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             return Variable(left.int_value < right.int_value);
           }
           if (right.type == ValueType::Float) {
             return Variable(left.int_value < right.float_value);
           }
-          throw invalid_argument("can\'t compare numeric and non-numeric types");
 
-        case ValueType::Float:
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compare %s < %s (left side integral; right side not numeric)", left_str.c_str(), right_str.c_str()));
+        }
+
+        case ValueType::Float: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             return Variable(left.float_value < right.int_value);
           }
           if (right.type == ValueType::Float) {
             return Variable(left.float_value < right.float_value);
           }
-          throw invalid_argument("can\'t compare numeric and non-numeric types");
 
-        case ValueType::Bytes:
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compare %s < %s (left side float; right side not numeric)", left_str.c_str(), right_str.c_str()));
+        }
+
+        case ValueType::Bytes: {
           if (right.type == ValueType::Bytes) {
             return Variable(left.bytes_value < right.bytes_value);
           }
-          throw invalid_argument("can\'t compare bytes and non-bytes");
 
-        case ValueType::Unicode:
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compare %s < %s (left side bytes; right side not bytes)", left_str.c_str(), right_str.c_str()));
+        }
+
+        case ValueType::Unicode: {
           if (right.type == ValueType::Unicode) {
             return Variable(left.unicode_value < right.unicode_value);
           }
-          throw invalid_argument("can\'t compare unicode and non-unicode");
+
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compare %s < %s (left side unicode; right side not unicode)", left_str.c_str(), right_str.c_str()));
+        }
 
         case ValueType::List:
-        case ValueType::Tuple:
+        case ValueType::Tuple: {
           if (right.type == left.type) {
             size_t left_len = left.list_value->size();
             size_t right_len = right.list_value->size();
@@ -660,13 +757,20 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(left_len < right_len);
           }
-          throw invalid_argument("can\'t compare list/tuple and non-list/tuple");
+
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compare %s < %s (left side list/tuple; right side not same type)", left_str.c_str(), right_str.c_str()));
+        }
 
         case ValueType::Set:
           throw invalid_argument("subset operator not yet implemented");
 
-        default:
-          throw invalid_argument("invalid type to LessThan");
+        default: {
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compare %s < %s (right side type not valid)", left_str.c_str(), right_str.c_str()));
+        }
       }
       break;
 
@@ -737,8 +841,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
           return Variable(true);
         }
 
-        default:
-          throw invalid_argument("invalid type to LessThan");
+        default: {
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compare %s == %s (this type has no equality operator)", left_str.c_str(), right_str.c_str()));
+        }
       }
       break;
 
@@ -766,9 +873,14 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
     case BinaryOperator::In:
       switch (right.type) {
+        case ValueType::Indeterminate:
+          return Variable(ValueType::Indeterminate);
+
         case ValueType::Bytes:
           if (left.type != ValueType::Bytes) {
-            throw invalid_argument("In Bytes requires another Bytes");
+            string left_str = left.str();
+            string right_str = right.str();
+            throw invalid_argument(string_printf("can\'t check inclusion of %s in %s (right side bytes; left side not bytes)", left_str.c_str(), right_str.c_str()));
           }
 
           if (left.value_known && left.bytes_value->empty()) {
@@ -781,7 +893,9 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
         case ValueType::Unicode:
           if (left.type != ValueType::Unicode) {
-            throw invalid_argument("In Unicode requires another Unicode");
+            string left_str = left.str();
+            string right_str = right.str();
+            throw invalid_argument(string_printf("can\'t check inclusion of %s in %s (right side unicode; left side not unicode)", left_str.c_str(), right_str.c_str()));
           }
 
           if (left.value_known && left.unicode_value->empty()) {
@@ -833,8 +947,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
           return Variable(static_cast<bool>(right.dict_value->count(left)));
 
-        default:
-          throw invalid_argument("non-collection given to In");
+        default: {
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t check inclusion of %s in %s (right side type invalid)", left_str.c_str(), right_str.c_str()));
+        }
       }
       break;
 
@@ -855,7 +972,9 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       // both sides must be Int or Bool; the result is Bool if both are Bool
       if (((left.type != ValueType::Bool) && (left.type != ValueType::Int)) ||
           ((right.type != ValueType::Bool) && (right.type != ValueType::Int))) {
-        throw invalid_argument("Or requires integer/boolean arguments");
+        string left_str = left.str();
+        string right_str = right.str();
+        throw invalid_argument(string_printf("can\'t compute bitwise or of %s and %s", left_str.c_str(), right_str.c_str()));
       }
 
       if ((left.type == ValueType::Bool) && (left.type == ValueType::Bool)) {
@@ -893,7 +1012,9 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       // both sides must be Int or Bool; the result is Bool if both are Bool
       if (((left.type != ValueType::Bool) && (left.type != ValueType::Int)) ||
           ((right.type != ValueType::Bool) && (right.type != ValueType::Int))) {
-        throw invalid_argument("And requires integer/boolean arguments");
+        string left_str = left.str();
+        string right_str = right.str();
+        throw invalid_argument(string_printf("can\'t compute bitwise and of %s and %s", left_str.c_str(), right_str.c_str()));
       }
 
       if ((left.type == ValueType::Bool) && (left.type == ValueType::Bool)) {
@@ -929,7 +1050,9 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       // both sides must be Int or Bool; the result is Bool if both are Bool
       if (((left.type != ValueType::Bool) && (left.type != ValueType::Int)) ||
           ((right.type != ValueType::Bool) && (right.type != ValueType::Int))) {
-        throw invalid_argument("Xor requires integer/boolean arguments");
+        string left_str = left.str();
+        string right_str = right.str();
+        throw invalid_argument(string_printf("can\'t compute xor of %s and %s", left_str.c_str(), right_str.c_str()));
       }
 
       if ((left.type == ValueType::Bool) && (left.type == ValueType::Bool)) {
@@ -948,7 +1071,9 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       // both sides must be Int or Bool; the result is Int
       if (((left.type != ValueType::Bool) && (left.type != ValueType::Int)) ||
           ((right.type != ValueType::Bool) && (right.type != ValueType::Int))) {
-        throw invalid_argument("LeftShift requires integer/boolean arguments");
+        string left_str = left.str();
+        string right_str = right.str();
+        throw invalid_argument(string_printf("can\'t compute left shift of %s by %s", left_str.c_str(), right_str.c_str()));
       }
 
       if (!left.value_known || !right.value_known) {
@@ -960,7 +1085,9 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       // both sides must be Int or Bool; the result is Int
       if (((left.type != ValueType::Bool) && (left.type != ValueType::Int)) ||
           ((right.type != ValueType::Bool) && (right.type != ValueType::Int))) {
-        throw invalid_argument("RightShift requires integer/boolean arguments");
+        string left_str = left.str();
+        string right_str = right.str();
+        throw invalid_argument(string_printf("can\'t compute right shift of %s by %s", left_str.c_str(), right_str.c_str()));
       }
 
       if (!left.value_known || !right.value_known) {
@@ -971,7 +1098,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
     case BinaryOperator::Addition:
       switch (left.type) {
         case ValueType::Bool:
-        case ValueType::Int:
+        case ValueType::Int: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Int);
@@ -984,9 +1111,12 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(left.int_value + right.float_value);
           }
-          throw invalid_argument("can\'t add numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compute result of %s + %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        case ValueType::Float:
+        case ValueType::Float: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
@@ -999,9 +1129,12 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(left.float_value + right.float_value);
           }
-          throw invalid_argument("can\'t add numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compute result of %s + %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        case ValueType::Bytes:
+        case ValueType::Bytes: {
           if (right.type == ValueType::Bytes) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Bytes);
@@ -1009,9 +1142,12 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             string new_value = *left.bytes_value + *right.bytes_value;
             return Variable(move(new_value));
           }
-          throw invalid_argument("can\'t append bytes and non-bytes");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compute result of %s + %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        case ValueType::Unicode:
+        case ValueType::Unicode: {
           if (right.type == ValueType::Unicode) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Unicode);
@@ -1019,12 +1155,17 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             wstring new_value = *left.unicode_value + *right.unicode_value;
             return Variable(move(new_value));
           }
-          throw invalid_argument("can\'t append unicode and non-unicode");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compute result of %s + %s", left_str.c_str(), right_str.c_str()));
+        }
 
         case ValueType::List:
         case ValueType::Tuple: {
           if (right.type != left.type) {
-            throw invalid_argument("can\'t append list/tuple and non-list/tuple");
+            string left_str = left.str();
+            string right_str = right.str();
+            throw invalid_argument(string_printf("can\'t compute result of %s + %s", left_str.c_str(), right_str.c_str()));
           }
 
           vector<shared_ptr<Variable>> result = *left.list_value;
@@ -1032,8 +1173,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
           return Variable(result, (left.type == ValueType::Tuple));
         }
 
-        default:
-          throw invalid_argument("invalid type to Addition");
+        default: {
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t compute result of %s + %s", left_str.c_str(), right_str.c_str()));
+        }
       }
       break;
 
@@ -1066,7 +1210,9 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       // need to typecheck multiplier
       if (list) {
         if ((multiplier->type != ValueType::Int) || (multiplier->type != ValueType::Bool)) {
-          throw invalid_argument("list/tuple multipliers must be Int or Bool");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t multiply %s by %s", left_str.c_str(), right_str.c_str()));
         }
 
         bool is_tuple = (list->type == ValueType::Tuple);
@@ -1095,7 +1241,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
       switch (left.type) {
         case ValueType::Bool:
-        case ValueType::Int:
+        case ValueType::Int: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Int);
@@ -1108,9 +1254,12 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(left.int_value * right.float_value);
           }
-          throw invalid_argument("can\'t add numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t multiply %s by %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        case ValueType::Float:
+        case ValueType::Float: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
@@ -1123,10 +1272,16 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(left.float_value * right.float_value);
           }
-          throw invalid_argument("can\'t add numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t multiply %s by %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        default:
-          throw invalid_argument("invalid type to Multiplication");
+        default: {
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t multiply %s by %s", left_str.c_str(), right_str.c_str()));
+        }
       }
       break;
     }
@@ -1134,7 +1289,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
     case BinaryOperator::Division:
       switch (left.type) {
         case ValueType::Bool:
-        case ValueType::Int:
+        case ValueType::Int: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
@@ -1148,9 +1303,12 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(static_cast<double>(left.int_value) / right.float_value);
           }
-          throw invalid_argument("can\'t divide numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t divide %s by %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        case ValueType::Float:
+        case ValueType::Float: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
@@ -1163,26 +1321,32 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(left.float_value / right.float_value);
           }
-          throw invalid_argument("can\'t divide numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t divide %s by %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        default:
-          throw invalid_argument("invalid type to Division");
+        default: {
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t divide %s by %s", left_str.c_str(), right_str.c_str()));
+        }
       }
       break;
 
     case BinaryOperator::Modulus:
       if (left.type == ValueType::Bytes) {
         // TODO
-        throw invalid_argument("Bytes Modulus not yet implemented");
+        return Variable(ValueType::Bytes);
       }
       if (left.type == ValueType::Unicode) {
         // TODO
-        throw invalid_argument("Unicode Modulus not yet implemented");
+        return Variable(ValueType::Unicode);
       }
 
       switch (left.type) {
         case ValueType::Bool:
-        case ValueType::Int:
+        case ValueType::Int: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Int);
@@ -1195,9 +1359,12 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(fmod(static_cast<double>(left.int_value), right.float_value));
           }
-          throw invalid_argument("can\'t modulus numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t modulate %s by %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        case ValueType::Float:
+        case ValueType::Float: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
@@ -1210,17 +1377,23 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(fmod(left.float_value, right.float_value));
           }
-          throw invalid_argument("can\'t modulus numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t modulate %s by %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        default:
-          throw invalid_argument("invalid type to Modulus");
+        default: {
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t modulate %s by %s", left_str.c_str(), right_str.c_str()));
+        }
       }
       break;
 
     case BinaryOperator::IntegerDivision:
       switch (left.type) {
         case ValueType::Bool:
-        case ValueType::Int:
+        case ValueType::Int: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Int);
@@ -1233,9 +1406,12 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(floor(static_cast<double>(left.int_value) / right.float_value));
           }
-          throw invalid_argument("can\'t integer divide numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t integer-divide %s by %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        case ValueType::Float:
+        case ValueType::Float: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
@@ -1248,17 +1424,23 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(floor(left.float_value / right.float_value));
           }
-          throw invalid_argument("can\'t integer divide numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t integer-divide %s by %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        default:
-          throw invalid_argument("invalid type to IntegerDivision");
+        default: {
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t integer-divide %s by %s", left_str.c_str(), right_str.c_str()));
+        }
       }
       break;
 
     case BinaryOperator::Exponentiation:
       switch (left.type) {
         case ValueType::Bool:
-        case ValueType::Int:
+        case ValueType::Int: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (right.value_known && (right.int_value == 0)) {
               return Variable(static_cast<int64_t>(0));
@@ -1292,9 +1474,12 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(pow(static_cast<double>(left.int_value), right.float_value));
           }
-          throw invalid_argument("can\'t exponentiate numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t exponentiate %s by %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        case ValueType::Float:
+        case ValueType::Float: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
@@ -1307,10 +1492,16 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
             return Variable(pow(left.float_value, right.float_value));
           }
-          throw invalid_argument("can\'t exponentiate numeric and non-numeric types");
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t exponentiate %s by %s", left_str.c_str(), right_str.c_str()));
+        }
 
-        default:
-          throw invalid_argument("invalid type to Exponentiation");
+        default: {
+          string left_str = left.str();
+          string right_str = right.str();
+          throw invalid_argument(string_printf("can\'t exponentiate %s by %s", left_str.c_str(), right_str.c_str()));
+        }
       }
       break;
 

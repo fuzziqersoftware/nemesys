@@ -7,7 +7,7 @@
 #include "PythonLexer.hh"
 #include "PythonParser.hh"
 #include "Environment.hh"
-#include "CompilationVisitors.hh"
+#include "Analysis.hh"
 
 using namespace std;
 
@@ -32,6 +32,8 @@ int main(int argc, char* argv[]) {
         target_phase = ModuleAnalysis::Phase::Annotated;
       } else if (!strcasecmp(&argv[x][8], "Analyzed")) {
         target_phase = ModuleAnalysis::Phase::Analyzed;
+      } else if (!strcasecmp(&argv[x][8], "Imported")) {
+        target_phase = ModuleAnalysis::Phase::Imported;
       } else {
         throw invalid_argument("unknown phase");
       }
@@ -47,6 +49,8 @@ int main(int argc, char* argv[]) {
       global.debug_annotation = true;
     } else if (!strcmp(argv[x], "--debug-analysis")) {
       global.debug_analysis = true;
+    } else if (!strcmp(argv[x], "--debug-import")) {
+      global.debug_import = true;
     } else {
       module_names.emplace_back(argv[x]);
     }

@@ -23,7 +23,6 @@ void ASTVisitor::visit(AttributeLValueReference* a) { }
 void ASTVisitor::visit(ArrayIndexLValueReference* a) { }
 void ASTVisitor::visit(ArraySliceLValueReference* a) { }
 void ASTVisitor::visit(TupleLValueReference* a) { }
-void ASTVisitor::visit(ArgumentDefinition* a) { }
 void ASTVisitor::visit(UnaryOperation* a) { }
 void ASTVisitor::visit(BinaryOperation* a) { }
 void ASTVisitor::visit(TernaryOperation* a) { }
@@ -108,12 +107,6 @@ void RecursiveASTVisitor::visit(TupleLValueReference* a) {
 
 
 
-void RecursiveASTVisitor::visit(ArgumentDefinition* a) {
-  if (a->default_value) {
-    a->default_value->accept(this);
-  }
-}
-
 void RecursiveASTVisitor::visit(UnaryOperation* a) {
   a->expr->accept(this);
 }
@@ -177,7 +170,11 @@ void RecursiveASTVisitor::visit(SetComprehension* a) {
 }
 
 void RecursiveASTVisitor::visit(LambdaDefinition* a) {
-  visit_list(a->args);
+  for (auto& arg : a->args.args) {
+    if (arg.default_value.get()) {
+      arg.default_value->accept(this);
+    }
+  }
   a->result->accept(this);
 }
 
@@ -338,13 +335,19 @@ void RecursiveASTVisitor::visit(TryStatement* a) {
 }
 
 void RecursiveASTVisitor::visit(WithStatement* a) {
-  visit_list(a->items);
+  for (auto& it : a->item_to_name) {
+    it.first->accept(this);
+  }
   visit_list(a->items);
 }
 
 void RecursiveASTVisitor::visit(FunctionDefinition* a) {
   visit_list(a->decorators);
-  visit_list(a->args);
+  for (auto& arg : a->args.args) {
+    if (arg.default_value.get()) {
+      arg.default_value->accept(this);
+    }
+  }
   visit_list(a->items);
 }
 
