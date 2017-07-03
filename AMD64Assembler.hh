@@ -82,6 +82,7 @@ enum Operation {
   MOV_STORE  = 0x89,
   MOV_LOAD8  = 0x8A,
   MOV_LOAD   = 0x8B,
+  LEA        = 0x8D,
   SHIFT8_IMM = 0xC0,
   SHIFT_IMM  = 0xC1,
   RET_IMM    = 0xC2,
@@ -294,6 +295,7 @@ public:
   void write_pop(Register r);
 
   // move opcodes
+  void write_lea(Register r, const MemoryReference& mem);
   void write_mov(const MemoryReference& to, const MemoryReference& from,
       OperandSize size = OperandSize::QuadWord);
   void write_mov(Register reg, int64_t value,

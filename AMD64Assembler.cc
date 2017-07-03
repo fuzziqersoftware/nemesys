@@ -405,6 +405,10 @@ void AMD64Assembler::write_pop(Register r) {
 
 
 
+void AMD64Assembler::write_lea(Register r, const MemoryReference& mem) {
+  this->write_rm(Operation::LEA, mem, r, OperandSize::QuadWord);
+}
+
 void AMD64Assembler::write_mov(const MemoryReference& to, const MemoryReference& from,
     OperandSize size) {
   this->write_load_store(Operation::MOV_STORE8, to, from, size);
