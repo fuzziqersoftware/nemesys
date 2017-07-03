@@ -932,10 +932,6 @@ PythonLexer::PythonLexer(shared_ptr<const SourceFile> source) : source(source) {
       if (x == this->tokens.size() - 1) {
         this->tokens.pop_back(); // the last token is a comment; delete it
       } else {
-        if (this->tokens[x + 1].type != TokenType::_Newline) {
-          throw tokenization_error(TokenizationError::IncompleteLexing, position,
-              this->source->line_number_of_offset(position));
-        }
         this->tokens.erase(this->tokens.begin() + x, this->tokens.begin() + x + 1);
         x--;
       }

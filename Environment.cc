@@ -377,7 +377,8 @@ bool Variable::truth_value() const {
     case ValueType::Module:
       return true;
     default:
-      throw logic_error("variable has invalid type");
+      throw logic_error(string_printf("variable has invalid type for truth test: 0x%" PRIX64,
+          static_cast<int64_t>(this->type)));
   }
 }
 
@@ -412,7 +413,8 @@ bool Variable::operator==(const Variable& other) const {
     case ValueType::Class:
       return this->class_id == other.class_id;
     default:
-      throw logic_error("variable has invalid type");
+      throw logic_error(string_printf("variable has invalid type for equality check: 0x%" PRIX64,
+          static_cast<int64_t>(this->type)));
   }
 }
 
@@ -426,6 +428,9 @@ std::string type_signature_for_variables(const vector<Variable>& vars) {
   string ret;
   for (const Variable& var : vars) {
     switch (var.type) {
+      case ValueType::Indeterminate:
+        throw invalid_argument("cannot generate type signature for Indeterminate value");
+
       case ValueType::None:
         ret += 'n';
         break;
@@ -479,7 +484,8 @@ std::string type_signature_for_variables(const vector<Variable>& vars) {
         throw invalid_argument("type signatures for Classes not implemented");
 
       default:
-        throw logic_error("variable has invalid type");
+        throw logic_error(string_printf("variable has invalid type for type signature: 0x%" PRIX64,
+            static_cast<int64_t>(var.type)));
     }
   }
 
@@ -522,7 +528,8 @@ namespace std {
       case ValueType::Class:
         return h ^ hash<int64_t>()(var.function_id);
       default:
-        throw logic_error("variable has invalid type for hashing");
+        throw logic_error(string_printf("variable has invalid type for hashing: 0x%" PRIX64,
+            static_cast<int64_t>(var.type)));
     }
   }
 }
@@ -586,6 +593,10 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
         return var;
       }
 
+      if (var.type == ValueType::Indeterminate) {
+        return Variable(ValueType::Indeterminate);
+      }
+
       string var_str = var.str();
       throw invalid_argument(string_printf("can\'t compute arithmetic positive of %s", var_str.c_str()));
     }
@@ -617,6 +628,10 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
         } else {
           return Variable(ValueType::Float);
         }
+      }
+
+      if (var.type == ValueType::Indeterminate) {
+        return Variable(ValueType::Indeterminate);
       }
 
       string var_str = var.str();
@@ -962,11 +977,20 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
     case BinaryOperator::Or:
       // handle set-union operation
       if ((left.type == ValueType::Set) && (right.type == ValueType::Set)) {
-        unordered_set<Variable> result = *left.set_value;
-        for (const auto& item : *right.set_value) {
-          result.emplace(item);
+        if (left.value_known && right.value_known) {
+          unordered_set<Variable> result = *left.set_value;
+          for (const auto& item : *right.set_value) {
+            result.emplace(item);
+          }
+          return Variable(move(result));
+        } else {
+          return Variable(ValueType::Set);
         }
-        return Variable(move(result));
+      }
+
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
       }
 
       // both sides must be Int or Bool; the result is Bool if both are Bool
@@ -998,15 +1022,24 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
     case BinaryOperator::And:
       // handle set-intersection operation
       if ((left.type == ValueType::Set) && (right.type == ValueType::Set)) {
-        unordered_set<Variable> result = *left.set_value;
-        for (auto it = result.begin(); it != result.end(); it++) {
-          if (!right.set_value->count(*it)) {
-            it = result.erase(it);
-          } else {
-            it++;
+        if (left.value_known && right.value_known) {
+          unordered_set<Variable> result = *left.set_value;
+          for (auto it = result.begin(); it != result.end(); it++) {
+            if (!right.set_value->count(*it)) {
+              it = result.erase(it);
+            } else {
+              it++;
+            }
           }
+          return Variable(move(result));
+        } else {
+          return Variable(ValueType::Set);
         }
-        return Variable(move(result));
+      }
+
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
       }
 
       // both sides must be Int or Bool; the result is Bool if both are Bool
@@ -1038,13 +1071,22 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
     case BinaryOperator::Xor:
       // handle set-xor operation
       if ((left.type == ValueType::Set) && (right.type == ValueType::Set)) {
-        unordered_set<Variable> result = *left.set_value;
-        for (const auto& item : *right.set_value) {
-          if (!result.emplace(item).second) {
-            result.erase(item);
+        if (left.value_known && right.value_known) {
+          unordered_set<Variable> result = *left.set_value;
+          for (const auto& item : *right.set_value) {
+            if (!result.emplace(item).second) {
+              result.erase(item);
+            }
           }
+          return Variable(move(result));
+        } else {
+          return Variable(ValueType::Set);
         }
-        return Variable(move(result));
+      }
+
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
       }
 
       // both sides must be Int or Bool; the result is Bool if both are Bool
@@ -1068,6 +1110,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       return Variable(left.int_value ^ right.int_value);
 
     case BinaryOperator::LeftShift:
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
+      }
+
       // both sides must be Int or Bool; the result is Int
       if (((left.type != ValueType::Bool) && (left.type != ValueType::Int)) ||
           ((right.type != ValueType::Bool) && (right.type != ValueType::Int))) {
@@ -1082,6 +1129,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       return Variable(left.int_value << right.int_value);
 
     case BinaryOperator::RightShift:
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
+      }
+
       // both sides must be Int or Bool; the result is Int
       if (((left.type != ValueType::Bool) && (left.type != ValueType::Int)) ||
           ((right.type != ValueType::Bool) && (right.type != ValueType::Int))) {
@@ -1096,6 +1148,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       return Variable(left.int_value >> right.int_value);
 
     case BinaryOperator::Addition:
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
+      }
+
       switch (left.type) {
         case ValueType::Bool:
         case ValueType::Int: {
@@ -1182,13 +1239,22 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       break;
 
     case BinaryOperator::Subtraction:
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
+      }
+
       // handle set-difference operation
       if ((left.type == ValueType::Set) && (right.type == ValueType::Set)) {
-        unordered_set<Variable> result = *left.set_value;
-        for (const auto& item : *right.set_value) {
-          result.erase(item);
+        if (left.value_known && right.value_known) {
+          unordered_set<Variable> result = *left.set_value;
+          for (const auto& item : *right.set_value) {
+            result.erase(item);
+          }
+          return Variable(move(result));
+        } else {
+          return Variable(ValueType::Set);
         }
-        return Variable(move(result));
       }
 
       // else, it's the same as left + (-right); just do that
@@ -1196,6 +1262,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
           execute_unary_operator(UnaryOperator::Negative, right));
 
     case BinaryOperator::Multiplication: {
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
+      }
+
       const Variable* list = NULL;
       const Variable* multiplier = NULL;
       if ((left.type == ValueType::List) || (left.type == ValueType::Tuple)) {
@@ -1287,6 +1358,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
     }
 
     case BinaryOperator::Division:
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
+      }
+
       switch (left.type) {
         case ValueType::Bool:
         case ValueType::Int: {
@@ -1335,6 +1411,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       break;
 
     case BinaryOperator::Modulus:
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
+      }
+
       if (left.type == ValueType::Bytes) {
         // TODO
         return Variable(ValueType::Bytes);
@@ -1391,6 +1472,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       break;
 
     case BinaryOperator::IntegerDivision:
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
+      }
+
       switch (left.type) {
         case ValueType::Bool:
         case ValueType::Int: {
@@ -1438,6 +1524,11 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       break;
 
     case BinaryOperator::Exponentiation:
+      // if either side is Indeterminate, the result is Indeterminate
+      if ((left.type == ValueType::Indeterminate) || (right.type == ValueType::Indeterminate)) {
+        return Variable(ValueType::Indeterminate);
+      }
+
       switch (left.type) {
         case ValueType::Bool:
         case ValueType::Int: {

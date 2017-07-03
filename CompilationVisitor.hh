@@ -23,7 +23,7 @@ public:
       int64_t target_function_id = 0, int64_t target_split_id = 0);
   ~CompilationVisitor() = default;
 
-  const std::string& get_compiled_code() const;
+  std::string assemble(bool skip_missing_labels = false);
 
   using RecursiveASTVisitor::visit;
 
@@ -103,7 +103,7 @@ private:
   LValueTarget lvalue_target;
   Variable current_type;
 
-  std::string compiled;
+  AMD64Assembler as;
 
   Register reserve_register(Register which = Register::None);
   void release_register(Register reg);
@@ -111,7 +111,7 @@ private:
 
   bool is_always_truthy(const Variable& type);
   bool is_always_falsey(const Variable& type);
-  std::string generate_truth_value_test(Register reg, const Variable& type,
+  void generate_truth_value_test(Register reg, const Variable& type,
       ssize_t file_offset);
 
   void generate_code_for_call_arg(std::shared_ptr<Expression> value,

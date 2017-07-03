@@ -118,10 +118,40 @@ void AnalysisVisitor::visit(DictComprehension* a) {
 }
 
 void AnalysisVisitor::visit(LambdaDefinition* a) {
-  // this is hard because we don't know the argument types; we need to see the
-  // callsites before we can figure them out
-  // TODO
-  throw compile_error("lambdas currently are not supported", a->file_offset);
+  // TODO: reduce code duplication between here and FunctionDefinition
+
+  // assign all the arguments as Indeterminate for now; we'll come back and
+  // fix them later
+
+  int64_t prev_function_id = this->in_function_id;
+  this->in_function_id = a->function_id;
+  auto* context = this->current_function();
+
+  for (auto& arg : a->args.args) {
+    // copy the argument definition into the function context
+    context->args.emplace_back();
+    auto& new_arg = context->args.back();
+    new_arg.name = arg.name;
+    if (arg.default_value.get()) {
+      arg.default_value->accept(this);
+      new_arg.default_value = move(this->current_value);
+      if (new_arg.default_value.type == ValueType::Indeterminate) {
+        throw compile_error("default value has Indeterminate type", a->file_offset);
+      }
+      if (!new_arg.default_value.value_known) {
+        throw compile_error("can\'t resolve default value", a->file_offset);
+      }
+    }
+  }
+  context->varargs_name = a->args.varargs_name;
+  context->varkwargs_name = a->args.varkwargs_name;
+
+  a->result->accept(this);
+  context->return_types.emplace(move(this->current_value));
+
+  this->in_function_id = prev_function_id;
+
+  this->current_value = Variable(a->function_id, false);
 }
 
 void AnalysisVisitor::visit(FunctionCall* a) {
@@ -132,13 +162,32 @@ void AnalysisVisitor::visit(FunctionCall* a) {
   }
   Variable function = move(this->current_value);
 
+  // we probably can't know the function's return type/value yet, but we'll try
+  // to figure it out
+  this->current_value = Variable(ValueType::Indeterminate);
+
   // if we know the function's id, annotate the AST node with it
   if (function.value_known) {
     a->callee_function_id = function.function_id;
-    // TODO: look up the arg types in the function registry to figure out which
-    // fragment should be called (and get the return type, if possible)
-  } else {
-    this->current_value = Variable(ValueType::Indeterminate);
+
+    // if the callee is built-in (has no module) or is in a module in the
+    // Analyzed phase or later, then we should know its possible return types
+    // TODO: this doesn't work for functions defined in the same module; ideally
+    // this would happen in a separate pass
+    auto* callee_context = this->global->context_for_function(a->callee_function_id);
+    if (!callee_context->module || (callee_context->module->phase >= ModuleAnalysis::Phase::Analyzed)) {
+      if (callee_context->return_types.empty()) {
+        this->current_value = Variable(ValueType::None);
+      } else if (callee_context->return_types.size() == 1) {
+        this->current_value = *callee_context->return_types.begin();
+      }
+    }
+  }
+
+  // if we know the return type, we can cancel this split - it won't affect the
+  // local variable signature
+  if (this->current_value.type != ValueType::Indeterminate) {
+    a->split_id = 0;
   }
 
   // now visit the arg values
@@ -830,6 +879,8 @@ void AnalysisVisitor::visit(WithStatement* a) {
 }
 
 void AnalysisVisitor::visit(FunctionDefinition* a) {
+  // TODO: reduce code duplication between here and LambdaDefinition
+
   // assign all the arguments as Indeterminate for now; we'll come back and
   // fix them later
 

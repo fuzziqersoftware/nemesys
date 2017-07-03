@@ -17,7 +17,7 @@ using namespace std;
 
 
 static void builtin_print(UnicodeObject* str) {
-  fprintf(stdout, "%.*ls\n", static_cast<int>(str->size), str->data);
+  fprintf(stdout, "%.*ls\n", static_cast<int>(str->count), str->data);
 }
 
 
@@ -28,10 +28,10 @@ const unordered_map<string, int64_t> builtin_function_to_id({
 
 
 
-const unordered_map<int64_t, FunctionContext> builtin_function_definitions({
+unordered_map<int64_t, FunctionContext> builtin_function_definitions({
   {builtin_function_to_id.at("print"),
-    FunctionContext(NULL, builtin_function_to_id.at("print"),
-        "print", "u", Variable(ValueType::None),
+    FunctionContext(NULL, builtin_function_to_id.at("print"), "print",
+        {Variable(ValueType::Unicode)}, Variable(ValueType::None),
         reinterpret_cast<const void*>(&builtin_print))},
 });
 

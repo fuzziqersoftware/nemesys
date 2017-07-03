@@ -1,30 +1,27 @@
 #pragma once
 
+#include <map>
 #include <string>
 
 
-class BlockBuffer {
+class CodeBuffer {
 public:
-  BlockBuffer(bool writable, bool executable,
-      size_t block_size = 64 * 1024);
-  ~BlockBuffer() = default;
+  CodeBuffer(size_t block_size = 64 * 1024);
+  ~CodeBuffer() = default;
 
   void* append(const std::string& data);
   void* append(const void* data, size_t size);
 
-  void set_protection(bool writable, bool executable);
-
   size_t total_size() const;
-  size_t total_free_bytes() const;
+  size_t total_used_bytes() const;
 
 private:
   struct Block {
     void* data;
     size_t size;
-    size_t free_bytes;
-    int protection;
+    size_t used_bytes;
 
-    Block(size_t size, int protection);
+    Block(size_t size);
     Block(const Block&) = delete;
     Block(Block&&) = delete; // this could be implemented but I'm lazy
     Block& operator=(const Block&) = delete;
@@ -32,11 +29,10 @@ private:
     ~Block();
 
     void* append(const void* data, size_t size);
-
-    void set_protection(int protection);
   };
 
-  int protection;
+  size_t size;
+  size_t used_bytes;
   size_t block_size;
-  std::multimap<size_t, shared_ptr<Block>> free_bytes_to_block;
+  std::multimap<size_t, std::shared_ptr<Block>> free_bytes_to_block;
 };

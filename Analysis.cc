@@ -14,6 +14,7 @@
 #include "AnalysisVisitor.hh"
 #include "CompilationVisitor.hh"
 #include "Environment.hh"
+#include "BuiltinFunctions.hh"
 
 using namespace std;
 
@@ -57,6 +58,40 @@ using namespace std;
 
 
 
+DebugFlag debug_flag_for_name(const char* name) {
+  if (!strcasecmp(name, "FindFile")) {
+    return DebugFlag::FindFile;
+  }
+  if (!strcasecmp(name, "Source")) {
+    return DebugFlag::Source;
+  }
+  if (!strcasecmp(name, "Lexing")) {
+    return DebugFlag::Lexing;
+  }
+  if (!strcasecmp(name, "Parsing")) {
+    return DebugFlag::Parsing;
+  }
+  if (!strcasecmp(name, "Annotation")) {
+    return DebugFlag::Annotation;
+  }
+  if (!strcasecmp(name, "Analysis")) {
+    return DebugFlag::Analysis;
+  }
+  if (!strcasecmp(name, "Compilation")) {
+    return DebugFlag::Compilation;
+  }
+  if (!strcasecmp(name, "Assembly")) {
+    return DebugFlag::Assembly;
+  }
+  if (!strcasecmp(name, "Execution")) {
+    return DebugFlag::Execution;
+  }
+  if (!strcasecmp(name, "All")) {
+    return DebugFlag::All;
+  }
+  return static_cast<DebugFlag>(0);
+}
+
 compile_error::compile_error(const std::string& what, ssize_t where) :
     runtime_error(what), where(where) { }
 
@@ -69,11 +104,20 @@ FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id) :
     module(module), id(id), is_class(false), ast_root(NULL), num_splits(0) { }
 
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
-    const char* name, const char* var_signature, Variable return_type,
+    const char* name, const vector<Variable>& arg_types, Variable return_type,
     const void* compiled) : module(module), id(id), is_class(false), name(name),
     ast_root(NULL), num_splits(0), return_types({return_type}),
-    arg_signature_to_fragment_id({{var_signature, 1}}),
-    fragments({{1, Fragment(return_type, compiled)}}) { }
+    arg_signature_to_fragment_id({{type_signature_for_variables(arg_types), 1}}),
+    fragments({{1, Fragment(return_type, compiled)}}) {
+  for (const auto& arg : arg_types) {
+    this->args.emplace_back();
+    if (arg.type == ValueType::Indeterminate) {
+      throw invalid_argument("builtin functions must have known argument types");
+    } else if (arg.value_known) {
+      this->args.back().default_value = arg;
+    }
+  }
+}
 
 
 
@@ -127,12 +171,12 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
     switch (module->phase) {
       case ModuleAnalysis::Phase::Initial: {
         shared_ptr<PythonLexer> lexer(new PythonLexer(module->source));
-        if (this->debug_lexer) {
-          fprintf(stderr, "[%s] LEXER COMPLETED\n", module->name.c_str());
+        if (this->debug_flags & DebugFlag::Lexing) {
+          fprintf(stderr, "[%s] ======== module lexed\n", module->name.c_str());
           const auto& tokens = lexer->get_tokens();
           for (size_t y = 0; y < tokens.size(); y++) {
             const auto& token = tokens[y];
-            fprintf(stderr, "      n:%5lu type:%15s s:%s f:%lf i:%lld off:%lu len:%lu\n",
+            fprintf(stderr, "      n:%5lu type:%16s s:%s f:%lf i:%lld off:%lu len:%lu\n",
                 y, PythonLexer::Token::name_for_token_type(token.type),
                 token.string_data.c_str(), token.float_data, token.int_data,
                 token.text_offset, token.text_length);
@@ -141,8 +185,8 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
         }
         PythonParser parser(lexer);
         module->ast = parser.get_root();
-        if (this->debug_parser) {
-          fprintf(stderr, "[%s] PARSER COMPLETED\n", module->name.c_str());
+        if (this->debug_flags & DebugFlag::Parsing) {
+          fprintf(stderr, "[%s] ======== module parsed\n", module->name.c_str());
           module->ast->print(stderr);
           fputc('\n', stderr);
         }
@@ -158,12 +202,11 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           this->print_compile_error(stderr, module, e);
           throw;
         }
-        if (this->debug_annotation) {
-          fprintf(stderr, "[%s] ANNOTATION COMPLETED\n", module->name.c_str());
+        if (this->debug_flags & DebugFlag::Annotation) {
+          fprintf(stderr, "[%s] ======== module annotated\n", module->name.c_str());
           module->ast->print(stderr);
 
-          fprintf(stderr, "[%s] split count: %" PRIu64 "\n", module->name.c_str(),
-              module->num_splits);
+          fprintf(stderr, "# split count: %" PRIu64 "\n", module->num_splits);
 
           for (const auto& it : module->globals) {
             const char* mutable_str;
@@ -172,9 +215,9 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
             } catch (const out_of_range& e) {
               mutable_str = "MISSING";
             }
-            fprintf(stderr, "[%s] global: %s (%s)\n", module->name.c_str(),
-                it.first.c_str(), mutable_str);
+            fprintf(stderr, "# global: %s (%s)\n", it.first.c_str(), mutable_str);
           }
+          fputc('\n', stderr);
         }
         module->phase = ModuleAnalysis::Phase::Annotated;
         break;
@@ -188,19 +231,18 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           this->print_compile_error(stderr, module, e);
           throw;
         }
-        if (this->debug_analysis) {
-          fprintf(stderr, "[%s] ANALYSIS COMPLETED\n", module->name.c_str());
+        if (this->debug_flags & DebugFlag::Analysis) {
+          fprintf(stderr, "[%s] ======== module analyzed\n", module->name.c_str());
           module->ast->print(stderr);
 
-          fprintf(stderr, "[%s] global base offset: %" PRIX64 "\n",
-              module->name.c_str(), module->global_base_offset);
+          fprintf(stderr, "# global base offset: %" PRIX64 "\n",
+              module->global_base_offset);
 
           for (const auto& it : module->globals) {
             bool is_mutable = module->globals_mutable.at(it.first);
             string value_str = it.second.str();
-            fprintf(stderr, "[%s] global: %s = %s (%s)\n", module->name.c_str(),
-                it.first.c_str(), value_str.c_str(),
-                is_mutable ? "mutable" : "immutable");
+            fprintf(stderr, "# global: %s = %s (%s)\n", it.first.c_str(),
+                value_str.c_str(), is_mutable ? "mutable" : "immutable");
           }
           fputc('\n', stderr);
         }
@@ -216,21 +258,41 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
         } catch (const compile_error& e) {
           this->print_compile_error(stderr, module, e);
 
-          fprintf(stderr, "[%s] code so far:\n", module->name.c_str());
-          const string& compiled = v.get_compiled_code();
+          fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
+              module->name.c_str());
+          const string& compiled = v.assemble(true);
           print_data(stderr, compiled.data(), compiled.size());
 
           throw;
         }
 
-        if (this->debug_import) {
-          fprintf(stderr, "[%s] IMPORT COMPLETED\n", module->name.c_str());
-
-          const string& compiled = v.get_compiled_code();
-          print_data(stderr, compiled.data(), compiled.size());
-
-          // TODO: print more debug info
+        if (this->debug_flags & DebugFlag::Compilation) {
+          fprintf(stderr, "[%s] ======== module root scope compiled\n\n",
+              module->name.c_str());
         }
+
+        string compiled = v.assemble();
+        if (this->debug_flags & DebugFlag::Assembly) {
+          fprintf(stderr, "[%s] ======== module root scope assembled\n",
+              module->name.c_str());
+          print_data(stderr, compiled.data(), compiled.size());
+          fputc('\n', stderr);
+        }
+
+        if (this->debug_flags & DebugFlag::Execution) {
+          fprintf(stderr, "[%s] ======== executing root scope\n",
+              module->name.c_str());
+        }
+
+        // root scopes take no arguments and return no value
+        void (*scope)() = reinterpret_cast<void(*)()>(this->code.append(compiled));
+        scope();
+
+        if (this->debug_flags & DebugFlag::Execution) {
+          fprintf(stderr, "\n[%s] ======== import complete\n\n",
+              module->name.c_str());
+        }
+
         module->phase = ModuleAnalysis::Phase::Imported;
         break;
       }
@@ -250,17 +312,15 @@ shared_ptr<ModuleAnalysis> GlobalAnalysis::get_module_at_phase(
     module = this->modules.at(module_name);
   } catch (const out_of_range& e) {
     string filename = this->find_source_file(module_name);
-    if (this->debug_find_file) {
-      fprintf(stdout, "[%s] reading %s\n", module_name.c_str(), filename.c_str());
-    }
     module = this->modules.emplace(piecewise_construct,
         forward_as_tuple(module_name),
         forward_as_tuple(new ModuleAnalysis(module_name, filename))).first->second;
-    if (this->debug_source) {
-      fprintf(stdout, "[%s] loaded source (%zu lines, %zu bytes)\n",
-          module_name.c_str(), module->source->line_count(),
+    if (this->debug_flags & DebugFlag::Source) {
+      fprintf(stdout, "[%s] loaded %s (%zu lines, %zu bytes)\n",
+          module_name.c_str(), filename.c_str(), module->source->line_count(),
           module->source->file_size());
       fwrite(module->source->data().data(), module->source->file_size(), 1, stderr);
+      fputc('\n', stderr);
     }
   }
 
@@ -269,9 +329,14 @@ shared_ptr<ModuleAnalysis> GlobalAnalysis::get_module_at_phase(
 }
 
 std::string GlobalAnalysis::find_source_file(const string& module_name) {
-  // TODO: support dotted module names
+  string module_path_name = module_name;
+  for (char& ch : module_path_name) {
+    if (ch == '.') {
+      ch = '/';
+    }
+  }
   for (const string& path : this->import_paths) {
-    string filename = path + "/" + module_name + ".py";
+    string filename = path + "/" + module_path_name + ".py";
     try {
       stat(filename);
       return filename;
@@ -286,11 +351,22 @@ FunctionContext* GlobalAnalysis::context_for_function(
   if (function_id == 0) {
     return NULL;
   }
+  if (function_id < 0) {
+    try {
+      return &builtin_function_definitions.at(function_id);
+    } catch (const out_of_range& e) {
+      return NULL;
+    }
+  }
   if (module_for_create) {
     return &(*this->function_id_to_context.emplace(piecewise_construct,
         forward_as_tuple(function_id),
         forward_as_tuple(module_for_create, function_id)).first).second;
   } else {
-    return &this->function_id_to_context.at(function_id);
+    try {
+      return &this->function_id_to_context.at(function_id);
+    } catch (const out_of_range& e) {
+      return NULL;
+    }
   }
 }

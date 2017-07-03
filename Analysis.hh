@@ -11,8 +11,24 @@
 #include "SourceFile.hh"
 #include "PythonASTNodes.hh"
 #include "Environment.hh"
+#include "CodeBuffer.hh"
 
 
+
+enum DebugFlag {
+  FindFile    = 0x0000000000000001,
+  Source      = 0x0000000000000002,
+  Lexing      = 0x0000000000000004,
+  Parsing     = 0x0000000000000008,
+  Annotation  = 0x0000000000000010,
+  Analysis    = 0x0000000000000020,
+  Compilation = 0x0000000000000040,
+  Assembly    = 0x0000000000000080,
+  Execution   = 0x0000000000000100,
+  All         = 0xFFFFFFFFFFFFFFFF,
+};
+
+DebugFlag debug_flag_for_name(const char* name);
 
 class compile_error : public std::runtime_error {
 public:
@@ -72,9 +88,13 @@ struct FunctionContext {
 
   FunctionContext(ModuleAnalysis* module, int64_t id);
 
-  // constructor for built-in functions
+  // constructor for built-in functions. note that it doesn't take a type
+  // signature - this is provided through the arg_types field. each Variable
+  // should be either an unknown but typed value (for positional arguments) or
+  // a known value (for keyword arguments).
   FunctionContext(ModuleAnalysis* module, int64_t id, const char* name,
-      const char* var_signature, Variable return_type, const void* compiled);
+      const std::vector<Variable>& arg_types, Variable return_type,
+      const void* compiled);
 };
 
 
@@ -113,18 +133,14 @@ public:
 
 class GlobalAnalysis {
 public:
+  CodeBuffer code;
+
   std::unordered_map<std::string, std::shared_ptr<ModuleAnalysis>> modules;
   std::vector<std::string> import_paths;
 
   int64_t global_space_used;
 
-  bool debug_find_file;
-  bool debug_source;
-  bool debug_lexer;
-  bool debug_parser;
-  bool debug_annotation;
-  bool debug_analysis;
-  bool debug_import;
+  int64_t debug_flags;
 
   GlobalAnalysis();
   ~GlobalAnalysis() = default;

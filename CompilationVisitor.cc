@@ -12,6 +12,7 @@
 #include "PythonASTVisitor.hh"
 #include "Environment.hh"
 #include "AMD64Assembler.hh"
+#include "BuiltinTypes.hh"
 
 using namespace std;
 
@@ -38,8 +39,8 @@ CompilationVisitor::CompilationVisitor(GlobalAnalysis* global,
     target_split_id(target_split_id),
     available_registers(default_available_registers) { }
 
-const string& CompilationVisitor::get_compiled_code() const {
-  return this->compiled;
+string CompilationVisitor::assemble(bool skip_missing_labels) {
+  return this->as.assemble(skip_missing_labels);
 }
 
 
@@ -87,21 +88,18 @@ void CompilationVisitor::visit(UnaryOperation* a) {
     case UnaryOperator::LogicalNot:
       if (this->current_type.type == ValueType::None) {
         // `not None` is always true
-        this->compiled += generate_mov(this->target_register, 1,
-            OperandSize::QuadWord);
+        this->as.write_mov(this->target_register, 1);
 
       } else if (this->current_type.type == ValueType::Bool) {
         // bools are either 0 or 1; just flip it
-        this->compiled += generate_xor(MemoryReference(this->target_register),
-            1, OperandSize::QuadWord);
+        this->as.write_xor(MemoryReference(this->target_register), 1);
 
       } else if (this->current_type.type == ValueType::Int) {
         // check if the value is zero
-        this->compiled += generate_test(MemoryReference(this->target_register),
-            MemoryReference(this->target_register), OperandSize::QuadWord);
-        this->compiled += generate_mov(this->target_register, 0,
-            OperandSize::QuadWord);
-        this->compiled += generate_setz(this->target_register);
+        this->as.write_test(MemoryReference(this->target_register),
+            MemoryReference(this->target_register));
+        this->as.write_mov(this->target_register, 0);
+        this->as.write_setz(this->target_register);
 
       } else if (this->current_type == ValueType::Float) {
         // TODO
@@ -114,25 +112,22 @@ void CompilationVisitor::visit(UnaryOperation* a) {
                  (this->current_type == ValueType::Set) ||
                  (this->current_type == ValueType::Dict)) {
         // load the size field, check if it's zero
-        this->compiled += generate_mov(MemoryReference(this->target_register),
-            MemoryReference(this->target_register, 0x08), OperandSize::QuadWord);
-        this->compiled += generate_test(MemoryReference(this->target_register),
-            MemoryReference(this->target_register), OperandSize::QuadWord);
-        this->compiled += generate_mov(this->target_register, 0,
-            OperandSize::QuadWord);
-        this->compiled += generate_setz(this->target_register);
+        this->as.write_mov(MemoryReference(this->target_register),
+            MemoryReference(this->target_register, 0x08));
+        this->as.write_test(MemoryReference(this->target_register),
+            MemoryReference(this->target_register));
+        this->as.write_mov(this->target_register, 0);
+        this->as.write_setz(this->target_register);
 
       } else {
-        this->compiled += generate_mov(this->target_register, 1,
-            OperandSize::QuadWord);
+        this->as.write_mov(this->target_register, 1);
       }
       break;
 
     case UnaryOperator::Not:
       if ((this->current_type.type == ValueType::Int) ||
           (this->current_type.type == ValueType::Bool)) {
-        this->compiled += generate_not(MemoryReference(this->target_register),
-            OperandSize::QuadWord);
+        this->as.write_not(MemoryReference(this->target_register));
       } else {
         throw compile_error("bitwise not can only be applied to ints and bools", a->file_offset);
       }
@@ -149,8 +144,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
     case UnaryOperator::Negative:
       if ((this->current_type.type == ValueType::Bool) ||
           (this->current_type.type == ValueType::Int)) {
-        this->compiled += generate_not(MemoryReference(this->target_register),
-            OperandSize::QuadWord);
+        this->as.write_not(MemoryReference(this->target_register));
 
       } else if (this->current_type == ValueType::Float) {
         // TODO: some stuff with fmul (there's no fneg)
@@ -179,7 +173,7 @@ bool CompilationVisitor::is_always_falsey(const Variable& type) {
   return (type.type == ValueType::None);
 }
 
-string CompilationVisitor::generate_truth_value_test(Register reg,
+void CompilationVisitor::generate_truth_value_test(Register reg,
     const Variable& type, ssize_t file_offset) {
 
   switch (current_type.type) {
@@ -188,7 +182,7 @@ string CompilationVisitor::generate_truth_value_test(Register reg,
 
     case ValueType::Bool:
     case ValueType::Int:
-      return generate_test(MemoryReference(reg), MemoryReference(reg),
+      this->as.write_test(MemoryReference(reg), MemoryReference(reg),
           OperandSize::QuadWord);
 
     case ValueType::Float:
@@ -201,13 +195,9 @@ string CompilationVisitor::generate_truth_value_test(Register reg,
     case ValueType::Set:
     case ValueType::Dict: {
       // we have to use a register for this
-      Register size_reg = this->reserve_register();
-      string ret = generate_mov(MemoryReference(size_reg),
-          MemoryReference(reg, 0x08), OperandSize::QuadWord);
-      ret += generate_test(MemoryReference(size_reg), MemoryReference(size_reg),
-          OperandSize::QuadWord);
-      this->release_register(size_reg);
-      return ret;
+      Register size_reg = this->available_register();
+      this->as.write_mov(MemoryReference(size_reg), MemoryReference(reg, 0x08));
+      this->as.write_test(MemoryReference(size_reg), MemoryReference(size_reg));
     }
 
     case ValueType::None:
@@ -228,12 +218,6 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   // operands in all cases)
   if ((a->oper == BinaryOperator::LogicalOr) ||
       (a->oper == BinaryOperator::LogicalAnd)) {
-    // generate code for the right value and save it for later
-    string right;
-    this->compiled.swap(right);
-    a->right->accept(this);
-    this->compiled.swap(right);
-
     // generate code for the left value
     a->left->accept(this);
 
@@ -247,19 +231,20 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       return;
     }
 
-    this->compiled += this->generate_truth_value_test(this->target_register,
-        this->current_type, a->file_offset);
-    this->compiled += generate_test(MemoryReference(this->target_register),
-        MemoryReference(this->target_register), OperandSize::QuadWord);
-
     // for LogicalOr, use the left value if it's nonzero and use the right value
     // otherwise; for LogicalAnd, do the opposite
+    string label_name = string_printf("BinaryOperation_%p_left_false", a);
+    this->generate_truth_value_test(this->target_register, this->current_type,
+        a->file_offset);
     if (a->oper == BinaryOperator::LogicalOr) {
-      this->compiled += generate_jnz(right.size()); // skip right if left != zero
+      this->as.write_jnz(label_name); // skip right if left truthy
     } else { // LogicalAnd
-      this->compiled += generate_jz(right.size()); // skip right if left == zero
+      this->as.write_jz(label_name); // skip right if left falsey
     }
-    this->compiled += right;
+
+    // generate code for the right value
+    a->right->accept(this);
+    this->as.write_label(label_name);
     return;
   }
 
@@ -350,33 +335,41 @@ void CompilationVisitor::visit(TernaryOperation* a) {
     throw compile_error("unrecognized ternary operator", a->file_offset);
   }
 
-  // generate both branches
-  string left, right;
-  this->compiled.swap(right); // put compiled into right for now, generate left
+  // generate the condition evaluation
+  a->center->accept(this);
+
+  // if the value is always truthy or always falsey, don't bother generating the
+  // unused side
+  if (this->is_always_truthy(this->current_type)) {
+    a->left->accept(this);
+    return;
+  }
+  if (this->is_always_falsey(this->current_type)) {
+    a->right->accept(this);
+    return;
+  }
+
+  // left comes first in the code
+  string false_label = string_printf("TernaryOperation_%p_condition_false", a);
+  string end_label = string_printf("TernaryOperation_%p_end", a);
+  this->generate_truth_value_test(this->target_register, this->current_type,
+      a->file_offset);
+  this->as.write_jz(false_label); // skip left
+
+  // generate code for the left (True) value
   a->left->accept(this);
-  Variable left_type = this->current_type;
-  this->compiled.swap(left); // put left in place, make compiled blank again
+  this->as.write_jmp(end_label);
+  Variable left_type = move(this->current_type);
+
+  // generate code for the right (False) value
+  this->as.write_label(false_label);
   a->right->accept(this);
-  this->compiled.swap(right); // put right in place, move compiled into place
+  this->as.write_label(end_label);
 
   // TODO: support different value types (maybe by splitting the function)
   if (left_type != this->current_type) {
     throw compile_error("sides have different types", a->file_offset);
   }
-
-  // left comes first in the code, so it will need a jmp at the end
-  left += generate_jmp(right.size()); // jump over all of right
-
-  // generate code for the condition value
-  a->center->accept(this);
-
-  // test the condition value. left is the value if true, so we jump to right if
-  // the value is zero
-  this->compiled += generate_test(MemoryReference(this->target_register),
-      MemoryReference(this->target_register), OperandSize::QuadWord);
-  this->compiled += generate_jz(left.size());
-  this->compiled += left;
-  this->compiled += right;
 }
 
 void CompilationVisitor::visit(ListConstructor* a) {
@@ -425,7 +418,7 @@ static const vector<Register> argument_register_order = {
 
 void CompilationVisitor::visit(FunctionCall* a) {
   // system v calling convention:
-  // int arguments in rdi, rsi, rcx, r8, r9 (in that order); more ints on stack
+  // int arguments in rdi, rsi, rdx, rcx, r8, r9 (in that order); more ints on stack
   // float arguments in xmm0-7; more floats on stack
   // some special handling for variadic functions (need to look this up)
   // return in rax, rdx
@@ -461,8 +454,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
   size_t arg_stack_bytes = (a->args.size() > argument_register_order.size()) ?
       ((a->args.size() - argument_register_order.size()) * sizeof(int64_t)) : 0;
   if (arg_stack_bytes) {
-    this->compiled += generate_sub(MemoryReference(Register::RSP),
-        arg_stack_bytes, OperandSize::QuadWord);
+    this->as.write_sub(MemoryReference(Register::RSP), arg_stack_bytes);
   }
 
   // separate out the positional and keyword args from the call args
@@ -539,20 +531,19 @@ void CompilationVisitor::visit(FunctionCall* a) {
     int64_t fragment_id = callee_context->arg_signature_to_fragment_id.at(arg_signature);
     const auto& fragment = callee_context->fragments.at(fragment_id);
     int64_t call_address = reinterpret_cast<int64_t>(fragment.compiled);
-    this->compiled += generate_mov(call_address_register, call_address,
-        OperandSize::QuadWord);
-    this->compiled += generate_call(MemoryReference(call_address_register));
+    this->as.write_mov(call_address_register, call_address);
+    this->as.write_call(MemoryReference(call_address_register));
 
   } catch (const std::out_of_range& e) {
     // the fragment doesn't exist. we won't build it just yet; we'll generate a
     // call to the compiler that will build it later
+    // TODO
     throw compile_error("referenced fragment does not exist", a->file_offset);
   }
 
   // now just pop any arg space off the stack, and we're done
   if (arg_stack_bytes) {
-    this->compiled += generate_add(MemoryReference(Register::RSP),
-        arg_stack_bytes, OperandSize::QuadWord);
+    this->as.write_add(MemoryReference(Register::RSP), arg_stack_bytes);
   }
 }
 
@@ -567,8 +558,7 @@ void CompilationVisitor::visit(ArraySlice* a) {
 }
 
 void CompilationVisitor::visit(IntegerConstant* a) {
-  this->compiled += generate_mov(this->target_register, a->value,
-      OperandSize::QuadWord);
+  this->as.write_mov(this->target_register, a->value);
   this->current_type = Variable(ValueType::Int);
 }
 
@@ -583,23 +573,45 @@ void CompilationVisitor::visit(BytesConstant* a) {
 }
 
 void CompilationVisitor::visit(UnicodeConstant* a) {
-  // TODO
-  throw compile_error("node type not yet implemented", a->file_offset);
+
+  // TODO: for now, just assert that there are no reserved registers (I'm lazy)
+  if (this->available_registers != default_available_registers) {
+    throw compile_error(string_printf("some registers were reserved at function call (%" PRIX64 " available, %" PRIX64 " expected)",
+        this->available_registers, default_available_registers), a->file_offset);
+  }
+
+  // args are u=NULL, data, size
+  this->as.write_mov(Register::RDI, 0);
+  this->as.write_mov(Register::RSI, reinterpret_cast<int64_t>(a->value.data()));
+  this->as.write_mov(Register::RDX, a->value.size());
+
+  this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(&unicode_new));
+  this->as.write_call(MemoryReference(Register::RAX));
+
+  // unicode_new returned the value in RAX; move it if necessary
+  if (this->target_register != Register::RAX) {
+    this->as.write_mov(MemoryReference(this->target_register),
+        MemoryReference(Register::RAX));
+  }
+
+  // TODO: make sure this object gets destroyed somehow
+
+  this->current_type = Variable(ValueType::Unicode);
 }
 
 void CompilationVisitor::visit(TrueConstant* a) {
-  // TODO
-  throw compile_error("node type not yet implemented", a->file_offset);
+  this->as.write_mov(this->target_register, 1);
+  this->current_type = Variable(ValueType::Bool);
 }
 
 void CompilationVisitor::visit(FalseConstant* a) {
-  // TODO
-  throw compile_error("node type not yet implemented", a->file_offset);
+  this->as.write_mov(this->target_register, 0);
+  this->current_type = Variable(ValueType::Bool);
 }
 
 void CompilationVisitor::visit(NoneConstant* a) {
-  // TODO
-  throw compile_error("node type not yet implemented", a->file_offset);
+  this->as.write_mov(this->target_register, 0);
+  this->current_type = Variable(ValueType::None);
 }
 
 void CompilationVisitor::visit(VariableLookup* a) {
@@ -650,8 +662,19 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
 
 // statement visitation
 void CompilationVisitor::visit(ModuleStatement* a) {
-  // just visit all the statements
+  // this is essentially a function, but it will only be called once. we still
+  // have to treat it like a function, but it has no local variables (everything
+  // it writes is global, so based on R13, not RSP)
+  this->as.write_push(Register::RBP);
+  this->as.write_mov(MemoryReference(Register::RBP),
+      MemoryReference(Register::RSP));
+
+  // generate the function's code
   this->RecursiveASTVisitor::visit(a);
+
+  // hooray we're done
+  this->as.write_pop(Register::RBP);
+  this->as.write_ret();
 }
 
 void CompilationVisitor::visit(ExpressionStatement* a) {
@@ -677,11 +700,11 @@ void CompilationVisitor::visit(AssignmentStatement* a) {
   // now save the value to the appropriate slot. global slots are offsets from
   // R13; local slots are offsets from RSP
   if (this->lvalue_target.is_global) {
-    this->compiled += generate_mov(
+    this->as.write_mov(
         MemoryReference(Register::R13, this->module->global_base_offset + this->lvalue_target.offset),
         MemoryReference(this->target_register), OperandSize::QuadWord);
   } else {
-    this->compiled += generate_mov(
+    this->as.write_mov(
         MemoryReference(Register::RBP, this->lvalue_target.offset),
         MemoryReference(this->target_register), OperandSize::QuadWord);
   }
@@ -806,9 +829,8 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
       // don't have to generate code that just writes them once at import time
       ssize_t target_offset = static_cast<ssize_t>(distance(
           this->module->globals.begin(), this->module->globals.find(a->name))) * sizeof(int64_t);
-      this->compiled += generate_mov(this->target_register, context,
-          OperandSize::QuadWord);
-      this->compiled += generate_mov(
+      this->as.write_mov(this->target_register, context);
+      this->as.write_mov(
           MemoryReference(Register::R13, this->module->global_base_offset + target_offset),
           MemoryReference(this->target_register), OperandSize::QuadWord);
 
@@ -817,9 +839,9 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
           this->target_function->locals.begin(),
           this->target_function->locals.find(a->name))) * sizeof(int64_t);
       // TODO: use `mov [r+off], val` (not yet implemented in the assembler)
-      this->compiled += generate_mov(this->target_register, context,
+      this->as.write_mov(this->target_register, context,
           OperandSize::QuadWord);
-      this->compiled += generate_mov(
+      this->as.write_mov(
           MemoryReference(Register::RBP, target_offset),
           MemoryReference(this->target_register), OperandSize::QuadWord);
     }
@@ -838,14 +860,16 @@ void CompilationVisitor::visit(ClassDefinition* a) {
 void CompilationVisitor::generate_code_for_call_arg(
     shared_ptr<Expression> value, size_t arg_index) {
   if (arg_index < argument_register_order.size()) {
-    // construct it directly into the register, and leave the register reserved
-    this->target_register = this->reserve_register(argument_register_order[arg_index]);
+    // construct it directly into the register, then reserve the register
+    this->target_register = argument_register_order[arg_index];
     value->accept(this);
+    this->reserve_register(this->target_register);
   } else {
     // construct it into any register, then generate code to put it on the stack
+    // in this case, don't reserve the register
     this->target_register = this->available_register();
     value->accept(this);
-    this->compiled += generate_push(this->target_register);
+    this->as.write_push(this->target_register);
   }
 }
 

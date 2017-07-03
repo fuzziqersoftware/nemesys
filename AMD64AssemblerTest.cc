@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <sys/mman.h>
@@ -5,69 +6,62 @@
 #include <phosg/Strings.hh>
 
 #include "AMD64Assembler.hh"
+#include "CodeBuffer.hh"
 
 using namespace std;
 
 
-int main(int argc, char** argv) {
-  string function;
-  function += generate_push(Register::RBP);
-  function += generate_mov(MemoryReference(Register::RBP),
-      MemoryReference(Register::RSP), OperandSize::QuadWord);
+void test_trivial_function() {
+  printf("-- trivial function\n");
 
-  function += generate_mov(MemoryReference(Register::RDX),
-      MemoryReference(Register::RDI, 0), OperandSize::QuadWord);
+  AMD64Assembler as;
 
-  function += generate_not(MemoryReference(Register::RDX),
-      OperandSize::QuadWord);
+  as.write_push(Register::RBP);
+  as.write_mov(MemoryReference(Register::RBP), MemoryReference(Register::RSP));
 
-  function += generate_test(MemoryReference(Register::RDX),
-      MemoryReference(Register::RDX), OperandSize::QuadWord);
-  function += generate_setz(MemoryReference(Register::DH));
+  as.write_mov(MemoryReference(Register::RDX), MemoryReference(Register::RDI, 0));
 
-  function += generate_mov(MemoryReference(Register::R10),
-      MemoryReference(Register::RDX), OperandSize::QuadWord);
+  as.write_not(MemoryReference(Register::RDX));
 
-  function += generate_test(MemoryReference(Register::R10),
-      MemoryReference(Register::R10), OperandSize::QuadWord);
-  function += generate_setz(MemoryReference(Register::R10B));
+  as.write_test(MemoryReference(Register::RDX), MemoryReference(Register::RDX));
+  as.write_setz(MemoryReference(Register::DH));
 
-  function += generate_xor(MemoryReference(Register::R10), 0x3F3F,
-      OperandSize::QuadWord);
-  function += generate_xor(MemoryReference(Register::R10), 0x40,
-      OperandSize::QuadWord);
-  function += generate_xor(MemoryReference(Register::R10B), 0x01,
-      OperandSize::Byte);
+  as.write_mov(MemoryReference(Register::R10), MemoryReference(Register::RDX));
 
-  function += generate_mov(MemoryReference(Register::RAX),
-      MemoryReference(Register::R10), OperandSize::QuadWord);
+  as.write_test(MemoryReference(Register::R10), MemoryReference(Register::R10));
+  as.write_setz(MemoryReference(Register::R10B));
 
-  function += generate_mov(MemoryReference(Register::RDI, 0),
-      MemoryReference(Register::RAX), OperandSize::QuadWord);
+  as.write_xor(MemoryReference(Register::R10), 0x3F3F);
+  as.write_xor(MemoryReference(Register::R10), 0x40);
+  as.write_xor(MemoryReference(Register::R10B), 0x01, OperandSize::Byte);
 
-  function += generate_pop(Register::RBP);
-  function += generate_ret();
+  as.write_mov(MemoryReference(Register::RAX), MemoryReference(Register::R10));
 
-  function += generate_mov(Register::RDX, 0x0102030405060708,
-      OperandSize::QuadWord);
-  function += generate_call(MemoryReference(Register::RDX));
+  as.write_mov(MemoryReference(Register::RDI, 0), MemoryReference(Register::RAX));
 
-  print_data(stdout, function.data(), function.size());
+  as.write_pop(Register::RBP);
+  as.write_ret();
 
-  void* executable_page = mmap(NULL, 0x1000,
-      PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-  if (executable_page == MAP_FAILED) {
-    fprintf(stdout, "can\'t map executable page\n");
-    return 1;
-  }
+  string code = as.assemble();
+  print_data(stderr, code);
 
-  fprintf(stdout, "copying function to executable memory\n");
-  memcpy(executable_page, function.data(), function.size());
+  CodeBuffer buf;
+  void* function = buf.append(code);
+
   int64_t data = 0x0102030405060708;
-  fprintf(stdout, "calling function with 0x0102030405060708 @ %p\n", &data);
-  int64_t (*fn)(int64_t*) = reinterpret_cast<int64_t (*)(int64_t*)>(executable_page);
-  fprintf(stdout, "ret  = 0x%" PRIX64 "\n", fn(&data));
-  fprintf(stdout, "data = 0x%" PRIX64 "\n", data);
+  int64_t (*fn)(int64_t*) = reinterpret_cast<int64_t (*)(int64_t*)>(function);
 
+  // the function should have returned 0xFEFDFCFBFAF93F7E and set the data
+  // variable to that value also
+  assert(fn(&data) == 0xFEFDFCFBFAF93F7E);
+  assert(data == 0xFEFDFCFBFAF93F7E);
+}
+
+int main(int argc, char** argv) {
+  test_trivial_function();
+
+  // TODO: write jump test
+
+  printf("-- all tests passed\n");
   return 0;
 }

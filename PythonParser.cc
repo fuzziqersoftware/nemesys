@@ -1125,19 +1125,28 @@ vector<shared_ptr<Statement>> PythonParser::parse_compound_statement_suite(
         // Import _Dynamic [As _Dynamic][, _Dynamic [As _Dynamic], ...]
         unordered_map<string, string> modules;
         while (this->head_token().type != TokenType::_Newline) {
-          this->expect_token_type(TokenType::_Dynamic, ParseError::SyntaxError,
+          string module;
+          while ((this->head_token().type == TokenType::_Dynamic) ||
+                 (this->head_token().type == TokenType::_Dot)) {
+            if (this->head_token().type == TokenType::_Dot) {
+              module += '.';
+            } else {
+              module += this->head_token().string_data;
+            }
+            this->advance_token();
+          }
+          this->expect_condition(!module.empty(), ParseError::SyntaxError,
               "expected name following import keyword");
-          const string& name = this->head_token().string_data;
-          this->advance_token();
+
           if (this->head_token().type == TokenType::As) {
             this->advance_token();
             this->expect_token_type(TokenType::_Dynamic, ParseError::SyntaxError,
                 "expected name following \'as\'");
             const string& rename = this->head_token().string_data;
             this->advance_token();
-            modules.emplace(name, rename);
+            modules.emplace(module, rename);
           } else {
-            modules.emplace(name, name);
+            modules.emplace(module, module);
           }
 
           if (this->head_token().type == TokenType::_Comma) {
@@ -1157,12 +1166,20 @@ vector<shared_ptr<Statement>> PythonParser::parse_compound_statement_suite(
         // From _Dynamic Import _Dynamic [As _Dynamic][, _Dynamic [As _Dynamic], ...]
 
         // read the module name (there should be only one)
-        this->expect_token_type(TokenType::_Dynamic, ParseError::SyntaxError,
+        string module;
+        while ((this->head_token().type == TokenType::_Dynamic) ||
+               (this->head_token().type == TokenType::_Dot)) {
+          if (this->head_token().type == TokenType::_Dot) {
+            module += '.';
+          } else {
+            module += this->head_token().string_data;
+          }
+          this->advance_token();
+        }
+        this->expect_condition(!module.empty(), ParseError::SyntaxError,
             "expected name following \'from\'");
-        const string& module = this->head_token().string_data;
         unordered_map<string, string> modules;
         modules.emplace(module, module);
-        this->advance_token();
 
         // followed by "import"
         this->expect_token_type(TokenType::Import, ParseError::SyntaxError,
