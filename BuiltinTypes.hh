@@ -17,5 +17,13 @@ struct UnicodeObject {
   wchar_t data[0];
 };
 
-BytesObject* bytes_new(BytesObject* b, uint8_t* data, size_t count);
-UnicodeObject* unicode_new(UnicodeObject* u, wchar_t* data, size_t count);
+void add_reference(void* o);
+void basic_remove_reference(void* o);
+
+BytesObject* bytes_new(BytesObject* b, const uint8_t* data, size_t count);
+BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b);
+// BytesObject uses basic_decref
+
+UnicodeObject* unicode_new(UnicodeObject* u, const wchar_t* data, size_t count);
+UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b);
+// UnicodeObject uses basic_decref

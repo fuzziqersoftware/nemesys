@@ -43,7 +43,10 @@ void test_trivial_function() {
   as.write_ret();
 
   string code = as.assemble();
-  print_data(stderr, code);
+  //print_data(stderr, code);
+
+  //string disassembly = AMD64Assembler::disassemble(code.data(), code.size());
+  //fprintf(stderr, "%s\n", disassembly.c_str());
 
   CodeBuffer buf;
   void* function = buf.append(code);
@@ -110,7 +113,10 @@ void test_quicksort() {
   as.write_jmp("0");
 
   string code = as.assemble();
-  print_data(stderr, code);
+  //print_data(stderr, code);
+
+  //string disassembly = AMD64Assembler::disassemble(code.data(), code.size());
+  //fprintf(stderr, "%s\n", disassembly.c_str());
 
   CodeBuffer buf;
   void* function = buf.append(code);

@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
@@ -123,11 +124,18 @@ FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
 
 ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename) :
     phase(Phase::Initial), name(name), source(new SourceFile(filename)),
-    num_splits(0) { }
+    num_splits(0), compiled(NULL) { }
 
 
 
-GlobalAnalysis::GlobalAnalysis() : import_paths({"."}), global_space_used(0) { }
+GlobalAnalysis::GlobalAnalysis() : import_paths({"."}), global_space(NULL),
+    global_space_used(0) { }
+
+GlobalAnalysis::~GlobalAnalysis() {
+  if (this->global_space) {
+    free(this->global_space);
+  }
+}
 
 static void print_source_location(FILE* stream, shared_ptr<const SourceFile> f,
     size_t offset) {
@@ -202,6 +210,8 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           this->print_compile_error(stderr, module, e);
           throw;
         }
+        this->update_global_space();
+
         if (this->debug_flags & DebugFlag::Annotation) {
           fprintf(stderr, "[%s] ======== module annotated\n", module->name.c_str());
           module->ast->print(stderr);
@@ -217,7 +227,8 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
             }
             fprintf(stderr, "# global: %s (%s)\n", it.first.c_str(), mutable_str);
           }
-          fputc('\n', stderr);
+          fprintf(stderr, "# global space is now %p (%" PRId64 " bytes)\n",
+              this->global_space, this->global_space_used);
         }
         module->phase = ModuleAnalysis::Phase::Annotated;
         break;
@@ -260,8 +271,12 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
 
           fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
               module->name.c_str());
-          const string& compiled = v.assemble(true);
+          const string& compiled = v.assembler().assemble(
+              &module->compiled_labels, true);
           print_data(stderr, compiled.data(), compiled.size());
+          string disassembly = AMD64Assembler::disassemble(compiled.data(),
+              compiled.size(), 0, &module->compiled_labels);
+          fprintf(stderr, "\n%s\n", disassembly.c_str());
 
           throw;
         }
@@ -271,12 +286,19 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
               module->name.c_str());
         }
 
-        string compiled = v.assemble();
+        string compiled = v.assembler().assemble(&module->compiled_labels);
+        module->compiled = reinterpret_cast<void(*)(uint64_t*)>(
+            this->code.append(compiled));
+
         if (this->debug_flags & DebugFlag::Assembly) {
           fprintf(stderr, "[%s] ======== module root scope assembled\n",
               module->name.c_str());
-          print_data(stderr, compiled.data(), compiled.size());
-          fputc('\n', stderr);
+          uint64_t addr = reinterpret_cast<uint64_t>(module->compiled);
+          print_data(stderr, compiled.data(), compiled.size(), addr);
+          string disassembly = AMD64Assembler::disassemble(
+              reinterpret_cast<void*>(module->compiled), compiled.size(), addr,
+              &module->compiled_labels);
+          fprintf(stderr, "\n%s\n", disassembly.c_str());
         }
 
         if (this->debug_flags & DebugFlag::Execution) {
@@ -284,9 +306,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
               module->name.c_str());
         }
 
-        // root scopes take no arguments and return no value
-        void (*scope)() = reinterpret_cast<void(*)()>(this->code.append(compiled));
-        scope();
+        module->compiled(this->global_space);
 
         if (this->debug_flags & DebugFlag::Execution) {
           fprintf(stderr, "\n[%s] ======== import complete\n\n",
@@ -369,4 +389,9 @@ FunctionContext* GlobalAnalysis::context_for_function(
       return NULL;
     }
   }
+}
+
+void GlobalAnalysis::update_global_space() {
+  this->global_space = reinterpret_cast<uint64_t*>(realloc(this->global_space,
+      this->global_space_used));
 }

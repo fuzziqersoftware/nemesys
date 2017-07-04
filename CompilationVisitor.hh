@@ -23,7 +23,7 @@ public:
       int64_t target_function_id = 0, int64_t target_split_id = 0);
   ~CompilationVisitor() = default;
 
-  std::string assemble(bool skip_missing_labels = false);
+  AMD64Assembler& assembler();
 
   using RecursiveASTVisitor::visit;
 
@@ -85,6 +85,10 @@ public:
   virtual void visit(ClassDefinition* a);
 
 private:
+  // debugging info
+  ssize_t file_offset;
+
+  // environment
   GlobalAnalysis* global;
   ModuleAnalysis* module;
 
@@ -93,30 +97,49 @@ private:
 
   std::unordered_map<std::string, int64_t> variable_to_stack_offset;
 
+  // compilation state
   int64_t available_registers; // bit mask; check for (1 << register)
   Register target_register;
+  int64_t stack_bytes_used;
 
-  struct LValueTarget {
+  struct VariableLocation {
     int64_t offset;
     bool is_global;
+    Variable type;
   };
-  LValueTarget lvalue_target;
+  VariableLocation lvalue_target;
   Variable current_type;
 
+  // output manager
   AMD64Assembler as;
 
   Register reserve_register(Register which = Register::None);
   void release_register(Register reg);
-  Register available_register();
+  Register available_register(Register preferred = Register::None);
+
+  int64_t write_push_reserved_registers();
+  void write_pop_reserved_registers(int64_t registers);
 
   bool is_always_truthy(const Variable& type);
   bool is_always_falsey(const Variable& type);
-  void generate_truth_value_test(Register reg, const Variable& type,
-      ssize_t file_offset);
+  void write_truth_value_test(Register reg, const Variable& type);
 
-  void generate_code_for_call_arg(std::shared_ptr<Expression> value,
+  void write_code_for_call_arg(std::shared_ptr<Expression> value,
       size_t arg_index);
-  void generate_code_for_call_arg(const Variable& value, size_t arg_index);
+  void write_code_for_call_arg(const Variable& value, size_t arg_index);
+
+  ssize_t write_function_call_stack_prep(size_t arg_count);
+  void write_function_call(const void* function,
+      const std::vector<const MemoryReference>& args,
+      ssize_t arg_stack_bytes = -1, bool return_value = true);
+
+  void write_destructor_call(const MemoryReference& mem, const Variable& type);
+
+  void write_push(Register reg);
+  void write_pop(Register reg);
+  void adjust_stack(ssize_t bytes);
+
+  VariableLocation location_for_variable(const std::string& name);
 
   FunctionContext* current_function();
 };

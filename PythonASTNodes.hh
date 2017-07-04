@@ -16,7 +16,6 @@ enum class UnaryOperator {
   Not,            // ~
   Positive,       // +
   Negative,       // -
-  Representation, // `x`
   Yield,          // yield
 };
 

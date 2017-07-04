@@ -36,13 +36,19 @@ string SourceFile::line(size_t line_num) const {
   }
 
   size_t line_start = this->line_begin_offset[line_num - 1];
+  size_t line_end;
   if (line_num == this->line_begin_offset.size() - 1) {
-    return this->contents.substr(line_start);
+    line_end = this->contents.size();
+  }
+  line_end = this->line_begin_offset[line_num];
+
+  // trim off \n characters
+  while ((line_end > line_start) && (line_end > 0) &&
+         (this->contents[line_end - 1] == '\n')) {
+    line_end--;
   }
 
-  size_t line_end = this->line_begin_offset[line_num];
-  // the -1 trims off the \n
-  return this->contents.substr(line_start, line_end - line_start - 1);
+  return this->contents.substr(line_start, line_end - line_start);
 }
 
 size_t SourceFile::line_offset(size_t line_num) const {

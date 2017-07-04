@@ -208,9 +208,6 @@ static const char* unary_operator_names[] = {
 
 string UnaryOperation::str() const {
   auto expr_str = this->expr->str();
-  if (this->oper == UnaryOperator::Representation) {
-    return string_printf("repr(%s)", expr_str.c_str());
-  }
   if (this->oper == UnaryOperator::Yield) {
     string split_id_str = this->split_id ? string_printf("/*split=%" PRIu64 "*/ ", this->split_id) : "";
     return string_printf("(yield %s%s)", split_id_str.c_str(), expr_str.c_str());

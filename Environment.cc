@@ -638,10 +638,6 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
       throw invalid_argument(string_printf("can\'t compute arithmetic negative of %s", var_str.c_str()));
     }
 
-    case UnaryOperator::Representation:
-      // TODO: the parser should just convert these to function calls instead
-      throw invalid_argument("`` operator not supported; use repr() instead");
-
     case UnaryOperator::Yield:
       // this operator can return literally anything; it depends on the caller
       // let's just hope the value isn't used I guess

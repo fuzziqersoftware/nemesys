@@ -16,14 +16,60 @@ using namespace std;
 
 
 
+static BytesObject* empty_bytes = bytes_new(NULL, NULL, 0);
+static UnicodeObject* empty_unicode = unicode_new(NULL, NULL, 0);
+
 static void builtin_print(UnicodeObject* str) {
   fprintf(stdout, "%.*ls\n", static_cast<int>(str->count), str->data);
+}
+
+static UnicodeObject* builtin_input(UnicodeObject* prompt) {
+  if (prompt->count) {
+    fprintf(stdout, "%.*ls", static_cast<int>(prompt->count), prompt->data);
+    fflush(stdout);
+  }
+
+  vector<wstring> blocks;
+  while (blocks.empty() || blocks.back().back() != '\n') {
+    blocks.emplace_back(0x400, 0);
+    if (!fgetws(const_cast<wchar_t*>(blocks.back().data()), blocks.back().size(), stdin)) {
+      blocks.pop_back();
+      break;
+    }
+    blocks.back().resize(wcslen(blocks.back().c_str()));
+  }
+
+  if (blocks.empty()) {
+    add_reference(empty_unicode);
+    return empty_unicode;
+  }
+
+  // concatenate the blocks
+  wstring data;
+  if (blocks.size() == 1) {
+    data = move(blocks[0]);
+  } else {
+    for (const auto& block : blocks) {
+      data += block;
+    }
+  }
+
+  // trim off the trailing newline
+  if (!data.empty() && (data.back() == '\n')) {
+    data.resize(data.size() - 1);
+  }
+
+  if (data.empty()) {
+    return empty_unicode;
+  }
+  return unicode_new(NULL, blocks.back().data(), blocks.back().size());
 }
 
 
 
 const unordered_map<string, int64_t> builtin_function_to_id({
   {"print", -1},
+  {"input", -2},
 });
 
 
@@ -33,6 +79,10 @@ unordered_map<int64_t, FunctionContext> builtin_function_definitions({
     FunctionContext(NULL, builtin_function_to_id.at("print"), "print",
         {Variable(ValueType::Unicode)}, Variable(ValueType::None),
         reinterpret_cast<const void*>(&builtin_print))},
+  {builtin_function_to_id.at("input"),
+    FunctionContext(NULL, builtin_function_to_id.at("input"), "input",
+        {Variable(L"")}, Variable(ValueType::Unicode),
+        reinterpret_cast<const void*>(&builtin_input))}
 });
 
 
@@ -155,7 +205,7 @@ const unordered_map<string, Variable> builtin_names({
   {"help",                      Variable(ValueType::Function)},
   {"hex",                       Variable(ValueType::Function)},
   {"id",                        Variable(ValueType::Function)},
-  {"input",                     Variable(ValueType::Function)},
+  {"input",                     Variable(builtin_function_to_id.at("input"), false)},
   {"int",                       Variable(ValueType::Function)},
   {"isinstance",                Variable(ValueType::Function)},
   {"issubclass",                Variable(ValueType::Function)},

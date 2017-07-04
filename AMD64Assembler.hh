@@ -40,6 +40,23 @@ enum Operation {
   CMP_STORE  = 0x39,
   CMP_LOAD8  = 0x3A,
   CMP_LOAD   = 0x3B,
+  REX        = 0x40,
+  REX_B      = 0x41,
+  REX_X      = 0x42,
+  REX_XB     = 0x43,
+  REX_R      = 0x44,
+  REX_RB     = 0x45,
+  REX_RX     = 0x46,
+  REX_RXB    = 0x47,
+  REX_W      = 0x48,
+  REX_WB     = 0x49,
+  REX_WX     = 0x4A,
+  REX_WXB    = 0x4B,
+  REX_WR     = 0x4C,
+  REX_WRB    = 0x4D,
+  REX_WRX    = 0x4E,
+  REX_WRXB   = 0x4F,
+  OPERAND16  = 0x66,
   PUSH32     = 0x68,
   PUSH8      = 0x6A,
   JO8        = 0x70,
@@ -259,7 +276,8 @@ enum OperandSize {
   QuadWord = 3,
 };
 
-const char* name_for_register(Register r, OperandSize size);
+const char* name_for_register(Register r,
+    OperandSize size = OperandSize::QuadWord);
 
 struct MemoryReference {
   Register base_register;
@@ -270,6 +288,9 @@ struct MemoryReference {
   MemoryReference(Register base_register, int64_t offset,
       Register index_register = Register::None, uint8_t field_size = 1);
   MemoryReference(Register base_register);
+
+  bool operator==(const MemoryReference& other) const;
+  bool operator!=(const MemoryReference& other) const;
 };
 
 class AMD64Assembler {
@@ -283,7 +304,12 @@ public:
 
   // skip_missing_labels should only be used when debugging callers; it may
   // cause assemble() to return incorrect offsets for jmp/call opcodes
-  std::string assemble(bool skip_missing_labels = false);
+  std::string assemble(std::multimap<size_t, std::string>* label_offsets = NULL,
+      bool skip_missing_labels = false);
+
+  static std::string disassemble(const void* vdata, size_t size,
+      uint64_t addr = 0,
+      const std::multimap<size_t, std::string>* label_offsets = NULL);
 
   // label support
   void write_label(const std::string& name);
@@ -371,25 +397,35 @@ public:
       OperandSize size = OperandSize::QuadWord);
   void write_xor(const MemoryReference& to, int64_t value,
       OperandSize size = OperandSize::QuadWord);
-  void write_cmp(const MemoryReference& to, const MemoryReference& from,
-      OperandSize size = OperandSize::QuadWord);
-  void write_cmp(const MemoryReference& to, int64_t value,
-      OperandSize size = OperandSize::QuadWord);
 
-  void write_rol(const MemoryReference& to, uint8_t bits, OperandSize size = OperandSize::QuadWord);
-  void write_ror(const MemoryReference& to, uint8_t bits, OperandSize size = OperandSize::QuadWord);
-  void write_rcl(const MemoryReference& to, uint8_t bits, OperandSize size = OperandSize::QuadWord);
-  void write_rcr(const MemoryReference& to, uint8_t bits, OperandSize size = OperandSize::QuadWord);
-  void write_shl(const MemoryReference& to, uint8_t bits, OperandSize size = OperandSize::QuadWord);
-  void write_shr(const MemoryReference& to, uint8_t bits, OperandSize size = OperandSize::QuadWord);
-  void write_sar(const MemoryReference& to, uint8_t bits, OperandSize size = OperandSize::QuadWord);
-  void write_rol_cl(const MemoryReference& to, OperandSize size = OperandSize::QuadWord);
-  void write_ror_cl(const MemoryReference& to, OperandSize size = OperandSize::QuadWord);
-  void write_rcl_cl(const MemoryReference& to, OperandSize size = OperandSize::QuadWord);
-  void write_rcr_cl(const MemoryReference& to, OperandSize size = OperandSize::QuadWord);
-  void write_shl_cl(const MemoryReference& to, OperandSize size = OperandSize::QuadWord);
-  void write_shr_cl(const MemoryReference& to, OperandSize size = OperandSize::QuadWord);
-  void write_sar_cl(const MemoryReference& to, OperandSize size = OperandSize::QuadWord);
+  void write_rol(const MemoryReference& to, uint8_t bits,
+      OperandSize size = OperandSize::QuadWord);
+  void write_ror(const MemoryReference& to, uint8_t bits,
+      OperandSize size = OperandSize::QuadWord);
+  void write_rcl(const MemoryReference& to, uint8_t bits,
+      OperandSize size = OperandSize::QuadWord);
+  void write_rcr(const MemoryReference& to, uint8_t bits,
+      OperandSize size = OperandSize::QuadWord);
+  void write_shl(const MemoryReference& to, uint8_t bits,
+      OperandSize size = OperandSize::QuadWord);
+  void write_shr(const MemoryReference& to, uint8_t bits,
+      OperandSize size = OperandSize::QuadWord);
+  void write_sar(const MemoryReference& to, uint8_t bits,
+      OperandSize size = OperandSize::QuadWord);
+  void write_rol_cl(const MemoryReference& to,
+      OperandSize size = OperandSize::QuadWord);
+  void write_ror_cl(const MemoryReference& to,
+      OperandSize size = OperandSize::QuadWord);
+  void write_rcl_cl(const MemoryReference& to,
+      OperandSize size = OperandSize::QuadWord);
+  void write_rcr_cl(const MemoryReference& to,
+      OperandSize size = OperandSize::QuadWord);
+  void write_shl_cl(const MemoryReference& to,
+      OperandSize size = OperandSize::QuadWord);
+  void write_shr_cl(const MemoryReference& to,
+      OperandSize size = OperandSize::QuadWord);
+  void write_sar_cl(const MemoryReference& to,
+      OperandSize size = OperandSize::QuadWord);
 
   void write_not(const MemoryReference& target,
       OperandSize size = OperandSize::QuadWord);
@@ -401,6 +437,10 @@ public:
       OperandSize size = OperandSize::QuadWord);
 
   // comparison opcodes
+  void write_cmp(const MemoryReference& to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmp(const MemoryReference& to, int64_t value,
+      OperandSize size = OperandSize::QuadWord);
   void write_test(const MemoryReference& a, const MemoryReference& b,
       OperandSize size = OperandSize::QuadWord);
   void write_seto(const MemoryReference& target);
@@ -488,4 +528,12 @@ private:
   };
   std::deque<Label> labels;
   std::unordered_map<std::string, Label*> name_to_label;
+
+  static std::string disassemble_rm(const uint8_t* data, size_t size,
+      size_t& offset, const char* opcode_name, bool is_load,
+      const char** op_name_table, bool reg_ext, bool base_ext, bool index_ext,
+      OperandSize operand_size);
+  static std::string disassemble_jmp(const uint8_t* data, size_t size,
+    size_t& offset, uint64_t addr, const char* opcode_name, bool is_32bit,
+    std::multimap<size_t, std::string>& addr_to_label, uint64_t& next_label);
 };
