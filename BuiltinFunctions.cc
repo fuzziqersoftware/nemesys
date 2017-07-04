@@ -60,9 +60,10 @@ static UnicodeObject* builtin_input(UnicodeObject* prompt) {
   }
 
   if (data.empty()) {
+    add_reference(empty_unicode);
     return empty_unicode;
   }
-  return unicode_new(NULL, blocks.back().data(), blocks.back().size());
+  return unicode_new(NULL, data.data(), data.size());
 }
 
 

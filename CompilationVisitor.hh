@@ -131,7 +131,7 @@ private:
   ssize_t write_function_call_stack_prep(size_t arg_count);
   void write_function_call(const void* function,
       const std::vector<const MemoryReference>& args,
-      ssize_t arg_stack_bytes = -1, bool return_value = true);
+      ssize_t arg_stack_bytes = -1, Register return_register = Register::None);
 
   void write_destructor_call(const MemoryReference& mem, const Variable& type);
 

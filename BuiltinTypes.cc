@@ -6,9 +6,10 @@ using namespace std;
 
 
 
-void add_reference(void* o) {
+void* add_reference(void* o) {
   std::atomic<uint64_t>* refcount = reinterpret_cast<std::atomic<uint64_t>*>(o);
   (*refcount)++;
+  return o;
 }
 
 void basic_remove_reference(void* o) {
@@ -17,6 +18,11 @@ void basic_remove_reference(void* o) {
     free(o);
   }
 }
+
+
+
+BytesObject::BytesObject() : refcount(1), count(0) { }
+UnicodeObject::UnicodeObject() : refcount(1), count(0) { }
 
 
 

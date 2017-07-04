@@ -31,11 +31,34 @@ using namespace std;
 // only live during a statement's execution; when a statement is completed, they
 // are either copied to a local/global variable or destroyed.
 //
-// globals are referenced by offsets from r13. each module has an assigned space
-// above r13, and should read/write globals with mov [r13 + X] opcodes. module
-// root scopes compile into functions that return nothing and take the global
-// pointer as an argument. functions expect the global pointer to already be in
-// r13.
+// the nemesys calling convention is a little more complex than the system v
+// convention, but is fully compatible with it, so nemesys functions can
+// directly call c functions (e.g. built-in functions in nemesys itself). the
+// nemesys register assignment is as follows:
+//
+// reg =  save  = purpose
+// RAX = caller = function return values
+// RCX = caller = 4th int arg
+// RDX = caller = 3rd int arg
+// RBX = callee = unused
+// RSP =        = stack
+// RBP = callee = stack frame pointer
+// RSI = caller = 2nd int arg
+// RDI = caller = 1st int arg
+// R8  = caller = 5th int arg
+// R9  = caller = 6th int arg
+// R10 = caller = temp values
+// R11 = caller = temp values
+// R12 = callee = unused
+// R13 = callee = global space pointer
+// R14 = callee = built-in function array pointer
+// R15 = callee = unused
+//
+// globals are referenced by offsets from r13. each module has a
+// statically-assigned space above r13, and should read/write globals with
+// `mov [r13 + X]` opcodes. module root scopes compile into functions that
+// return nothing and take the global pointer as an argument. functions defined
+// within modules expect the global pointer to already be in r13.
 
 // TODO: keep common function references around somewhere (r14 maybe) and use
 // `call [r14 + X]` instead of `mov rax, X; call rax`.
@@ -403,7 +426,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
            (right_type.type == ValueType::Unicode))) {
         this->write_function_call(reinterpret_cast<const void*>(&unicode_concat),
             {MemoryReference(Register::RSP, 8),
-              MemoryReference(this->target_register)});
+              MemoryReference(this->target_register)}, -1,
+            this->target_register);
         break;
       }
 
@@ -643,12 +667,13 @@ void CompilationVisitor::visit(FunctionCall* a) {
       this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_passed_value",
           a, arg_index));
       this->write_code_for_call_arg(arg.passed_value, arg_index);
+      arg_types.emplace_back(move(this->current_type));
     } else {
       this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_default_value",
           a, arg_index));
       this->write_code_for_call_arg(arg.default_value, arg_index);
+      arg_types.emplace_back(arg.default_value);
     }
-    arg_types.emplace_back(move(this->current_type));
   }
 
   // we can now unreserve the argument registers
@@ -675,6 +700,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
     this->as.write_label(string_printf("__FunctionCall_%p_call_fragment_%" PRId64 "_%" PRId64,
           a, a->callee_function_id, fragment_id));
+    // TODO: deal with return value somehow
     this->write_function_call(fragment.compiled, {}, arg_stack_bytes);
 
   } catch (const std::out_of_range& e) {
@@ -726,17 +752,11 @@ void CompilationVisitor::visit(UnicodeConstant* a) {
   this->file_offset = a->file_offset;
 
   int64_t available = this->write_push_reserved_registers();
-  if (!(available & (1 << this->target_register))) {
-    throw compile_error("the target register is reserved", this->file_offset);
-  }
 
-  // args are u=NULL, data, size
-  this->as.write_mov(Register::RDI, 0);
-  this->as.write_mov(Register::RSI, reinterpret_cast<int64_t>(a->value.data()));
-  this->as.write_mov(Register::RDX, a->value.size());
-
-  this->write_function_call(reinterpret_cast<const void*>(unicode_new), {},
-      this->write_function_call_stack_prep(3));
+  const UnicodeObject* o = this->global->get_or_create_constant(a->value);
+  this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
+  this->write_function_call(reinterpret_cast<const void*>(add_reference), {},
+      this->write_function_call_stack_prep(1), this->target_register);
 
   this->write_pop_reserved_registers(available);
 
@@ -1087,6 +1107,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
 
 void CompilationVisitor::write_code_for_call_arg(
     shared_ptr<Expression> value, size_t arg_index) {
+  Register original_target_register = this->target_register;
   if (arg_index < argument_register_order.size()) {
     // construct it directly into the register, then reserve the register
     this->target_register = argument_register_order[arg_index];
@@ -1099,6 +1120,7 @@ void CompilationVisitor::write_code_for_call_arg(
     value->accept(this);
     this->write_push(this->target_register);
   }
+  this->target_register = original_target_register;
 }
 
 void CompilationVisitor::write_code_for_call_arg(const Variable& value,
@@ -1107,8 +1129,69 @@ void CompilationVisitor::write_code_for_call_arg(const Variable& value,
     throw compile_error("can\'t generate code for unknown value", this->file_offset);
   }
 
-  // TODO
-  throw compile_error("default values not yet implemented", this->file_offset);
+  Register original_target_register = this->target_register;
+  if (arg_index < argument_register_order.size()) {
+    this->target_register = argument_register_order[arg_index];
+  } else {
+    this->target_register = this->available_register();
+  }
+
+  switch (value.type) {
+    case ValueType::Indeterminate:
+      throw compile_error("can\'t generate code for Indeterminate value", this->file_offset);
+
+    case ValueType::None:
+      this->as.write_mov(this->target_register, 0);
+      break;
+
+    case ValueType::Bool:
+    case ValueType::Int:
+      this->as.write_mov(this->target_register, value.int_value);
+      break;
+
+    case ValueType::Float:
+      throw compile_error("Float default values not yet implemented", this->file_offset);
+
+    case ValueType::Bytes: {
+      const BytesObject* o = this->global->get_or_create_constant(*value.bytes_value);
+      this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
+      this->write_function_call(reinterpret_cast<const void*>(&add_reference),
+          {}, this->write_function_call_stack_prep(1), this->target_register);
+      break;
+    }
+
+    case ValueType::Unicode: {
+      const UnicodeObject* o = this->global->get_or_create_constant(*value.unicode_value);
+      this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
+      this->write_function_call(reinterpret_cast<const void*>(&add_reference),
+          {}, this->write_function_call_stack_prep(1), this->target_register);
+      break;
+    }
+
+    case ValueType::List:
+      throw compile_error("List default values not yet implemented", this->file_offset);
+    case ValueType::Tuple:
+      throw compile_error("Tuple default values not yet implemented", this->file_offset);
+    case ValueType::Set:
+      throw compile_error("Set default values not yet implemented", this->file_offset);
+    case ValueType::Dict:
+      throw compile_error("Dict default values not yet implemented", this->file_offset);
+    case ValueType::Function:
+      throw compile_error("Function default values not yet implemented", this->file_offset);
+    case ValueType::Class:
+      throw compile_error("Class default values not yet implemented", this->file_offset);
+    case ValueType::Module:
+      throw compile_error("Module default values not yet implemented", this->file_offset);
+    default:
+      throw compile_error("default value has unknown type", this->file_offset);
+  }
+
+  if (arg_index < argument_register_order.size()) {
+    this->reserve_register(this->target_register);
+  } else {
+    this->write_push(this->target_register);
+  }
+  this->target_register = original_target_register;
 }
 
 ssize_t CompilationVisitor::write_function_call_stack_prep(size_t arg_count) {
@@ -1124,7 +1207,7 @@ ssize_t CompilationVisitor::write_function_call_stack_prep(size_t arg_count) {
 
 void CompilationVisitor::write_function_call(const void* function,
     const std::vector<const MemoryReference>& args, ssize_t arg_stack_bytes,
-    bool return_value) {
+    Register return_register) {
 
   size_t rsp_adjustment = 0;
   if (arg_stack_bytes < 0) {
@@ -1211,7 +1294,8 @@ void CompilationVisitor::write_function_call(const void* function,
   this->as.write_call(MemoryReference(Register::RAX));
 
   // put the return value into the target register
-  if (return_value && (this->target_register != Register::RAX)) {
+  if ((return_register != Register::None) &&
+      (return_register != Register::RAX)) {
     this->as.write_mov(MemoryReference(this->target_register),
         MemoryReference(Register::RAX));
   }
@@ -1243,8 +1327,7 @@ void CompilationVisitor::write_destructor_call(const MemoryReference& mem,
     case ValueType::Unicode:
       // these types use basic_remove_reference
       this->write_function_call(
-          reinterpret_cast<const void*>(&basic_remove_reference), {mem}, -1,
-          false);
+          reinterpret_cast<const void*>(&basic_remove_reference), {mem});
       break;
 
     case ValueType::List:

@@ -135,6 +135,12 @@ GlobalAnalysis::~GlobalAnalysis() {
   if (this->global_space) {
     free(this->global_space);
   }
+  for (const auto& it : this->bytes_constants) {
+    basic_remove_reference(it.second);
+  }
+  for (const auto& it : this->unicode_constants) {
+    basic_remove_reference(it.second);
+  }
 }
 
 static void print_source_location(FILE* stream, shared_ptr<const SourceFile> f,
@@ -389,6 +395,28 @@ FunctionContext* GlobalAnalysis::context_for_function(
       return NULL;
     }
   }
+}
+
+const BytesObject* GlobalAnalysis::get_or_create_constant(const string& s) {
+  BytesObject* o = NULL;
+  try {
+    o = this->bytes_constants.at(s);
+  } catch (const out_of_range& e) {
+    o = bytes_new(NULL, reinterpret_cast<const uint8_t*>(s.data()), s.size());
+    this->bytes_constants.emplace(s, o);
+  }
+  return o;
+}
+
+const UnicodeObject* GlobalAnalysis::get_or_create_constant(const wstring& s) {
+  UnicodeObject* o = NULL;
+  try {
+    o = this->unicode_constants.at(s);
+  } catch (const out_of_range& e) {
+    o = unicode_new(NULL, s.data(), s.size());
+    this->unicode_constants.emplace(s, o);
+  }
+  return o;
 }
 
 void GlobalAnalysis::update_global_space() {

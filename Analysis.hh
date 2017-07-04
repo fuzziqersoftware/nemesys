@@ -12,6 +12,7 @@
 #include "PythonASTNodes.hh"
 #include "Environment.hh"
 #include "CodeBuffer.hh"
+#include "BuiltinTypes.hh"
 
 
 
@@ -144,6 +145,9 @@ public:
   uint64_t* global_space;
   int64_t global_space_used;
 
+  std::unordered_map<std::string, BytesObject*> bytes_constants;
+  std::unordered_map<std::wstring, UnicodeObject*> unicode_constants;
+
   int64_t debug_flags;
 
   GlobalAnalysis();
@@ -160,6 +164,9 @@ public:
 
   FunctionContext* context_for_function(int64_t function_id,
       ModuleAnalysis* module_for_create = NULL);
+
+  const BytesObject* get_or_create_constant(const std::string& s);
+  const UnicodeObject* get_or_create_constant(const std::wstring& s);
 
 private:
   void update_global_space();
