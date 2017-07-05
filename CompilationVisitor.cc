@@ -278,13 +278,14 @@ bool CompilationVisitor::is_always_falsey(const Variable& type) {
 void CompilationVisitor::write_truth_value_test(Register reg,
     const Variable& type) {
 
-  switch (current_type.type) {
+  switch (type.type) {
     case ValueType::Indeterminate:
       throw compile_error("truth value test on Indeterminate type", this->file_offset);
 
     case ValueType::Bool:
     case ValueType::Int:
       this->as.write_test(MemoryReference(reg), MemoryReference(reg));
+      break;
 
     case ValueType::Float:
       throw compile_error("floating-point truth tests not yet implemented", this->file_offset);
@@ -299,6 +300,7 @@ void CompilationVisitor::write_truth_value_test(Register reg,
       Register size_reg = this->available_register();
       this->as.write_mov(MemoryReference(size_reg), MemoryReference(reg, 0x08));
       this->as.write_test(MemoryReference(size_reg), MemoryReference(size_reg));
+      break;
     }
 
     case ValueType::None:
@@ -375,35 +377,63 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   switch (a->oper) {
     case BinaryOperator::LessThan:
       // TODO
+      this->current_type = Variable(ValueType::Bool);
       throw compile_error("LessThan not yet implemented", this->file_offset);
 
     case BinaryOperator::GreaterThan:
       // TODO
+      this->current_type = Variable(ValueType::Bool);
       throw compile_error("GreaterThan not yet implemented", this->file_offset);
+
     case BinaryOperator::Equality:
       // TODO
+      this->current_type = Variable(ValueType::Bool);
       throw compile_error("Equality not yet implemented", this->file_offset);
+
     case BinaryOperator::GreaterOrEqual:
       // TODO
+      this->current_type = Variable(ValueType::Bool);
       throw compile_error("GreaterOrEqual not yet implemented", this->file_offset);
+
     case BinaryOperator::LessOrEqual:
       // TODO
+      this->current_type = Variable(ValueType::Bool);
       throw compile_error("LessOrEqual not yet implemented", this->file_offset);
+
     case BinaryOperator::NotEqual:
       // TODO
+      this->current_type = Variable(ValueType::Bool);
       throw compile_error("NotEqual not yet implemented", this->file_offset);
+
     case BinaryOperator::In:
-      // TODO
-      throw compile_error("In not yet implemented", this->file_offset);
     case BinaryOperator::NotIn:
-      // TODO
-      throw compile_error("NotIn not yet implemented", this->file_offset);
+      if (((left_type.type == ValueType::Bytes) &&
+           (right_type.type == ValueType::Bytes)) ||
+          ((left_type.type == ValueType::Unicode) &&
+           (right_type.type == ValueType::Unicode))) {
+        this->write_function_call(reinterpret_cast<const void*>(&unicode_contains),
+            {MemoryReference(Register::RSP, 8),
+              MemoryReference(this->target_register)}, -1,
+            this->target_register);
+      } else {
+        // TODO
+        throw compile_error("In/NotIn not yet implemented", this->file_offset);
+      }
+      if (a->oper == BinaryOperator::NotIn) {
+        this->as.write_xor(this->target_register, 1);
+      }
+      this->current_type = Variable(ValueType::Bool);
+      break;
+
     case BinaryOperator::Is:
       // TODO
+      this->current_type = Variable(ValueType::Bool);
       throw compile_error("Is not yet implemented", this->file_offset);
     case BinaryOperator::IsNot:
       // TODO
+      this->current_type = Variable(ValueType::Bool);
       throw compile_error("IsNot not yet implemented", this->file_offset);
+
     case BinaryOperator::Or:
       // TODO
       throw compile_error("Or not yet implemented", this->file_offset);
@@ -468,6 +498,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   this->as.write_mov(MemoryReference(this->target_register),
       MemoryReference(Register::RSP, 0));
   this->adjust_stack(0x18);
+
+  this->as.write_label(string_printf("__BinaryOperation_%p_complete", a));
 }
 
 void CompilationVisitor::visit(TernaryOperation* a) {
@@ -744,8 +776,16 @@ void CompilationVisitor::visit(FloatConstant* a) {
 void CompilationVisitor::visit(BytesConstant* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("BytesConstant not yet implemented", this->file_offset);
+  int64_t available = this->write_push_reserved_registers();
+
+  const BytesObject* o = this->global->get_or_create_constant(a->value);
+  this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
+  this->write_function_call(reinterpret_cast<const void*>(add_reference), {},
+      this->write_function_call_stack_prep(1), this->target_register);
+
+  this->write_pop_reserved_registers(available);
+
+  this->current_type = Variable(ValueType::Unicode);
 }
 
 void CompilationVisitor::visit(UnicodeConstant* a) {
@@ -789,13 +829,12 @@ void CompilationVisitor::visit(VariableLookup* a) {
 
   VariableLocation loc = this->location_for_variable(a->name);
 
-  if (loc.is_global) {
-    this->as.write_mov(MemoryReference(this->target_register),
-        MemoryReference(Register::R13, this->module->global_base_offset + loc.offset));
-  } else {
-    this->as.write_mov(MemoryReference(this->target_register),
-        MemoryReference(Register::RBP, loc.offset));
-  }
+  // for globals, use [r13 + slot + module_base]; for locals [rbp + slot]
+  MemoryReference mem(loc.is_global ? Register::R13 : Register::RBP,
+      loc.offset + (loc.is_global ? this->module->global_base_offset : 0));
+  this->write_function_call(reinterpret_cast<const void*>(&add_reference),
+      {mem}, -1, this->target_register);
+
   this->current_type = loc.type;
 }
 
@@ -1002,15 +1041,41 @@ void CompilationVisitor::visit(SingleIfStatement* a) {
 void CompilationVisitor::visit(IfStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("IfStatement not yet implemented", this->file_offset);
+  string false_label = string_printf("__IfStatement_%p_condition_false", a);
+  string end_label = string_printf("__IfStatement_%p_end", a);
+
+  // generate the condition check
+  this->as.write_label(string_printf("__IfStatement_%p_condition", a));
+  this->target_register = this->available_register();
+  a->check->accept(this);
+  this->as.write_label(string_printf("__IfStatement_%p_test", a));
+  this->write_truth_value_test(this->target_register, this->current_type);
+  this->as.write_jz(false_label);
+
+  // generate the body statements
+  this->visit_list(a->items);
+
+  // TODO: support elifs
+  if (!a->elifs.empty()) {
+    throw compile_error("elif clauses not yet supported");
+  }
+
+  // generate the else block, if any
+  if (a->else_suite.get()) {
+    this->as.write_jmp(end_label);
+    this->as.write_label(false_label);
+    a->else_suite->accept(this);
+  }
+
+  // any break statement will jump over the loop body and the else statement
+  this->as.write_label(end_label);
 }
 
 void CompilationVisitor::visit(ElseStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("ElseStatement not yet implemented", this->file_offset);
+  // uhhhh we don't have to do anything here except visit each statement, right?
+  this->visit_list(a->items);
 }
 
 void CompilationVisitor::visit(ElifStatement* a) {
@@ -1030,8 +1095,29 @@ void CompilationVisitor::visit(ForStatement* a) {
 void CompilationVisitor::visit(WhileStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("WhileStatement not yet implemented", this->file_offset);
+  string start_label = string_printf("__WhileStatement_%p_condition", a);
+  string end_label = string_printf("__WhileStatement_%p_condition_false", a);
+  string break_label = string_printf("__WhileStatement_%p_broken", a);
+
+  // generate the condition check
+  this->as.write_label(start_label);
+  this->target_register = this->available_register();
+  a->condition->accept(this);
+  this->write_truth_value_test(this->target_register, this->current_type);
+  this->as.write_jz(end_label);
+
+  // generate the loop body
+  this->visit_list(a->items);
+  this->as.write_jmp(start_label);
+  this->as.write_label(end_label);
+
+  // if there's an else statement, generate the body here
+  if (a->else_suite.get()) {
+    a->else_suite->accept(this);
+  }
+
+  // any break statement will jump over the loop body and the else statement
+  this->as.write_label(break_label);
 }
 
 void CompilationVisitor::visit(ExceptStatement* a) {

@@ -127,7 +127,7 @@ public:
   int64_t num_splits; // split count for root scope
 
   std::multimap<size_t, std::string> compiled_labels;
-  void (*compiled)(uint64_t* global_space);
+  void (*compiled)(int64_t* global_space);
 
   ModuleAnalysis(const std::string& name, const std::string& source_filename);
   ~ModuleAnalysis() = default;
@@ -142,7 +142,7 @@ public:
   std::unordered_map<std::string, std::shared_ptr<ModuleAnalysis>> modules;
   std::vector<std::string> import_paths;
 
-  uint64_t* global_space;
+  int64_t* global_space;
   int64_t global_space_used;
 
   std::unordered_map<std::string, BytesObject*> bytes_constants;
@@ -170,6 +170,8 @@ public:
 
 private:
   void update_global_space();
+  void initialize_global_space_for_module(
+      std::shared_ptr<ModuleAnalysis> module);
 
   std::unordered_set<std::shared_ptr<ModuleAnalysis>> in_progress;
 

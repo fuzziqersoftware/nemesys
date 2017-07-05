@@ -30,8 +30,10 @@ struct UnicodeObject {
 
 BytesObject* bytes_new(BytesObject* b, const uint8_t* data, size_t count);
 BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b);
+bool bytes_contains(const BytesObject* needle, const BytesObject* haystack);
 // BytesObject uses basic_decref
 
 UnicodeObject* unicode_new(UnicodeObject* u, const wchar_t* data, size_t count);
 UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b);
+bool unicode_contains(const UnicodeObject* needle, const UnicodeObject* haystack);
 // UnicodeObject uses basic_decref

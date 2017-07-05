@@ -442,8 +442,11 @@ void AMD64Assembler::write_mov(Register reg, int64_t value, OperandSize size) {
 
   string data;
   if (size == OperandSize::QuadWord) {
-    // TODO: we can optimize for code size by not using movabs for small values,
-    // but for now I'm lazy
+    // if the value can fit in a standard mov, use that instead
+    if (((value & 0xFFFFFFFF80000000) == 0) || ((value & 0xFFFFFFFF80000000) == 0xFFFFFFFF80000000)) {
+      this->write_mov(MemoryReference(reg), value, size);
+      return;
+    }
     data += 0x48 | (is_extension_register(reg) ? 0x01 : 0);
     data += 0xB8 | (reg & 7);
     data.append(reinterpret_cast<const char*>(&value), 8);
@@ -476,6 +479,25 @@ void AMD64Assembler::write_mov(Register reg, int64_t value, OperandSize size) {
   } else {
     throw invalid_argument("unknown operand size");
   }
+  this->write(data);
+}
+
+void AMD64Assembler::write_mov(const MemoryReference& mem, int64_t value,
+    OperandSize size) {
+  Operation op = (size == OperandSize::Byte) ? Operation::MOV_MEM8_IMM : Operation::MOV_MEM_IMM;
+  string data = this->generate_rm(op, mem, 0, size);
+
+  // this opcode has a 32-bit imm for both 32-bit and 64-bit operand sizes
+  if ((size == OperandSize::QuadWord) || (size == OperandSize::DoubleWord)) {
+    data.append(reinterpret_cast<const char*>(&value), 4);
+  } else if (size == OperandSize::Word) {
+    data.append(reinterpret_cast<const char*>(&value), 2);
+  } else if (size == OperandSize::Byte) {
+    data += static_cast<int8_t>(value);
+  } else {
+    throw invalid_argument("unknown operand size");
+  }
+
   this->write(data);
 }
 
@@ -1347,33 +1369,33 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
 
       if (operand_size == OperandSize::QuadWord) {
         if (offset >= size - 7) {
-          opcode_text += ", <<incomplete>>";
+          opcode_text = string_printf("movabs   %s, <<incomplete>>", reg_name.c_str());
         } else {
-          opcode_text = string_printf("mov      %s, 0x%016" PRIX64, reg_name.c_str(),
+          opcode_text = string_printf("movabs   %s, 0x%016" PRIX64, reg_name.c_str(),
               *reinterpret_cast<const uint64_t*>(&data[offset]));
           offset += 8;
         }
       } else if (operand_size == OperandSize::DoubleWord) {
         if (offset >= size - 3) {
-          opcode_text += ", <<incomplete>>";
+          opcode_text = string_printf("movabs   %s, <<incomplete>>", reg_name.c_str());
         } else {
-          opcode_text = string_printf("mov      %s, 0x%08" PRIX32, reg_name.c_str(),
+          opcode_text = string_printf("movabs   %s, 0x%08" PRIX32, reg_name.c_str(),
               *reinterpret_cast<const uint32_t*>(&data[offset]));
           offset += 4;
         }
       } else if (operand_size == OperandSize::QuadWord) {
         if (offset >= size - 1) {
-          opcode_text += ", <<incomplete>>";
+          opcode_text = string_printf("movabs   %s, <<incomplete>>", reg_name.c_str());
         } else {
-          opcode_text = string_printf("mov      %s, 0x%04" PRIX16, reg_name.c_str(),
+          opcode_text = string_printf("movabs   %s, 0x%04" PRIX16, reg_name.c_str(),
               *reinterpret_cast<const uint16_t*>(&data[offset]));
           offset += 2;
         }
       } else if (operand_size == OperandSize::QuadWord) {
         if (offset >= size) {
-          opcode_text += ", <<incomplete>>";
+          opcode_text = string_printf("movabs   %s, <<incomplete>>", reg_name.c_str());
         } else {
-          opcode_text = string_printf("mov      %s, 0x%02" PRIX8, reg_name.c_str(),
+          opcode_text = string_printf("movabs   %s, 0x%02" PRIX8, reg_name.c_str(),
               data[offset]);
           offset += 1;
         }
@@ -1403,6 +1425,42 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
 
     } else if (opcode == 0xC3) {
       opcode_text = "ret";
+
+    } else if ((opcode & 0xFE) == 0xC6) {
+      if (!(opcode & 1)) {
+        operand_size = OperandSize::Byte;
+      }
+      static const char* names[] = {
+          "mov", NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+      opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
+          false, names, reg_ext, base_ext, index_ext, operand_size);
+
+      // TODO: factor this out with movabs
+      if ((operand_size == OperandSize::QuadWord) ||
+          (operand_size == OperandSize::DoubleWord)) {
+        if (offset >= size - 3) {
+          opcode_text += ", <<incomplete>>";
+        } else {
+          opcode_text += string_printf(", 0x%08" PRIX32,
+              *reinterpret_cast<const uint32_t*>(&data[offset]));
+          offset += 4;
+        }
+      } else if (operand_size == OperandSize::QuadWord) {
+        if (offset >= size - 1) {
+          opcode_text += ", <<incomplete>>";
+        } else {
+          opcode_text += string_printf(", 0x%04" PRIX16,
+              *reinterpret_cast<const uint16_t*>(&data[offset]));
+          offset += 2;
+        }
+      } else if (operand_size == OperandSize::QuadWord) {
+        if (offset >= size) {
+          opcode_text += ", <<incomplete>>";
+        } else {
+          opcode_text += string_printf(", 0x%02" PRIX8, data[offset]);
+          offset += 1;
+        }
+      }
 
     } else if ((opcode & 0xFC) == 0xE8) {
       opcode_text = AMD64Assembler::disassemble_jmp(data, size, offset, addr,

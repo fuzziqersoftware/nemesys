@@ -124,7 +124,14 @@ FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
 
 ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename) :
     phase(Phase::Initial), name(name), source(new SourceFile(filename)),
-    num_splits(0), compiled(NULL) { }
+    num_splits(0), compiled(NULL) {
+  // TODO: using unescape_unicode is a stupid hack, but these strings can't
+  // contain backslashes anyway (right? ...right?)
+  this->globals.emplace("__name__", unescape_unicode(name));
+  this->globals_mutable.emplace("__name__", false);
+  this->globals.emplace("__file__", unescape_unicode(filename));
+  this->globals_mutable.emplace("__file__", false);
+}
 
 
 
@@ -235,6 +242,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           }
           fprintf(stderr, "# global space is now %p (%" PRId64 " bytes)\n",
               this->global_space, this->global_space_used);
+          fputc('\n', stderr);
         }
         module->phase = ModuleAnalysis::Phase::Annotated;
         break;
@@ -248,21 +256,33 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           this->print_compile_error(stderr, module, e);
           throw;
         }
+
         if (this->debug_flags & DebugFlag::Analysis) {
           fprintf(stderr, "[%s] ======== module analyzed\n", module->name.c_str());
           module->ast->print(stderr);
 
-          fprintf(stderr, "# global base offset: %" PRIX64 "\n",
-              module->global_base_offset);
-
+          int64_t offset = module->global_base_offset;
           for (const auto& it : module->globals) {
             bool is_mutable = module->globals_mutable.at(it.first);
             string value_str = it.second.str();
-            fprintf(stderr, "# global: %s = %s (%s)\n", it.first.c_str(),
-                value_str.c_str(), is_mutable ? "mutable" : "immutable");
+            fprintf(stderr, "# global at r13+%" PRIX64 ": %s = %s (%s)\n",
+                offset, it.first.c_str(), value_str.c_str(),
+                is_mutable ? "mutable" : "immutable");
+            offset += 8;
           }
           fputc('\n', stderr);
         }
+
+        this->initialize_global_space_for_module(module);
+
+        if (this->debug_flags & DebugFlag::Analysis) {
+          fprintf(stderr, "[%s] ======== global space updated\n",
+              module->name.c_str());
+          print_data(stderr, this->global_space, this->global_space_used,
+              reinterpret_cast<uint64_t>(this->global_space));
+          fputc('\n', stderr);
+        }
+
         module->phase = ModuleAnalysis::Phase::Analyzed;
         break;
       }
@@ -293,7 +313,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
         }
 
         string compiled = v.assembler().assemble(&module->compiled_labels);
-        module->compiled = reinterpret_cast<void(*)(uint64_t*)>(
+        module->compiled = reinterpret_cast<void(*)(int64_t*)>(
             this->code.append(compiled));
 
         if (this->debug_flags & DebugFlag::Assembly) {
@@ -420,6 +440,64 @@ const UnicodeObject* GlobalAnalysis::get_or_create_constant(const wstring& s) {
 }
 
 void GlobalAnalysis::update_global_space() {
-  this->global_space = reinterpret_cast<uint64_t*>(realloc(this->global_space,
+  this->global_space = reinterpret_cast<int64_t*>(realloc(this->global_space,
       this->global_space_used));
+  // TODO: if global_space moves, we'll need to update r13 everywhere, sigh...
+  // in a way-distant-future multithreaded world, this probably will mean
+  // blocking all threads somehow, and updating r13 in their contexts if they're
+  // running nemesys code, which is an awful hack. can we do something better?
+}
+
+void GlobalAnalysis::initialize_global_space_for_module(
+    shared_ptr<ModuleAnalysis> module) {
+  size_t slot = module->global_base_offset / 8;
+  for (const auto& it : module->globals) {
+    // if the global is mutable or we don't know it's value, we can't populate
+    // it statically
+    if (module->globals_mutable.at(it.first) || !it.second.value_known) {
+      this->global_space[slot] = 0;
+
+    } else {
+      switch (it.second.type) {
+        case ValueType::None:
+          this->global_space[slot] = 0;
+          break;
+
+        case ValueType::Bool:
+        case ValueType::Int:
+          this->global_space[slot] = it.second.int_value;
+          break;
+
+        case ValueType::Float:
+          *reinterpret_cast<double*>(&this->global_space[slot]) =
+              it.second.float_value;
+          break;
+
+        case ValueType::Bytes:
+          this->global_space[slot] = reinterpret_cast<int64_t>(
+              this->get_or_create_constant(*it.second.bytes_value));
+          break;
+
+        case ValueType::Unicode:
+          this->global_space[slot] = reinterpret_cast<int64_t>(
+              this->get_or_create_constant(*it.second.unicode_value));
+          break;
+
+        case ValueType::List:
+        case ValueType::Tuple:
+        case ValueType::Set:
+        case ValueType::Dict:
+        case ValueType::Function:
+        case ValueType::Class:
+        case ValueType::Module:
+        default:
+          // do nothing; these types will be constructed by the module root scope
+          // instead
+          // TODO: implement static constructors for collections
+          break;
+      }
+    }
+
+    slot++;
+  }
 }

@@ -104,6 +104,8 @@ enum Operation {
   SHIFT_IMM  = 0xC1,
   RET_IMM    = 0xC2,
   RET        = 0xC3,
+  MOV_MEM8_IMM = 0xC6,
+  MOV_MEM_IMM = 0xC7,
   SHIFT8_1   = 0xD0,
   SHIFT_1    = 0xD1,
   SHIFT8_CL  = 0xD2,
@@ -325,6 +327,8 @@ public:
   void write_mov(const MemoryReference& to, const MemoryReference& from,
       OperandSize size = OperandSize::QuadWord);
   void write_mov(Register reg, int64_t value,
+      OperandSize size = OperandSize::QuadWord);
+  void write_mov(const MemoryReference& mem, int64_t value,
       OperandSize size = OperandSize::QuadWord);
   void write_xchg(Register r, const MemoryReference& mem,
       OperandSize size = OperandSize::QuadWord);

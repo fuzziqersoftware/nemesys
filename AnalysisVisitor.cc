@@ -162,6 +162,14 @@ void AnalysisVisitor::visit(FunctionCall* a) {
   }
   Variable function = move(this->current_value);
 
+  // now visit the arg values
+  for (auto& arg : a->args) {
+    arg->accept(this);
+  }
+  for (auto& it : a->kwargs) {
+    it.second->accept(this);
+  }
+
   // we probably can't know the function's return type/value yet, but we'll try
   // to figure it out
   this->current_value = Variable(ValueType::Indeterminate);
@@ -188,14 +196,6 @@ void AnalysisVisitor::visit(FunctionCall* a) {
   // local variable signature
   if (this->current_value.type != ValueType::Indeterminate) {
     a->split_id = 0;
-  }
-
-  // now visit the arg values
-  for (auto& arg : a->args) {
-    arg->accept(this);
-  }
-  for (auto& it : a->kwargs) {
-    it.second->accept(this);
   }
 }
 
@@ -646,9 +646,13 @@ void AnalysisVisitor::visit(SingleIfStatement* a) {
 
 void AnalysisVisitor::visit(IfStatement* a) {
   a->check->accept(this);
+  Variable check_result = move(this->current_value);
+
+  string result_str = check_result.str();
+  fprintf(stderr, "check result is %s\n", result_str.c_str());
 
   // if we know the value and it's truthy, skip all the elif/else branches
-  if (this->current_value.value_known && this->current_value.truth_value()) {
+  if (check_result.value_known && check_result.truth_value()) {
     this->visit_list(a->items);
     return;
   }
@@ -657,7 +661,7 @@ void AnalysisVisitor::visit(IfStatement* a) {
   // to the elifs
   // TODO: there may be more optimizations we can do here (e.g. if one of the
   // elifs is known and truthy, skip the rest and the else suite)
-  if (this->current_value.value_known && !this->current_value.truth_value()) {
+  if (check_result.value_known && !check_result.truth_value()) {
     for (auto& elif : a->elifs) {
       elif->accept(this);
     }

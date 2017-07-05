@@ -11,6 +11,7 @@
 #include "PythonASTNodes.hh"
 #include "PythonASTVisitor.hh"
 #include "Environment.hh"
+#include "BuiltinFunctions.hh"
 
 using namespace std;
 
@@ -256,6 +257,11 @@ FunctionContext* AnnotationVisitor::current_function() {
 void AnnotationVisitor::record_write(const string& name, size_t file_offset) {
   if (name.empty()) {
     throw compile_error("empty name in record_write", file_offset);
+  }
+
+  // builtin names can't be written
+  if (builtin_names.count(name)) {
+    throw compile_error("can\'t assign to builtin name", file_offset);
   }
 
   auto* context = this->current_function();
