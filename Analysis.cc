@@ -168,7 +168,10 @@ ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename,
   this->globals.emplace("__name__", unescape_unicode(name));
   this->globals_mutable.emplace("__name__", false);
   if (is_code) {
-    this->globals.emplace("__file__", "__imm__");
+    this->globals.emplace("__file__", L"__imm__");
+    this->globals_mutable.emplace("__file__", false);
+  } else {
+    this->globals.emplace("__file__", unescape_unicode(filename));
     this->globals_mutable.emplace("__file__", false);
   }
 }
