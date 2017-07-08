@@ -1,4 +1,4 @@
-#include "BuiltinTypes.hh"
+#include "Strings.hh"
 
 #include <stdlib.h>
 
@@ -6,25 +6,7 @@ using namespace std;
 
 
 
-void* add_reference(void* o) {
-  std::atomic<uint64_t>* refcount = reinterpret_cast<std::atomic<uint64_t>*>(o);
-  (*refcount)++;
-  return o;
-}
-
-void basic_remove_reference(void* o) {
-  std::atomic<uint64_t>* refcount = reinterpret_cast<std::atomic<uint64_t>*>(o);
-  if (--(*refcount) == 0) {
-    free(o);
-  }
-}
-
-
-
-BytesObject::BytesObject() : refcount(1), count(0) { }
-UnicodeObject::UnicodeObject() : refcount(1), count(0) { }
-
-
+BytesObject::BytesObject() : basic(free), count(0) { }
 
 BytesObject* bytes_new(BytesObject* s, const uint8_t* data, size_t count) {
   if (!s) {
@@ -34,7 +16,8 @@ BytesObject* bytes_new(BytesObject* s, const uint8_t* data, size_t count) {
       return NULL;
     }
   }
-  s->refcount = 1;
+  s->basic.refcount = 1;
+  s->basic.destructor = delete_reference;
   s->count = count;
   if (data) {
     memcpy(s->data, data, sizeof(uint8_t) * count);
@@ -55,13 +38,25 @@ BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b) {
   return s;
 }
 
-bool bytes_contains(const BytesObject* needle, const BytesObject* haystack) {
-  if (haystack->count < needle->count) {
-    return false;
+uint8_t bytes_at(const BytesObject* s, size_t which) {
+  if (which >= s->count) {
+    return 0;
   }
-  return memmem(haystack->data, haystack->count * sizeof(uint8_t),
-      needle->data, needle->count * sizeof(uint8_t));
+  return s->data[which];
 }
+
+size_t bytes_length(const BytesObject* s) {
+  return s->count;
+}
+
+bool bytes_contains(const BytesObject* s, const BytesObject* other) {
+  return memmem(s->data, s->count * sizeof(uint8_t),
+      other->data, other->count * sizeof(uint8_t));
+}
+
+
+
+UnicodeObject::UnicodeObject() : basic(free), count(0) { }
 
 UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, size_t count) {
   if (!s) {
@@ -71,7 +66,8 @@ UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, size_t count) 
       return NULL;
     }
   }
-  s->refcount = 1;
+  s->basic.refcount = 1;
+  s->basic.destructor = delete_reference;
   s->count = count;
   if (data) {
     memcpy(s->data, data, sizeof(wchar_t) * count);
@@ -92,10 +88,18 @@ UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b) {
   return s;
 }
 
-bool unicode_contains(const UnicodeObject* needle, const UnicodeObject* haystack) {
-  if (haystack->count < needle->count) {
-    return false;
+wchar_t unicode_at(const UnicodeObject* s, size_t which) {
+  if (which >= s->count) {
+    return 0;
   }
-  return memmem(haystack->data, haystack->count * sizeof(wchar_t),
-      needle->data, needle->count * sizeof(wchar_t));
+  return s->data[which];
+}
+
+size_t unicode_length(const UnicodeObject* s) {
+  return s->count;
+}
+
+bool unicode_contains(const UnicodeObject* s, const UnicodeObject* other) {
+  return memmem(s->data, s->count * sizeof(wchar_t),
+      other->data, other->count * sizeof(wchar_t));
 }

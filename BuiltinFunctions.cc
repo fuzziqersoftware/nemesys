@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "Analysis.hh"
-#include "BuiltinTypes.hh"
+#include "Types/Strings.hh"
 #include "PythonLexer.hh" // for escape()
 
 using namespace std;

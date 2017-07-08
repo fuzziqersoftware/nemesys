@@ -12,7 +12,8 @@
 #include "PythonASTVisitor.hh"
 #include "Environment.hh"
 #include "AMD64Assembler.hh"
-#include "BuiltinTypes.hh"
+#include "Types/Reference.hh"
+#include "Types/Strings.hh"
 
 using namespace std;
 
@@ -1479,8 +1480,9 @@ void CompilationVisitor::write_destructor_call(const MemoryReference& mem,
     case ValueType::Bytes:
     case ValueType::Unicode:
       // these types use basic_remove_reference
+      // TODO: call the destructor from the object's header instead
       this->write_function_call(
-          reinterpret_cast<const void*>(&basic_remove_reference), {mem});
+          reinterpret_cast<const void*>(&delete_reference), {mem});
       break;
 
     case ValueType::List:

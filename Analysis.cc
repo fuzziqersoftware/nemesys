@@ -183,10 +183,10 @@ GlobalAnalysis::~GlobalAnalysis() {
     free(this->global_space);
   }
   for (const auto& it : this->bytes_constants) {
-    basic_remove_reference(it.second);
+    delete_reference(it.second);
   }
   for (const auto& it : this->unicode_constants) {
-    basic_remove_reference(it.second);
+    delete_reference(it.second);
   }
 }
 

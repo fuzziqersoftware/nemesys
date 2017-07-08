@@ -12,7 +12,7 @@
 #include "PythonASTNodes.hh"
 #include "Environment.hh"
 #include "CodeBuffer.hh"
-#include "BuiltinTypes.hh"
+#include "Types/Strings.hh"
 
 
 
