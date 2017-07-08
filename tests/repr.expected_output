@@ -1,0 +1,10 @@
+repr tests...
+repr(None) -> None
+repr(True) -> True
+repr(not True) -> False
+repr(5) -> 5
+repr(5 + 11) -> 16
+repr(b'omg') -> b'omg'
+repr(b'omg' + b'hax') -> b'omghax'
+repr('omg') -> 'omg'
+repr('omg' + 'hax') -> 'omghax'
