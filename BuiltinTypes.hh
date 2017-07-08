@@ -12,6 +12,11 @@ void* add_reference(void* o);
 void basic_remove_reference(void* o);
 
 
+
+// string and bytes objects are null-terminated for convenience (so we can use
+// C standard library functions on them). this means that the number of
+// allocated characters is actually (count + 1).
+
 struct BytesObject {
   std::atomic<uint64_t> refcount;
   uint64_t count;

@@ -237,9 +237,10 @@ wstring unescape_unicode(const string& s) {
   return unescape_unicode(s.data(), s.size());
 }
 
-string escape(const string& s) {
+string escape(const char* s, size_t size) {
   string ret;
-  for (char ch : s) {
+  for (size_t x = 0; x < size; x++) {
+    char ch = s[x];
     if (ch == '\\') {
       ret += "\\\\";
     } else if (ch == '\'') {
@@ -269,9 +270,14 @@ string escape(const string& s) {
   return ret;
 }
 
-string escape(const wstring& s) {
+string escape(const string& s) {
+  return escape(s.data(), s.size());
+}
+
+string escape(const wchar_t* s, size_t size) {
   string ret;
-  for (wchar_t ch : s) {
+  for (size_t x = 0; x < size; x++) {
+    char ch = s[x];
     if (ch == '\\') {
       ret += "\\\\";
     } else if (ch == '\'') {
@@ -303,6 +309,10 @@ string escape(const wstring& s) {
     }
   }
   return ret;
+}
+
+string escape(const wstring& s) {
+  return escape(s.data(), s.size());
 }
 
 

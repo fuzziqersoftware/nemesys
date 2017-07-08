@@ -9,8 +9,9 @@
 using namespace std;
 
 
-SourceFile::SourceFile(const string& filename) : original_filename(filename),
-    contents(load_file(this->original_filename)) {
+SourceFile::SourceFile(const string& filename, bool is_data) :
+    original_filename(is_data ? "__imm__" : filename),
+    contents(is_data ? filename : load_file(this->original_filename)) {
 
   // find the start offsets of all the lines
   size_t last_line_start = 0;
@@ -37,10 +38,11 @@ string SourceFile::line(size_t line_num) const {
 
   size_t line_start = this->line_begin_offset[line_num - 1];
   size_t line_end;
-  if (line_num == this->line_begin_offset.size() - 1) {
+  if (line_num == this->line_begin_offset.size()) {
     line_end = this->contents.size();
+  } else {
+    line_end = this->line_begin_offset[line_num];
   }
-  line_end = this->line_begin_offset[line_num];
 
   // trim off \n characters
   while ((line_end > line_start) && (line_end > 0) &&

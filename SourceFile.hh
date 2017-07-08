@@ -8,7 +8,7 @@
 
 class SourceFile {
 public:
-  explicit SourceFile(const std::string& filename);
+  explicit SourceFile(const std::string& filename, bool is_data = false);
   SourceFile(const SourceFile&) = default;
   SourceFile(SourceFile&&) = default;
   SourceFile& operator=(const SourceFile&) = default;

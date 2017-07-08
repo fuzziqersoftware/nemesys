@@ -17,6 +17,6 @@ AMD64AssemblerTest: CodeBuffer.o AMD64Assembler.o AMD64AssemblerTest.o
 	$(CXXLD) $(LDFLAGS) -o AMD64AssemblerTest $^
 
 clean:
-	rm -rf *.o nemesys AMD64AssemblerTest
+	rm -rf *.o nemesys AMD64AssemblerTest nemesys.dSYM
 
 .PHONY: clean test

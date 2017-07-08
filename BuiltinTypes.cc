@@ -26,20 +26,21 @@ UnicodeObject::UnicodeObject() : refcount(1), count(0) { }
 
 
 
-BytesObject* bytes_new(BytesObject* b, const uint8_t* data, size_t count) {
-  if (!b) {
-    size_t size = sizeof(BytesObject) + sizeof(uint8_t) * count;
-    b = reinterpret_cast<BytesObject*>(malloc(size));
-    if (!b) {
+BytesObject* bytes_new(BytesObject* s, const uint8_t* data, size_t count) {
+  if (!s) {
+    size_t size = sizeof(BytesObject) + sizeof(uint8_t) * (count + 1);
+    s = reinterpret_cast<BytesObject*>(malloc(size));
+    if (!s) {
       return NULL;
     }
   }
-  b->refcount = 1;
-  b->count = count;
+  s->refcount = 1;
+  s->count = count;
   if (data) {
-    memcpy(b->data, data, sizeof(uint8_t) * count);
+    memcpy(s->data, data, sizeof(uint8_t) * count);
+    s->data[s->count] = 0;
   }
-  return b;
+  return s;
 }
 
 BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b) {
@@ -50,6 +51,7 @@ BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b) {
   }
   memcpy(s->data, a->data, sizeof(uint8_t) * a->count);
   memcpy(&s->data[a->count], b->data, sizeof(uint8_t) * b->count);
+  s->data[s->count] = 0;
   return s;
 }
 
@@ -61,31 +63,33 @@ bool bytes_contains(const BytesObject* needle, const BytesObject* haystack) {
       needle->data, needle->count * sizeof(uint8_t));
 }
 
-UnicodeObject* unicode_new(UnicodeObject* u, const wchar_t* data, size_t count) {
-  if (!u) {
-    size_t size = sizeof(UnicodeObject) + sizeof(wchar_t) * count;
-    u = reinterpret_cast<UnicodeObject*>(malloc(size));
-    if (!u) {
+UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, size_t count) {
+  if (!s) {
+    size_t size = sizeof(UnicodeObject) + sizeof(wchar_t) * (count + 1);
+    s = reinterpret_cast<UnicodeObject*>(malloc(size));
+    if (!s) {
       return NULL;
     }
   }
-  u->refcount = 1;
-  u->count = count;
+  s->refcount = 1;
+  s->count = count;
   if (data) {
-    memcpy(u->data, data, sizeof(wchar_t) * count);
+    memcpy(s->data, data, sizeof(wchar_t) * count);
+    s->data[s->count] = 0;
   }
-  return u;
+  return s;
 }
 
 UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b) {
   uint64_t count = a->count + b->count;
-  UnicodeObject* u = unicode_new(NULL, NULL, count);
-  if (!u) {
+  UnicodeObject* s = unicode_new(NULL, NULL, count);
+  if (!s) {
     return NULL;
   }
-  memcpy(u->data, a->data, sizeof(wchar_t) * a->count);
-  memcpy(&u->data[a->count], b->data, sizeof(wchar_t) * b->count);
-  return u;
+  memcpy(s->data, a->data, sizeof(wchar_t) * a->count);
+  memcpy(&s->data[a->count], b->data, sizeof(wchar_t) * b->count);
+  s->data[s->count] = 0;
+  return s;
 }
 
 bool unicode_contains(const UnicodeObject* needle, const UnicodeObject* haystack) {

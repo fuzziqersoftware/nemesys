@@ -1219,7 +1219,11 @@ static inline Register make_reg(bool is_ext, uint8_t reg) {
 }
 
 static const char* math_op_names[] = {
-  "add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"};
+    "add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"};
+
+static const char* jmp_names[] = {
+    "jo", "jno", "jb", "jae", "je", "jne", "jbe", "ja",
+    "js", "jns", "jp", "jnp", "jl", "jge", "jle", "jg"};
 
 string AMD64Assembler::disassemble(const void* vdata, size_t size,
     uint64_t addr, const multimap<size_t, string>* label_offsets) {
@@ -1272,7 +1276,11 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
         opcode = data[offset];
         offset++;
 
-        if ((opcode & 0xF0) == 0x90) {
+        if ((opcode & 0xF0) == 0x80) {
+          opcode_text = AMD64Assembler::disassemble_jmp(data, size, offset,
+              addr, jmp_names[opcode & 0x0F], true, addr_to_label, next_label);
+
+        } else if ((opcode & 0xF0) == 0x90) {
           static const char* names[] = {
               "seto", "setno", "setb", "setae", "sete", "setne", "setbe",
               "seta", "sets", "setns", "setp", "setnp", "setl", "setge",
@@ -1314,11 +1322,8 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
       if (offset >= size) {
         opcode_text = "<<incomplete>>";
       } else {
-        static const char* names[] = {
-          "jo", "jno", "jb", "jae", "je", "jne", "jbe", "ja",
-          "js", "jns", "jp", "jnp", "jl", "jge", "jle", "jg"};
         opcode_text = AMD64Assembler::disassemble_jmp(data, size, offset, addr,
-            names[opcode & 0x0F], false, addr_to_label, next_label);
+            jmp_names[opcode & 0x0F], false, addr_to_label, next_label);
       }
 
     } else if ((opcode & 0xFC) == 0x80) {
@@ -1678,10 +1683,10 @@ string AMD64Assembler::disassemble_jmp(const uint8_t* data, size_t size,
   }
 
   if (displacement < 0) {
-    return string_printf("%-8s -0x%" PRIX8 " ; %s",
+    return string_printf("%-8s -0x%" PRIX32 " ; %s",
         opcode_name, -displacement, label_names.c_str());
   } else {
-    return string_printf("%-8s +0x%" PRIX8 " ; %s",
+    return string_printf("%-8s +0x%" PRIX32 " ; %s",
         opcode_name, displacement, label_names.c_str());
   }
 }

@@ -1,5 +1,8 @@
 #include "BuiltinFunctions.hh"
 
+#include <inttypes.h>
+
+#include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -11,6 +14,7 @@
 
 #include "Analysis.hh"
 #include "BuiltinTypes.hh"
+#include "PythonLexer.hh" // for escape()
 
 using namespace std;
 
@@ -66,24 +70,120 @@ static UnicodeObject* builtin_input(UnicodeObject* prompt) {
   return unicode_new(NULL, data.data(), data.size());
 }
 
+static int64_t builtin_int_bytes(const BytesObject* s, int64_t base) {
+  return strtoll(reinterpret_cast<const char*>(s->data), NULL, 0);
+}
+
+static int64_t builtin_int_unicode(const UnicodeObject* s, int64_t base) {
+  return wcstoll(s->data, NULL, 0);
+}
+
+static UnicodeObject* builtin_repr_none(void* None) {
+  static UnicodeObject* ret = unicode_new(NULL, L"None", 4);
+  add_reference(ret);
+  return ret;
+}
+
+static UnicodeObject* builtin_repr_bool(bool v) {
+  static UnicodeObject* true_str = unicode_new(NULL, L"True", 4);
+  static UnicodeObject* false_str = unicode_new(NULL, L"False", 5);
+  UnicodeObject* ret = v ? true_str : false_str;
+  add_reference(ret);
+  return ret;
+}
+
+static UnicodeObject* builtin_repr_int(int64_t v) {
+  wchar_t buf[24];
+  swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%" PRId64, v);
+  return unicode_new(NULL, buf, wcslen(buf));
+}
+
+static UnicodeObject* builtin_repr_float(double v) {
+  wchar_t buf[60]; // TODO: figure out how long this actually needs to be
+  swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%g", v);
+  return unicode_new(NULL, buf, wcslen(buf));
+}
+
+static UnicodeObject* builtin_repr_bytes(const BytesObject* v) {
+  string escape_ret = escape(v->data, v->count);
+  UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 3);
+  ret->data[0] = L'b';
+  ret->data[1] = L'\'';
+  for (size_t x = 0; x < escape_ret.size(); x++) {
+    ret->data[x + 2] = escape_ret[x];
+  }
+  ret->data[escape_ret.size() + 2] = L'\'';
+  ret->data[escape_ret.size() + 3] = 0;
+  return ret;
+}
+
+static UnicodeObject* builtin_repr_unicode(const UnicodeObject* v) {
+  string escape_ret = escape(v->data, v->count);
+  UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 2);
+  ret->data[0] = L'\'';
+  for (size_t x = 0; x < escape_ret.size(); x++) {
+    ret->data[x + 1] = escape_ret[x];
+  }
+  ret->data[escape_ret.size() + 1] = L'\'';
+  ret->data[escape_ret.size() + 2] = 0;
+  return ret;
+}
 
 
+
+// all builtin functions have negative function IDs
 const unordered_map<string, int64_t> builtin_function_to_id({
   {"print", -1},
   {"input", -2},
+  {"int",   -3},
+  {"repr",  -4},
 });
 
 
 
+using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
+
 unordered_map<int64_t, FunctionContext> builtin_function_definitions({
+  // None print(Unicode)
   {builtin_function_to_id.at("print"),
     FunctionContext(NULL, builtin_function_to_id.at("print"), "print",
         {Variable(ValueType::Unicode)}, Variable(ValueType::None),
         reinterpret_cast<const void*>(&builtin_print))},
+  // Unicode input(Unicode='')
   {builtin_function_to_id.at("input"),
     FunctionContext(NULL, builtin_function_to_id.at("input"), "input",
         {Variable(L"")}, Variable(ValueType::Unicode),
-        reinterpret_cast<const void*>(&builtin_input))}
+        reinterpret_cast<const void*>(&builtin_input))},
+  // Int int(Bytes, Int=0)
+  // Int int(Unicode, Int=0)
+  {builtin_function_to_id.at("int"),
+    FunctionContext(NULL, builtin_function_to_id.at("int"), "int", {
+      FragDef({Variable(ValueType::Bytes), Variable(0LL)}, Variable(ValueType::Int),
+        reinterpret_cast<const void*>(&builtin_int_bytes)),
+      FragDef({Variable(ValueType::Unicode), Variable(0LL)}, Variable(ValueType::Int),
+        reinterpret_cast<const void*>(&builtin_int_unicode)),
+    })},
+  // Unicode repr(None)
+  // Unicode repr(Bool)
+  // Unicode repr(Int)
+  // Unicode repr(Float)
+  // Unicode repr(Bytes)
+  // Unicode repr(Unicode)
+  {builtin_function_to_id.at("repr"),
+    FunctionContext(NULL, builtin_function_to_id.at("int"), "int", {
+      FragDef({Variable(ValueType::None)}, Variable(ValueType::Unicode),
+        reinterpret_cast<const void*>(&builtin_repr_none)),
+      FragDef({Variable(ValueType::Bool)}, Variable(ValueType::Unicode),
+        reinterpret_cast<const void*>(&builtin_repr_bool)),
+      FragDef({Variable(ValueType::Int)}, Variable(ValueType::Unicode),
+        reinterpret_cast<const void*>(&builtin_repr_int)),
+      FragDef({Variable(ValueType::Float)}, Variable(ValueType::Unicode),
+        reinterpret_cast<const void*>(&builtin_repr_float)),
+      FragDef({Variable(ValueType::Bytes)}, Variable(ValueType::Unicode),
+        reinterpret_cast<const void*>(&builtin_repr_bytes)),
+      FragDef({Variable(ValueType::Unicode)}, Variable(ValueType::Unicode),
+        reinterpret_cast<const void*>(&builtin_repr_unicode)),
+    })},
 });
 
 
@@ -207,7 +307,7 @@ const unordered_map<string, Variable> builtin_names({
   {"hex",                       Variable(ValueType::Function)},
   {"id",                        Variable(ValueType::Function)},
   {"input",                     Variable(builtin_function_to_id.at("input"), false)},
-  {"int",                       Variable(ValueType::Function)},
+  {"int",                       Variable(builtin_function_to_id.at("int"), false)},
   {"isinstance",                Variable(ValueType::Function)},
   {"issubclass",                Variable(ValueType::Function)},
   {"iter",                      Variable(ValueType::Function)},
@@ -229,7 +329,7 @@ const unordered_map<string, Variable> builtin_names({
   {"property",                  Variable(ValueType::Function)},
   {"quit",                      Variable(ValueType::Function)},
   {"range",                     Variable(ValueType::Function)},
-  {"repr",                      Variable(ValueType::Function)},
+  {"repr",                      Variable(builtin_function_to_id.at("repr"), false)},
   {"reversed",                  Variable(ValueType::Function)},
   {"round",                     Variable(ValueType::Function)},
   {"set",                       Variable(ValueType::Function)},

@@ -11,7 +11,9 @@ std::string unescape_bytes(const char* s, size_t size);
 std::string unescape_bytes(const std::string& s);
 std::wstring unescape_unicode(const char* s, size_t size);
 std::wstring unescape_unicode(const std::string& s);
+std::string escape(const char* s, size_t size);
 std::string escape(const std::string& s);
+std::string escape(const wchar_t* s, size_t size);
 std::string escape(const std::wstring& s);
 
 

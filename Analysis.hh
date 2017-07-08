@@ -87,15 +87,27 @@ struct FunctionContext {
 
   std::unordered_map<int64_t, Fragment> fragments; // Compiled
 
+  // constructor for dynamic modules (defined in .py files)
   FunctionContext(ModuleAnalysis* module, int64_t id);
 
-  // constructor for built-in functions. note that it doesn't take a type
+  // constructors for built-in functions. note that they don't take a type
   // signature - this is provided through the arg_types field. each Variable
   // should be either an unknown but typed value (for positional arguments) or
   // a known value (for keyword arguments).
+  struct BuiltinFunctionFragmentDefinition {
+    std::vector<Variable> arg_types;
+    Variable return_type;
+    const void* compiled;
+    BuiltinFunctionFragmentDefinition(const std::vector<Variable>& arg_types,
+        Variable return_type, const void* compiled);
+  };
+  // single-fragment constructor
   FunctionContext(ModuleAnalysis* module, int64_t id, const char* name,
       const std::vector<Variable>& arg_types, Variable return_type,
       const void* compiled);
+  // multiple-fragment constructor
+  FunctionContext(ModuleAnalysis* module, int64_t id, const char* name,
+      const std::vector<BuiltinFunctionFragmentDefinition>& fragments);
 };
 
 
@@ -129,7 +141,8 @@ public:
   std::multimap<size_t, std::string> compiled_labels;
   void (*compiled)(int64_t* global_space);
 
-  ModuleAnalysis(const std::string& name, const std::string& source_filename);
+  ModuleAnalysis(const std::string& name, const std::string& filename_or_code,
+      bool is_code = false);
   ~ModuleAnalysis() = default;
 };
 
@@ -158,6 +171,8 @@ public:
 
   void advance_module_phase(std::shared_ptr<ModuleAnalysis> module,
       ModuleAnalysis::Phase phase);
+  std::shared_ptr<ModuleAnalysis> create_module(const std::string& module_name,
+      const std::string* module_code = NULL);
   std::shared_ptr<ModuleAnalysis> get_module_at_phase(
       const std::string& module_name, ModuleAnalysis::Phase phase);
   std::string find_source_file(const std::string& module_name);

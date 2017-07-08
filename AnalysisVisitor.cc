@@ -648,9 +648,6 @@ void AnalysisVisitor::visit(IfStatement* a) {
   a->check->accept(this);
   Variable check_result = move(this->current_value);
 
-  string result_str = check_result.str();
-  fprintf(stderr, "check result is %s\n", result_str.c_str());
-
   // if we know the value and it's truthy, skip all the elif/else branches
   if (check_result.value_known && check_result.truth_value()) {
     this->visit_list(a->items);

@@ -101,16 +101,27 @@ compile_error::compile_error(const std::string& what, ssize_t where) :
 FunctionContext::Fragment::Fragment(Variable return_type, const void* compiled)
     : return_type(return_type), compiled(compiled) { }
 
+FunctionContext::BuiltinFunctionFragmentDefinition::BuiltinFunctionFragmentDefinition(
+    const std::vector<Variable>& arg_types, Variable return_type,
+    const void* compiled) : arg_types(arg_types), return_type(return_type),
+    compiled(compiled) { }
+
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id) :
     module(module), id(id), is_class(false), ast_root(NULL), num_splits(0) { }
 
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
     const char* name, const vector<Variable>& arg_types, Variable return_type,
-    const void* compiled) : module(module), id(id), is_class(false), name(name),
-    ast_root(NULL), num_splits(0), return_types({return_type}),
-    arg_signature_to_fragment_id({{type_signature_for_variables(arg_types), 1}}),
-    fragments({{1, Fragment(return_type, compiled)}}) {
-  for (const auto& arg : arg_types) {
+    const void* compiled) : FunctionContext(module, id, name,
+      {BuiltinFunctionFragmentDefinition(arg_types, return_type, compiled)}) { }
+
+FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
+    const char* name,
+    const std::vector<BuiltinFunctionFragmentDefinition>& fragments) :
+    module(module), id(id), is_class(false), name(name), ast_root(NULL),
+    num_splits(0) {
+
+  // populate the arguments from the first fragment definition
+  for (const auto& arg : fragments[0].arg_types) {
     this->args.emplace_back();
     if (arg.type == ValueType::Indeterminate) {
       throw invalid_argument("builtin functions must have known argument types");
@@ -118,19 +129,48 @@ FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
       this->args.back().default_value = arg;
     }
   }
+
+  // now merge all the fragment argument definitions together
+  for (const auto& fragment_def : fragments) {
+    if (fragment_def.arg_types.size() != this->args.size()) {
+      throw invalid_argument("all fragments must take the same number of arguments");
+    }
+
+    for (size_t z = 0; z < fragment_def.arg_types.size(); z++) {
+      const auto& fragment_arg = fragment_def.arg_types[z];
+      if (fragment_arg.type == ValueType::Indeterminate) {
+        throw invalid_argument("builtin functions must have known argument types");
+      } else if (fragment_arg.value_known && (this->args[z].default_value != fragment_arg)) {
+        throw invalid_argument("all fragments must have the same default values");
+      }
+    }
+  }
+
+  // finally, build the fragment map
+  for (const auto& fragment_def : fragments) {
+    this->return_types.emplace(fragment_def.return_type);
+
+    string signature = type_signature_for_variables(fragment_def.arg_types);
+    int64_t fragment_id = this->arg_signature_to_fragment_id.size() + 1;
+    this->arg_signature_to_fragment_id.emplace(signature, fragment_id);
+    this->fragments.emplace(piecewise_construct, forward_as_tuple(fragment_id),
+        forward_as_tuple(fragment_def.return_type, fragment_def.compiled));
+  }
 }
 
 
 
-ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename) :
-    phase(Phase::Initial), name(name), source(new SourceFile(filename)),
-    num_splits(0), compiled(NULL) {
+ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename,
+    bool is_code) : phase(Phase::Initial), name(name),
+    source(new SourceFile(filename, is_code)), num_splits(0), compiled(NULL) {
   // TODO: using unescape_unicode is a stupid hack, but these strings can't
   // contain backslashes anyway (right? ...right?)
   this->globals.emplace("__name__", unescape_unicode(name));
   this->globals_mutable.emplace("__name__", false);
-  this->globals.emplace("__file__", unescape_unicode(filename));
-  this->globals_mutable.emplace("__file__", false);
+  if (is_code) {
+    this->globals.emplace("__file__", "__imm__");
+    this->globals_mutable.emplace("__file__", false);
+  }
 }
 
 
@@ -351,25 +391,39 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
   this->in_progress.erase(module);
 }
 
-shared_ptr<ModuleAnalysis> GlobalAnalysis::get_module_at_phase(
-    const string& module_name, ModuleAnalysis::Phase phase) {
+shared_ptr<ModuleAnalysis> GlobalAnalysis::create_module(
+    const string& module_name, const string* module_code) {
   shared_ptr<ModuleAnalysis> module;
   try {
     module = this->modules.at(module_name);
   } catch (const out_of_range& e) {
-    string filename = this->find_source_file(module_name);
-    module = this->modules.emplace(piecewise_construct,
-        forward_as_tuple(module_name),
-        forward_as_tuple(new ModuleAnalysis(module_name, filename))).first->second;
-    if (this->debug_flags & DebugFlag::Source) {
-      fprintf(stdout, "[%s] loaded %s (%zu lines, %zu bytes)\n",
-          module_name.c_str(), filename.c_str(), module->source->line_count(),
-          module->source->file_size());
-      fwrite(module->source->data().data(), module->source->file_size(), 1, stderr);
-      fputc('\n', stderr);
+    if (module_code) {
+      module = this->modules.emplace(piecewise_construct,
+          forward_as_tuple(module_name),
+          forward_as_tuple(new ModuleAnalysis(module_name, *module_code, true))).first->second;
+      if (this->debug_flags & DebugFlag::Source) {
+        fprintf(stdout, "[%s] added code from memory (%zu lines, %zu bytes)\n\n",
+            module_name.c_str(), module->source->line_count(),
+            module->source->file_size());
+      }
+    } else {
+      string filename = this->find_source_file(module_name);
+      module = this->modules.emplace(piecewise_construct,
+          forward_as_tuple(module_name),
+          forward_as_tuple(new ModuleAnalysis(module_name, filename, false))).first->second;
+      if (this->debug_flags & DebugFlag::Source) {
+        fprintf(stdout, "[%s] loaded %s (%zu lines, %zu bytes)\n\n",
+            module_name.c_str(), filename.c_str(), module->source->line_count(),
+            module->source->file_size());
+      }
     }
   }
+  return module;
+}
 
+shared_ptr<ModuleAnalysis> GlobalAnalysis::get_module_at_phase(
+    const string& module_name, ModuleAnalysis::Phase phase) {
+  auto module = this->create_module(module_name);
   this->advance_module_phase(module, phase);
   return module;
 }

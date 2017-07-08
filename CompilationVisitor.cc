@@ -435,37 +435,101 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       throw compile_error("IsNot not yet implemented", this->file_offset);
 
     case BinaryOperator::Or:
-      // TODO
-      throw compile_error("Or not yet implemented", this->file_offset);
+      if (((left_type.type == ValueType::Int) ||
+           (left_type.type == ValueType::Bool)) &&
+          ((right_type.type == ValueType::Int) ||
+           (right_type.type == ValueType::Bool))) {
+        this->as.write_or(MemoryReference(this->target_register),
+            MemoryReference(Register::RSP, 8));
+        break;
+      }
+      throw compile_error("Or only valid for integer types", this->file_offset);
+
     case BinaryOperator::And:
-      // TODO
-      throw compile_error("And not yet implemented", this->file_offset);
+      if (((left_type.type == ValueType::Int) ||
+           (left_type.type == ValueType::Bool)) &&
+          ((right_type.type == ValueType::Int) ||
+           (right_type.type == ValueType::Bool))) {
+        this->as.write_and(MemoryReference(this->target_register),
+            MemoryReference(Register::RSP, 8));
+        break;
+      }
+      throw compile_error("And only valid for integer types", this->file_offset);
+
     case BinaryOperator::Xor:
-      // TODO
-      throw compile_error("Xor not yet implemented", this->file_offset);
+      if (((left_type.type == ValueType::Int) ||
+           (left_type.type == ValueType::Bool)) &&
+          ((right_type.type == ValueType::Int) ||
+           (right_type.type == ValueType::Bool))) {
+        this->as.write_xor(MemoryReference(this->target_register),
+            MemoryReference(Register::RSP, 8));
+        break;
+      }
+      throw compile_error("Xor only valid for integer types", this->file_offset);
+
     case BinaryOperator::LeftShift:
-      // TODO
-      throw compile_error("LeftShift not yet implemented", this->file_offset);
     case BinaryOperator::RightShift:
-      // TODO
-      throw compile_error("RightShift not yet implemented", this->file_offset);
+      if (((left_type.type == ValueType::Int) ||
+           (left_type.type == ValueType::Bool)) &&
+          ((right_type.type == ValueType::Int) ||
+           (right_type.type == ValueType::Bool))) {
+        // we can only use cl apparently
+        if (this->reserve_register(Register::RCX) != Register::RCX) {
+          throw compile_error("RCX not available for shift operation");
+        }
+        this->release_register(Register::RCX);
+        this->as.write_mov(MemoryReference(Register::RCX),
+            MemoryReference(this->target_register));
+        this->as.write_mov(MemoryReference(this->target_register),
+            MemoryReference(Register::RSP, 8));
+        if (a->oper == BinaryOperator::LeftShift) {
+          this->as.write_shl_cl(MemoryReference(this->target_register));
+        } else {
+          this->as.write_sar_cl(MemoryReference(this->target_register));
+        }
+        break;
+      }
+      throw compile_error("LeftShift/RightShift only valid for integer types", this->file_offset);
+
     case BinaryOperator::Addition:
-      if (((left_type.type == ValueType::Bytes) &&
-           (right_type.type == ValueType::Bytes)) ||
-          ((left_type.type == ValueType::Unicode) &&
-           (right_type.type == ValueType::Unicode))) {
+      if ((left_type.type == ValueType::Bytes) &&
+          (right_type.type == ValueType::Bytes)) {
+        this->write_function_call(reinterpret_cast<const void*>(&bytes_concat),
+            {MemoryReference(Register::RSP, 8),
+              MemoryReference(this->target_register)}, -1,
+            this->target_register);
+        break;
+      } else if ((left_type.type == ValueType::Unicode) &&
+                 (right_type.type == ValueType::Unicode)) {
         this->write_function_call(reinterpret_cast<const void*>(&unicode_concat),
             {MemoryReference(Register::RSP, 8),
               MemoryReference(this->target_register)}, -1,
             this->target_register);
         break;
+      } else if (((left_type.type == ValueType::Int) ||
+                  (left_type.type == ValueType::Bool)) &&
+                 ((right_type.type == ValueType::Int) ||
+                  (right_type.type == ValueType::Bool))) {
+        this->as.write_add(MemoryReference(this->target_register),
+            MemoryReference(Register::RSP, 8));
+        break;
       }
 
       // TODO
-      throw compile_error("Addition not yet implemented", this->file_offset);
+      throw compile_error("Addition not yet implemented for these types", this->file_offset);
+
     case BinaryOperator::Subtraction:
-      // TODO
-      throw compile_error("Subtraction not yet implemented", this->file_offset);
+      if (((left_type.type == ValueType::Int) ||
+           (left_type.type == ValueType::Bool)) &&
+          ((right_type.type == ValueType::Int) ||
+           (right_type.type == ValueType::Bool))) {
+        this->as.write_neg(MemoryReference(this->target_register));
+        this->as.write_add(MemoryReference(this->target_register),
+            MemoryReference(Register::RSP, 8));
+        break;
+      }
+      throw compile_error("Subtraction not valid for these types", this->file_offset);
+
     case BinaryOperator::Multiplication:
       // TODO
       throw compile_error("Multiplication not yet implemented", this->file_offset);
@@ -730,10 +794,13 @@ void CompilationVisitor::visit(FunctionCall* a) {
     int64_t fragment_id = callee_context->arg_signature_to_fragment_id.at(arg_signature);
     const auto& fragment = callee_context->fragments.at(fragment_id);
 
-    this->as.write_label(string_printf("__FunctionCall_%p_call_fragment_%" PRId64 "_%" PRId64,
-          a, a->callee_function_id, fragment_id));
+    this->as.write_label(string_printf("__FunctionCall_%p_call_fragment_%" PRId64 "_%" PRId64 "_%s",
+          a, a->callee_function_id, fragment_id, arg_signature.c_str()));
     // TODO: deal with return value somehow
-    this->write_function_call(fragment.compiled, {}, arg_stack_bytes);
+    this->write_function_call(fragment.compiled, {}, arg_stack_bytes,
+        this->target_register);
+
+    this->current_type = fragment.return_type;
 
   } catch (const std::out_of_range& e) {
     // the fragment doesn't exist. we won't build it just yet; we'll generate a
@@ -785,7 +852,7 @@ void CompilationVisitor::visit(BytesConstant* a) {
 
   this->write_pop_reserved_registers(available);
 
-  this->current_type = Variable(ValueType::Unicode);
+  this->current_type = Variable(ValueType::Bytes);
 }
 
 void CompilationVisitor::visit(UnicodeConstant* a) {

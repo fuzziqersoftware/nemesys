@@ -14,6 +14,12 @@
 using namespace std;
 
 
+struct ModuleLoadCommand {
+  string name;
+  bool is_code;
+};
+
+
 int main(int argc, char* argv[]) {
 
   if (argc < 2) {
@@ -23,7 +29,7 @@ int main(int argc, char* argv[]) {
 
   GlobalAnalysis global;
   ModuleAnalysis::Phase target_phase = ModuleAnalysis::Phase::Imported;
-  vector<string> module_names;
+  vector<ModuleLoadCommand> modules;
   for (size_t x = 1; x < argc; x++) {
     if (!strncmp(argv[x], "--phase=", 8)) {
       if (!strcasecmp(&argv[x][8], "Initial")) {
@@ -46,13 +52,26 @@ int main(int argc, char* argv[]) {
         global.debug_flags |= debug_flag_for_name(flag.c_str());
       }
 
+    } else if (!strncmp(argv[x], "-c", 2)) {
+      modules.emplace_back();
+      modules.back().name = &argv[x][2];
+      modules.back().is_code = true;
+
     } else {
-      module_names.emplace_back(argv[x]);
+      modules.emplace_back();
+      modules.back().name = argv[x];
+      modules.back().is_code = false;
     }
   }
 
-  for (const string& module_name : module_names) {
-    global.get_module_at_phase(module_name, target_phase);
+  for (const auto& module : modules) {
+    if (module.is_code) {
+      global.create_module("__imm__", &module.name);
+      global.get_module_at_phase("__imm__", target_phase);
+    } else {
+      global.create_module(module.name);
+      global.get_module_at_phase(module.name, target_phase);
+    }
   }
 
   return 0;
