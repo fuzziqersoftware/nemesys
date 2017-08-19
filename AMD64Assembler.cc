@@ -819,9 +819,11 @@ void AMD64Assembler::write_imm_math(Operation math_op,
 
   uint8_t z = (math_op >> 3) & 7;
   string data = this->generate_rm(op, to, z, size);
-  if ((op == Operation::MATH8_IMM8) || (op == Operation::MATH_IMM8)) {
+  if ((size == OperandSize::Byte) || (op == Operation::MATH_IMM8)) {
     data += static_cast<uint8_t>(value);
-  } else if (op == Operation::MATH_IMM32) {
+  } else if (size == OperandSize::Word) {
+    data.append(reinterpret_cast<const char*>(&value), 2);
+  } else {
     data.append(reinterpret_cast<const char*>(&value), 4);
   }
   this->write(data);
@@ -985,12 +987,14 @@ void AMD64Assembler::write_sar_cl(const MemoryReference& mem, OperandSize size) 
 
 void AMD64Assembler::write_not(const MemoryReference& target,
     OperandSize size) {
-  this->write_rm(Operation::NOT_NEG, target, 2, size);
+  Operation op = (size == OperandSize::Byte) ? Operation::NOT_NEG8 : Operation::NOT_NEG32;
+  this->write_rm(op, target, 2, size);
 }
 
 void AMD64Assembler::write_neg(const MemoryReference& target,
     OperandSize size) {
-  this->write_rm(Operation::NOT_NEG, target, 3, size);
+  Operation op = (size == OperandSize::Byte) ? Operation::NOT_NEG8 : Operation::NOT_NEG32;
+  this->write_rm(op, target, 3, size);
 }
 
 void AMD64Assembler::write_inc(const MemoryReference& target,
@@ -1005,6 +1009,15 @@ void AMD64Assembler::write_dec(const MemoryReference& target,
   this->write_rm(op, target, 1, size);
 }
 
+void AMD64Assembler::write_imul(Register target, const MemoryReference& mem,
+    OperandSize size) {
+  if (size == OperandSize::Byte) {
+    throw invalid_argument("imul requires at least halfword operand size");
+  }
+  MemoryReference target_mem(target);
+  this->write_load_store(Operation::IMUL, mem, target_mem, size);
+}
+
 
 
 void AMD64Assembler::write_test(const MemoryReference& a,
@@ -1017,6 +1030,25 @@ void AMD64Assembler::write_test(const MemoryReference& a,
   } else {
     this->write_rm(Operation::TEST, b, a.base_register, size);
   }
+}
+
+void AMD64Assembler::write_test(const MemoryReference& a, int64_t value,
+    OperandSize size) {
+  if ((value < -0x80000000LL) || (value > 0x7FFFFFFFLL)) {
+    throw invalid_argument("immediate value out of range");
+  }
+
+  Operation op = (size == OperandSize::Byte) ? Operation::TEST_IMM8 : Operation::TEST_IMM32;
+  string data = this->generate_rm(op, a, 0, size);
+
+  if (size == OperandSize::Byte) {
+    data += static_cast<uint8_t>(value);
+  } else if (size == OperandSize::Word) {
+    data.append(reinterpret_cast<const char*>(&value), 2);
+  } else {
+    data.append(reinterpret_cast<const char*>(&value), 4);
+  }
+  this->write(data);
 }
 
 void AMD64Assembler::write_seto(const MemoryReference& target) {
@@ -1372,6 +1404,11 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
               names[opcode & 0x0F], false, fake_names, ext, reg_ext, base_ext,
               index_ext, OperandSize::Byte);
 
+        } else if (opcode == 0xAF) {
+          opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+              "imul", true, NULL, ext, reg_ext, base_ext, index_ext,
+              operand_size);
+
         } else {
           opcode_text = "<<unknown-0F>>";
         }
@@ -1462,40 +1499,8 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
     } else if ((opcode & 0xF8) == 0xB8) {
       Register reg = make_reg(reg_ext, opcode & 7);
       string reg_name = name_for_register(reg, operand_size);
-
-      if (operand_size == OperandSize::QuadWord) {
-        if (offset >= size - 7) {
-          opcode_text = string_printf("movabs   %s, <<incomplete>>", reg_name.c_str());
-        } else {
-          opcode_text = string_printf("movabs   %s, 0x%016" PRIX64, reg_name.c_str(),
-              *reinterpret_cast<const uint64_t*>(&data[offset]));
-          offset += 8;
-        }
-      } else if (operand_size == OperandSize::DoubleWord) {
-        if (offset >= size - 3) {
-          opcode_text = string_printf("movabs   %s, <<incomplete>>", reg_name.c_str());
-        } else {
-          opcode_text = string_printf("movabs   %s, 0x%08" PRIX32, reg_name.c_str(),
-              *reinterpret_cast<const uint32_t*>(&data[offset]));
-          offset += 4;
-        }
-      } else if (operand_size == OperandSize::Word) {
-        if (offset >= size - 1) {
-          opcode_text = string_printf("movabs   %s, <<incomplete>>", reg_name.c_str());
-        } else {
-          opcode_text = string_printf("movabs   %s, 0x%04" PRIX16, reg_name.c_str(),
-              *reinterpret_cast<const uint16_t*>(&data[offset]));
-          offset += 2;
-        }
-      } else if (operand_size == OperandSize::Byte) {
-        if (offset >= size) {
-          opcode_text = string_printf("movabs   %s, <<incomplete>>", reg_name.c_str());
-        } else {
-          opcode_text = string_printf("movabs   %s, 0x%02" PRIX8, reg_name.c_str(),
-              data[offset]);
-          offset += 1;
-        }
-      }
+      opcode_text = string_printf("movabs   %s, ", reg_name.c_str());
+      opcode_text += AMD64Assembler::disassemble_imm(data, size, offset, operand_size, true);
 
     } else if (((opcode & 0xFC) == 0xD0) || ((opcode & 0xFE) == 0xC0)) {
       if (!(opcode & 1)) {
@@ -1530,33 +1535,8 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
           "mov", NULL, NULL, NULL, NULL, NULL, NULL, NULL};
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
           false, names, ext, reg_ext, base_ext, index_ext, operand_size);
-
-      // TODO: factor this out with movabs
-      if ((operand_size == OperandSize::QuadWord) ||
-          (operand_size == OperandSize::DoubleWord)) {
-        if (offset >= size - 3) {
-          opcode_text += ", <<incomplete>>";
-        } else {
-          opcode_text += string_printf(", 0x%08" PRIX32,
-              *reinterpret_cast<const uint32_t*>(&data[offset]));
-          offset += 4;
-        }
-      } else if (operand_size == OperandSize::Word) {
-        if (offset >= size - 1) {
-          opcode_text += ", <<incomplete>>";
-        } else {
-          opcode_text += string_printf(", 0x%04" PRIX16,
-              *reinterpret_cast<const uint16_t*>(&data[offset]));
-          offset += 2;
-        }
-      } else if (operand_size == OperandSize::Byte) {
-        if (offset >= size) {
-          opcode_text += ", <<incomplete>>";
-        } else {
-          opcode_text += string_printf(", 0x%02" PRIX8, data[offset]);
-          offset += 1;
-        }
-      }
+      opcode_text += ", " + AMD64Assembler::disassemble_imm(data, size, offset,
+          operand_size);
 
     } else if ((opcode & 0xFC) == 0xE8) {
       opcode_text = AMD64Assembler::disassemble_jmp(data, size, offset, addr,
@@ -1570,10 +1550,22 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
       if (!(opcode & 1)) {
         operand_size = OperandSize::Byte;
       }
-      static const char* names[] = {
-          NULL, NULL, "not", "neg", NULL, NULL, NULL, NULL};
-      opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
-          true, names, ext, reg_ext, base_ext, index_ext, operand_size);
+      if (offset >= size) {
+        opcode_text = "<<incomplete test/not/neg>>";
+      } else {
+        uint8_t subcode = (data[offset] & 0x38) >> 3;
+
+        static const char* names[] = {
+            "test", "test", "not", "neg", NULL, NULL, NULL, NULL};
+        opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
+            true, names, ext, reg_ext, base_ext, index_ext, operand_size);
+
+        // if it's a test (0 or 1) then an immediate value follows
+        if ((subcode & 1) == subcode) {
+          opcode_text += ", ";
+          opcode_text += AMD64Assembler::disassemble_imm(data, size, offset, operand_size);
+        }
+      }
 
     } else if (opcode == 0xFF) {
       static const char* names[] = {
@@ -1798,4 +1790,46 @@ string AMD64Assembler::disassemble_jmp(const uint8_t* data, size_t size,
     return string_printf("%-8s +0x%" PRIX32 " ; %s",
         opcode_name, displacement, label_names.c_str());
   }
+}
+
+string AMD64Assembler::disassemble_imm(const uint8_t* data, size_t size,
+    size_t& offset, OperandSize operand_size, bool allow_64bit) {
+  if (!allow_64bit && (operand_size == OperandSize::QuadWord)) {
+    operand_size = OperandSize::DoubleWord;
+  }
+
+  string opcode_text;
+  if (operand_size == OperandSize::QuadWord) {
+    if (offset >= size - 7) {
+      opcode_text = "<<incomplete imm64>>";
+    } else {
+      opcode_text = string_printf("0x%016" PRIX64,
+          *reinterpret_cast<const uint64_t*>(&data[offset]));
+      offset += 8;
+    }
+  } else if (operand_size == OperandSize::DoubleWord) {
+    if (offset >= size - 3) {
+      opcode_text = "<<incomplete imm32>>";
+    } else {
+      opcode_text = string_printf("0x%08" PRIX32,
+          *reinterpret_cast<const uint32_t*>(&data[offset]));
+      offset += 4;
+    }
+  } else if (operand_size == OperandSize::Word) {
+    if (offset >= size - 1) {
+      opcode_text = "<<incomplete imm16>>";
+    } else {
+      opcode_text = string_printf("0x%04" PRIX16,
+          *reinterpret_cast<const uint16_t*>(&data[offset]));
+      offset += 2;
+    }
+  } else if (operand_size == OperandSize::Byte) {
+    if (offset >= size) {
+      opcode_text = "<<incomplete imm8>>";
+    } else {
+      opcode_text = string_printf("0x%02" PRIX8, data[offset]);
+      offset += 1;
+    }
+  }
+  return opcode_text;
 }

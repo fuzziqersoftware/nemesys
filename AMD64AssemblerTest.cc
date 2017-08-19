@@ -60,6 +60,74 @@ void test_trivial_function() {
   assert(data == 0xFEFDFCFBFAF93F7E);
 }
 
+
+void test_pow() {
+  printf("-- pow\n");
+
+  AMD64Assembler as;
+
+  const auto rax = MemoryReference(Register::RAX);
+  const auto rsi = MemoryReference(Register::RSI);
+  const auto rdi = MemoryReference(Register::RDI);
+
+  // this mirrors the implementation in notes/pow.s
+  as.write_mov(rax, 1);
+  as.write_label("_pow_again");
+  as.write_test(rsi, 1);
+  as.write_jz("_pow_skip_base");
+  as.write_imul(rax.base_register, rdi);
+  as.write_label("_pow_skip_base");
+  as.write_imul(rdi.base_register, rdi);
+  as.write_shr(rsi, 1);
+  as.write_jnz("_pow_again");
+  as.write_ret();
+
+  string code = as.assemble();
+  //print_data(stderr, code);
+
+  //string disassembly = AMD64Assembler::disassemble(code.data(), code.size());
+  //fprintf(stderr, "%s\n", disassembly.c_str());
+
+  CodeBuffer buf;
+  void* function = buf.append(code);
+  int64_t (*pow)(int64_t, int64_t) = reinterpret_cast<int64_t (*)(int64_t, int64_t)>(function);
+
+  assert(pow(0, 0) == 1);
+  assert(pow(0, 1) == 0);
+  assert(pow(0, 10) == 0);
+  assert(pow(0, 100) == 0);
+  assert(pow(1, 0) == 1);
+  assert(pow(1, 1) == 1);
+  assert(pow(1, 10) == 1);
+  assert(pow(1, 100) == 1);
+  assert(pow(2, 0) == 1);
+  assert(pow(2, 1) == 2);
+  assert(pow(2, 10) == 1024);
+  assert(pow(2, 20) == 1048576);
+  assert(pow(2, 30) == 1073741824);
+  assert(pow(3, 0) == 1);
+  assert(pow(3, 1) == 3);
+  assert(pow(3, 2) == 9);
+  assert(pow(3, 3) == 27);
+  assert(pow(3, 4) == 81);
+  assert(pow(-1, 0) == 1);
+  assert(pow(-1, 1) == -1);
+  assert(pow(-1, 2) == 1);
+  assert(pow(-1, 3) == -1);
+  assert(pow(-1, 4) == 1);
+  assert(pow(-2, 0) == 1);
+  assert(pow(-2, 1) == -2);
+  assert(pow(-2, 10) == 1024);
+  assert(pow(-2, 20) == 1048576);
+  assert(pow(-2, 30) == 1073741824);
+  assert(pow(-3, 0) == 1);
+  assert(pow(-3, 1) == -3);
+  assert(pow(-3, 2) == 9);
+  assert(pow(-3, 3) == -27);
+  assert(pow(-3, 4) == 81);
+}
+
+
 void test_quicksort() {
   printf("-- quicksort\n");
 
@@ -73,7 +141,7 @@ void test_quicksort() {
   const Register r8 = Register::R8;
   const Register r9 = Register::R9;
 
-  // this mirrors the implementation in tests/quicksort.s
+  // this mirrors the implementation in notes/quicksort.s
   as.write_mov(MemoryReference(rdx), MemoryReference(rdi));
   as.write_xor(MemoryReference(rdi), MemoryReference(rdi));
   as.write_dec(MemoryReference(rsi));
@@ -146,8 +214,10 @@ void test_quicksort() {
   }
 }
 
+
 int main(int argc, char** argv) {
   test_trivial_function();
+  test_pow();
   test_quicksort();
 
   printf("-- all tests passed\n");

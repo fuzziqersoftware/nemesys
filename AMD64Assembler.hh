@@ -92,6 +92,7 @@ enum Operation {
   MATH8_IMM8 = 0x80,
   MATH_IMM32 = 0x81,
   MATH_IMM8  = 0x83,
+  TEST8      = 0x84,
   TEST       = 0x85,
   XCHG8      = 0x86,
   XCHG       = 0x87,
@@ -114,7 +115,10 @@ enum Operation {
   JMP32      = 0xE9,
   JMP8       = 0xEB,
   LOCK       = 0xF0,
-  NOT_NEG    = 0xF7,
+  TEST_IMM8  = 0xF6,
+  NOT_NEG8   = 0xF7,
+  TEST_IMM32 = 0xF7,
+  NOT_NEG32  = 0xF7,
   INC_DEC8   = 0xFE,
   INC_DEC    = 0xFF,
   PUSH_RM    = 0xFF,
@@ -179,6 +183,7 @@ enum Operation {
   SETNG      = 0x0F9E,
   SETNLE     = 0x0F9F,
   SETG       = 0x0F9F,
+  IMUL       = 0x0FAF,
 };
 
 
@@ -451,12 +456,17 @@ public:
   void write_dec(const MemoryReference& target,
       OperandSize size = OperandSize::QuadWord);
 
+  void write_imul(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+
   // comparison opcodes
   void write_cmp(const MemoryReference& to, const MemoryReference& from,
       OperandSize size = OperandSize::QuadWord);
   void write_cmp(const MemoryReference& to, int64_t value,
       OperandSize size = OperandSize::QuadWord);
   void write_test(const MemoryReference& a, const MemoryReference& b,
+      OperandSize size = OperandSize::QuadWord);
+  void write_test(const MemoryReference& a, int64_t value,
       OperandSize size = OperandSize::QuadWord);
   void write_seto(const MemoryReference& target);
   void write_setno(const MemoryReference& target);
@@ -512,6 +522,8 @@ private:
       int64_t value, OperandSize size);
   void write_shift(uint8_t which, const MemoryReference& mem, uint8_t bits,
       OperandSize size);
+  void write_test_not_neg_imm(const MemoryReference& a, int64_t value,
+      uint8_t z, OperandSize size);
 
   void write(const std::string& opcode);
 
@@ -554,4 +566,6 @@ private:
   static std::string disassemble_jmp(const uint8_t* data, size_t size,
       size_t& offset, uint64_t addr, const char* opcode_name, bool is_32bit,
       std::multimap<size_t, std::string>& addr_to_label, uint64_t& next_label);
+  static std::string disassemble_imm(const uint8_t* data, size_t size,
+      size_t& offset, OperandSize operand_size, bool allow_64bit = false);
 };

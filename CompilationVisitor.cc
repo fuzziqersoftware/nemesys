@@ -587,9 +587,34 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::IntegerDivision:
       // TODO
       throw compile_error("IntegerDivision not yet implemented", this->file_offset);
+
     case BinaryOperator::Exponentiation:
+      if (((left_type.type == ValueType::Int) ||
+           (left_type.type == ValueType::Bool)) &&
+          ((right_type.type == ValueType::Int) ||
+           (right_type.type == ValueType::Bool))) {
+        // TODO: deal with negative exponents (currently we just do nothing)
+
+        // implementation mirrors notes/pow.s except that we load the base value
+        // into a temp register
+        string again_label = string_printf("__BinaryOperation_%p_pow_again", a);
+        string skip_base_label = string_printf("__BinaryOperation_%p_pow_skip_base", a);
+        as.write_mov(target_mem, 1);
+        as.write_mov(temp_mem, left_mem);
+        as.write_label(again_label);
+        as.write_test(right_mem, 1);
+        as.write_jz(skip_base_label);
+        as.write_imul(target_mem.base_register, temp_mem);
+        as.write_label(skip_base_label);
+        as.write_imul(temp_mem.base_register, temp_mem);
+        as.write_shr(right_mem, 1);
+        as.write_jnz(again_label);
+        break;
+      }
+
       // TODO
       throw compile_error("Exponentiation not yet implemented", this->file_offset);
+
     default:
       throw compile_error("unhandled binary operator", this->file_offset);
   }
