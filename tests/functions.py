@@ -32,6 +32,17 @@ def sum_all_arguments(a, b, c, d, e, f, g, h, i, j):
   print('h is ' + repr(h))
   print('i is ' + repr(i))
   print('j is ' + repr(j))
-  print('the sum of 10 arguments is ' + repr(a + b + c + d + e + f + g + h + i + j))
+  return a + b + c + d + e + f + g + h + i + j
 
-sum_all_arguments(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+# this function should work with both integers and strings
+int_sum = sum_all_arguments(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+print('the sum of 10 ints is ' + repr(int_sum))
+str_sum = sum_all_arguments('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j')
+print('the sum of 10 strs is ' + repr(str_sum))
+
+double = lambda x: x + x
+a = 0
+while a < 4:
+  print('double(' + repr(a) + ') = ' + repr(double(a)))
+  a = a + 1
+print('double(' + repr('omg') + ') = ' + repr(double('omg')))

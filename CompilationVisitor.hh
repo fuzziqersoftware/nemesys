@@ -110,6 +110,9 @@ private:
   Register target_register;
   int64_t stack_bytes_used;
 
+  std::string return_label;
+  // TODO: break_label and continue_label stack
+
   struct VariableLocation {
     std::string name;
     int64_t offset;
@@ -141,8 +144,8 @@ private:
       const MemoryReference* function_loc,
       const std::vector<const MemoryReference>& args,
       ssize_t arg_stack_bytes = -1, Register return_register = Register::None);
-  void write_compiler_call(uint64_t num_args, ssize_t arg_stack_bytes = -1,
-      Register return_register = Register::None);
+  void write_function_setup(const std::string& base_label);
+  void write_function_cleanup(const std::string& base_label);
 
   void write_add_reference(const MemoryReference& mem);
   void write_delete_reference(const MemoryReference& mem, const Variable& type);

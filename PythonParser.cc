@@ -278,7 +278,7 @@ shared_ptr<TypeAnnotation> PythonParser::parse_type_annotation() {
 
 
 FunctionArguments PythonParser::parse_function_argument_definition(
-    ssize_t end_offset) {
+    ssize_t end_offset, bool allow_type_annotations) {
 
   vector<FunctionArguments::Argument> args;
   string varargs_name;
@@ -310,12 +310,14 @@ FunctionArguments PythonParser::parse_function_argument_definition(
 
     // else it's a normal arg
     } else {
+      this->expect_token_type(TokenType::_Dynamic, ParseError::SyntaxError,
+          "expected name for function argument");
       const string& name = this->head_token().string_data;
       this->advance_token();
 
       // if there's a :, then it has a type annotation
       shared_ptr<TypeAnnotation> type_annotation;
-      if (this->head_token().type == TokenType::_Colon) {
+      if (allow_type_annotations && (this->head_token().type == TokenType::_Colon)) {
         this->advance_token();
         type_annotation = this->parse_type_annotation();
       }
@@ -353,7 +355,8 @@ shared_ptr<Expression> PythonParser::parse_expression(ssize_t end_offset,
       this->expect_condition((colon_offset >= 0) && (colon_offset < end_offset),
           ParseError::IncompleteLambdaDefinition, "lambda has no colon");
 
-      auto args = this->parse_function_argument_definition(colon_offset);
+      // note: no type annotations on lambdas
+      auto args = this->parse_function_argument_definition(colon_offset, false);
       this->expect_offset(colon_offset, ParseError::IncompleteParsing,
           "lambda argspec is incomplete");
       this->advance_token();

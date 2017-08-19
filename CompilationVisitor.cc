@@ -88,7 +88,8 @@ CompilationVisitor::CompilationVisitor(GlobalAnalysis* global,
     global(global), module(module),
     target_function(this->global->context_for_function(target_function_id)),
     target_split_id(target_split_id),
-    available_registers(default_available_registers), stack_bytes_used(0) {
+    available_registers(default_available_registers),
+    target_register(Register::None), stack_bytes_used(0) {
 
   if (target_function_id) {
 
@@ -125,7 +126,7 @@ Register CompilationVisitor::reserve_register(Register which) {
     which = this->available_register();
   }
   if (!(this->available_registers & (1 << which))) {
-    throw compile_error("register is not available", this->file_offset);
+    throw compile_error(string_printf("register %s is not available", name_for_register(which)), this->file_offset);
   }
   this->available_registers &= ~(1 << which);
   return which;
@@ -716,8 +717,30 @@ void CompilationVisitor::visit(DictComprehension* a) {
 void CompilationVisitor::visit(LambdaDefinition* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("LambdaDefinition not yet implemented", this->file_offset);
+  // if this definition is not the function being compiled, don't recur; instead
+  // treat it as an assignment (of the function context to the local/global var)
+  if (!this->target_function ||
+      (this->target_function->id != a->function_id)) {
+    // if the function being declared is a closure, fail
+    // TODO: actually implement this check
+
+    // write the function's context to the variable. note that Function-typed
+    // variables don't point directly to the code; this is necessary for us to
+    // figure out the right fragment at call time
+    auto* declared_function_context = this->global->context_for_function(a->function_id);
+    this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(declared_function_context));
+    this->current_type = Variable(a->function_id, false);
+    return;
+  }
+
+  string base_label = string_printf("LambdaDefinition_%p", a);
+  this->write_function_setup(base_label);
+
+  this->target_register = Register::RAX;
+  this->RecursiveASTVisitor::visit(a);
+  this->function_return_types.emplace(this->current_type);
+
+  this->write_function_cleanup(base_label);
 }
 
 void CompilationVisitor::visit(FunctionCall* a) {
@@ -1253,7 +1276,7 @@ void CompilationVisitor::visit(ReturnStatement* a) {
 
   // generate a jump to the end of the function (this is right before the
   // relevant destructor calls)
-  this->as.write_jmp(string_printf("__FunctionCall_%p_destroy_locals", this->target_function->ast_root));
+  this->as.write_jmp(this->return_label);
 }
 
 void CompilationVisitor::visit(RaiseStatement* a) {
@@ -1394,9 +1417,7 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
   if (!this->target_function ||
       (this->target_function->id != a->function_id)) {
 
-    // if the function being declared is a closure, fail. if a function has a
-    // name in its globals set that isn't in the module's globals dict, then
-    // it's a closure
+    // if the function being declared is a closure, fail
     // TODO: actually implement this check
 
     // write the function's context to the variable. note that Function-typed
@@ -1409,77 +1430,10 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
     return;
   }
 
-  // get ready to rumble
-  this->as.write_label(string_printf("__FunctionDefinition_%p_%s", a, a->name.c_str()));
-  this->stack_bytes_used = 8;
-
-  // lead-in (stack frame setup)
-  this->write_push(Register::RBP);
-  this->as.write_mov(MemoryReference(Register::RBP),
-      MemoryReference(Register::RSP));
-
-  // reserve space for locals and write args into the right places
-  {
-    unordered_map<string, Register> arg_to_register;
-    unordered_map<string, int64_t> arg_to_stack_offset;
-    for (size_t arg_index = 0; arg_index < this->target_function->args.size(); arg_index++) {
-      const auto& arg = this->target_function->args[arg_index];
-      if (arg_index < argument_register_order.size()) {
-        arg_to_register.emplace(arg.name, argument_register_order[arg_index]);
-      } else {
-        // add 2, since at this point we've called the function and pushed RBP
-        arg_to_stack_offset.emplace(arg.name,
-            sizeof(int64_t) * (arg_index - argument_register_order.size() + 2));
-      }
-    }
-
-    // set up the local space
-    for (const auto& local : this->target_function->locals) {
-      // if it's a register arg, push it drectly
-      try {
-        this->write_push(arg_to_register.at(local.first));
-        continue;
-      } catch (const out_of_range&) { }
-
-      // if it's a stack arg, push it via r/m push
-      try {
-        this->write_push(MemoryReference(Register::RBP, arg_to_stack_offset.at(local.first)));
-        continue;
-      } catch (const out_of_range&) { }
-
-      // else, initialize it to zero
-      this->write_push(0);
-    }
-  }
-
-  // generate the function's code
+  string base_label = string_printf("FunctionDefinition_%p_%s", a, a->name.c_str());
+  this->write_function_setup(base_label);
   this->RecursiveASTVisitor::visit(a);
-
-  // call destructors for all the local variables that have refcounts
-  this->as.write_label(string_printf("__FunctionCall_%p_destroy_locals", this->target_function->ast_root));
-  for (auto it = this->target_function->locals.crbegin();
-       it != this->target_function->locals.crend(); it++) {
-    if (type_has_refcount(it->second.type)) {
-      this->write_pop(Register::RDI);
-      this->write_delete_reference(MemoryReference(Register::RDI), it->second);
-    } else {
-      // no destructor; just skip it
-      // TODO: we can coalesce these for great justice
-      this->adjust_stack(8);
-    }
-  }
-
-  // hooray we're done
-  this->as.write_label(string_printf("__FunctionDefinition_%p_return", a));
-  this->write_pop(Register::RBP);
-
-  if (this->stack_bytes_used != 8) {
-    throw compile_error(string_printf(
-        "stack misaligned at end of function (%" PRId64 " bytes used; should be 8)",
-        this->stack_bytes_used), this->file_offset);
-  }
-
-  this->as.write_ret();
+  this->write_function_cleanup(base_label);
 }
 
 void CompilationVisitor::visit(ClassDefinition* a) {
@@ -1658,6 +1612,80 @@ void CompilationVisitor::write_function_call(const void* function,
   if (arg_stack_bytes) {
     this->adjust_stack(arg_stack_bytes);
   }
+}
+
+void CompilationVisitor::write_function_setup(const string& base_label) {
+  // get ready to rumble
+  this->as.write_label("__" + base_label);
+  this->stack_bytes_used = 8;
+
+  // lead-in (stack frame setup)
+  this->write_push(Register::RBP);
+  this->as.write_mov(MemoryReference(Register::RBP),
+      MemoryReference(Register::RSP));
+
+  // reserve space for locals and write args into the right places
+  unordered_map<string, Register> arg_to_register;
+  unordered_map<string, int64_t> arg_to_stack_offset;
+  for (size_t arg_index = 0; arg_index < this->target_function->args.size(); arg_index++) {
+    const auto& arg = this->target_function->args[arg_index];
+    if (arg_index < argument_register_order.size()) {
+      arg_to_register.emplace(arg.name, argument_register_order[arg_index]);
+    } else {
+      // add 2, since at this point we've called the function and pushed RBP
+      arg_to_stack_offset.emplace(arg.name,
+          sizeof(int64_t) * (arg_index - argument_register_order.size() + 2));
+    }
+  }
+
+  // set up the local space
+  for (const auto& local : this->target_function->locals) {
+    // if it's a register arg, push it drectly
+    try {
+      this->write_push(arg_to_register.at(local.first));
+      continue;
+    } catch (const out_of_range&) { }
+
+    // if it's a stack arg, push it via r/m push
+    try {
+      this->write_push(MemoryReference(Register::RBP, arg_to_stack_offset.at(local.first)));
+      continue;
+    } catch (const out_of_range&) { }
+
+    // else, initialize it to zero
+    this->write_push(0);
+  }
+
+  this->return_label = string_printf("__%s_destroy_locals", base_label.c_str());
+}
+
+void CompilationVisitor::write_function_cleanup(const string& base_label) {
+  // call destructors for all the local variables that have refcounts
+  this->as.write_label(this->return_label);
+  this->return_label.clear();
+  for (auto it = this->target_function->locals.crbegin();
+       it != this->target_function->locals.crend(); it++) {
+    if (type_has_refcount(it->second.type)) {
+      this->write_pop(Register::RDI);
+      this->write_delete_reference(MemoryReference(Register::RDI), it->second);
+    } else {
+      // no destructor; just skip it
+      // TODO: we can coalesce these for great justice
+      this->adjust_stack(8);
+    }
+  }
+
+  // hooray we're done
+  this->as.write_label(string_printf("__%s_return", base_label.c_str()));
+  this->write_pop(Register::RBP);
+
+  if (this->stack_bytes_used != 8) {
+    throw compile_error(string_printf(
+        "stack misaligned at end of function (%" PRId64 " bytes used; should be 8)",
+        this->stack_bytes_used), this->file_offset);
+  }
+
+  this->as.write_ret();
 }
 
 void CompilationVisitor::write_add_reference(const MemoryReference& mem) {

@@ -97,7 +97,8 @@ private:
 
   std::shared_ptr<TypeAnnotation> parse_type_annotation();
 
-  FunctionArguments parse_function_argument_definition(ssize_t end_offset);
+  FunctionArguments parse_function_argument_definition(ssize_t end_offset,
+      bool allow_type_annotations = true);
   std::shared_ptr<Expression> parse_expression(ssize_t end_offset,
       bool lvalue_reference = false);
 
