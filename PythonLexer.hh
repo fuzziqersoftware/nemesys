@@ -122,6 +122,7 @@ public:
       _CloseBrace, // must be _OpenBrace + 1
       _Backtick,
       _BackslashNewline, // these are eaten up by the lexer (not produced in output)
+      _Arrow, // used for type annotations
       _InvalidToken, // these are guaranteed to never be produced by the lexer
     };
 

@@ -109,10 +109,12 @@ bool LValueReference::valid_lvalue() const {
 
 
 AttributeLValueReference::AttributeLValueReference(shared_ptr<Expression> base,
-    const string& name, size_t file_offset) : LValueReference(file_offset),
-    base(base), name(name) { }
+    const string& name, std::shared_ptr<TypeAnnotation> type_annotation,
+    size_t file_offset) : LValueReference(file_offset), base(base), name(name),
+    type_annotation(type_annotation) { }
 
 string AttributeLValueReference::str() const {
+  // TODO: add type annotations
   if (this->base.get()) {
     return this->base->str() + "." + this->name + " /*lv*/";
   }
@@ -437,10 +439,12 @@ void SetComprehension::accept(ASTVisitor* v) {
 
 
 FunctionArguments::Argument::Argument(const string& name,
+    std::shared_ptr<TypeAnnotation> type_annotation,
     std::shared_ptr<Expression> default_value) : name(name),
-    default_value(default_value) { }
+    type_annotation(type_annotation), default_value(default_value) { }
 
 string FunctionArguments::Argument::str() const {
+  // TODO: add type annotations here
   if (this->default_value.get()) {
     return this->name + "=" + this->default_value->str();
   }
@@ -1191,11 +1195,14 @@ void WithStatement::accept(ASTVisitor* v) {
 
 FunctionDefinition::FunctionDefinition(
     vector<shared_ptr<Expression>>&& decorators, const string& name,
-    FunctionArguments&& args, vector<shared_ptr<Statement>>&& items,
-    size_t file_offset) : CompoundStatement(move(items), file_offset),
-    decorators(move(decorators)), name(name), args(move(args)) { }
+    FunctionArguments&& args, shared_ptr<TypeAnnotation> return_type_annotation,
+    vector<shared_ptr<Statement>>&& items, size_t file_offset) :
+    CompoundStatement(move(items), file_offset), decorators(move(decorators)),
+    name(name), args(move(args)),
+    return_type_annotation(return_type_annotation) { }
 
 string FunctionDefinition::str() const {
+  // TODO: add return type annotation here
   string prefix;
   for (const auto& decorator : this->decorators) {
     prefix += "@" + decorator->str() + "\n";

@@ -489,6 +489,7 @@ StaticTokenString symbolic_static_tokens[] = {
   {TokenType::_AndEquals,          "&="},
   {TokenType::_OrEquals,           "|="},
   {TokenType::_XorEquals,          "^="},
+  {TokenType::_Arrow,              "->"},
   {TokenType::_At,                 "@"},
   {TokenType::_OpenParen,          "("},
   {TokenType::_CloseParen,         ")"},

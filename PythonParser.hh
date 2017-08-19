@@ -95,6 +95,8 @@ private:
   std::vector<std::pair<std::shared_ptr<Expression>, std::shared_ptr<Expression>>>
       parse_dict_item_list(ssize_t end_offset);
 
+  std::shared_ptr<TypeAnnotation> parse_type_annotation();
+
   FunctionArguments parse_function_argument_definition(ssize_t end_offset);
   std::shared_ptr<Expression> parse_expression(ssize_t end_offset,
       bool lvalue_reference = false);

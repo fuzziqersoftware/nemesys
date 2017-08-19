@@ -170,6 +170,8 @@ void AnalysisVisitor::visit(FunctionCall* a) {
     it.second->accept(this);
   }
 
+  // TODO: typecheck the arguments if the function's arguments have annotations
+
   // we probably can't know the function's return type/value yet, but we'll try
   // to figure it out
   this->current_value = Variable(ValueType::Indeterminate);
@@ -505,6 +507,9 @@ void AnalysisVisitor::visit(AttributeLValueReference* a) {
   if (!a->base.get() && builtin_names.count(a->name)) {
     throw compile_error("cannot reassign built-in name " + a->name, a->file_offset);
   }
+
+  // TODO: typecheck the value if a type annotation is present
+
   // TODO: for now disregard attribute writes
   if (!a->base.get()) {
     this->record_assignment(a->name, this->current_value, a->file_offset);
@@ -627,6 +632,8 @@ void AnalysisVisitor::visit(ReturnStatement* a) {
   if (!context) {
     throw compile_error("return statement outside function", a->file_offset);
   }
+
+  // TODO: typecheck the value if the function has a return type annotation
 
   if (a->value.get()) {
     a->value->accept(this);

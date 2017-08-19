@@ -1,4 +1,4 @@
-data = input(">>> ")
+data: str = input(">>> ")
 while data:
   if ' ' in data:
     print("string contains spaces (" + repr(len(data)) + " chars)")

@@ -1,14 +1,14 @@
 import tests.functions  # modules can import themselves
 from tests.globals import y, z
 
-z = 10
+z: Int = 10
 
-def g(w):
+def g(w: Int) -> Int:
   print('in g(), z is ' + repr(z) + ' and y is ' + repr(y) + ' and w is ' + repr(w))
   return w
 
-def f():
-  z = 7
+def f() -> Int:
+  z: Int = 7
   print('in f(), y is ' + repr(y) + ' and z is ' + repr(z))
   return z
 

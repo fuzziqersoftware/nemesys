@@ -36,7 +36,7 @@ const char* PythonParser::name_for_parse_error(ParseError type) {
 
 
 PythonParser::parse_error::parse_error(ParseError error, size_t token_num,
-    size_t file_offset, size_t line_num, const std::string& explanation) :
+    size_t file_offset, size_t line_num, const string& explanation) :
     runtime_error(string_printf(
       "parsing failed: %s (%s) at token %zu (offset %zu, line %zu)",
       PythonParser::name_for_parse_error(error), explanation.c_str(), token_num,
@@ -253,12 +253,36 @@ PythonParser::parse_dict_item_list(ssize_t end_offset) {
   return ret;
 }
 
+shared_ptr<TypeAnnotation> PythonParser::parse_type_annotation() {
+  shared_ptr<TypeAnnotation> tann(new TypeAnnotation());
+
+  // the type annotation must begin with a _Dynamic describing the type
+  this->expect_token_type(TokenType::_Dynamic, ParseError::SyntaxError,
+      "type annotation does not begin with a name");
+  tann->type_name = this->head_token().string_data;
+  this->advance_token();
+
+  // if an open-bracket follows, then there are generic arguments
+  if (this->head_token().type == TokenType::_OpenBracket) {
+    do {
+      this->advance_token();
+      tann->generic_arguments.emplace_back(this->parse_type_annotation());
+    } while (this->head_token().type == TokenType::_Comma);
+    this->expect_token_type(TokenType::_CloseBracket, ParseError::SyntaxError,
+        "type annotation generic arguments do not end with a close bracket");
+    this->advance_token();
+  }
+
+  return tann;
+}
+
+
 FunctionArguments PythonParser::parse_function_argument_definition(
     ssize_t end_offset) {
 
-  std::vector<FunctionArguments::Argument> args;
-  std::string varargs_name;
-  std::string varkwargs_name;
+  vector<FunctionArguments::Argument> args;
+  string varargs_name;
+  string varkwargs_name;
 
   while (this->token_num < end_offset) {
     ssize_t comma_offset = this->find_bracketed_end(TokenType::_Comma, end_offset);
@@ -289,13 +313,21 @@ FunctionArguments PythonParser::parse_function_argument_definition(
       const string& name = this->head_token().string_data;
       this->advance_token();
 
+      // if there's a :, then it has a type annotation
+      shared_ptr<TypeAnnotation> type_annotation;
+      if (this->head_token().type == TokenType::_Colon) {
+        this->advance_token();
+        type_annotation = this->parse_type_annotation();
+      }
+
       // if there's a top-level =, then it's a kwarg
       shared_ptr<Expression> default_value;
       if (this->head_token().type == TokenType::_Equals) {
         this->advance_token();
-        default_value = parse_expression(comma_offset);
+        default_value = this->parse_expression(comma_offset);
       }
-      args.emplace_back(name, default_value);
+
+      args.emplace_back(name, type_annotation, default_value);
     }
 
     if (comma_offset < end_offset) {
@@ -667,12 +699,24 @@ shared_ptr<Expression> PythonParser::parse_expression(ssize_t end_offset,
 
       string name = this->head_token().string_data;
       this->advance_token();
+
+      // if there's a : then it has a type annotation
+      shared_ptr<TypeAnnotation> type_annotation;
+      if (this->head_token().type == TokenType::_Colon) {
+        this->advance_token();
+        type_annotation = this->parse_type_annotation();
+      }
+
       this->expect_offset(end_offset, ParseError::IncompleteParsing,
           "right side of attribute lookup is incomplete");
 
       if (lvalue_reference) {
-        return shared_ptr<Expression>(new AttributeLValueReference(base, name, offset));
+        return shared_ptr<Expression>(new AttributeLValueReference(
+            base, name, type_annotation, offset));
+
       } else {
+        this->expect_condition(!type_annotation.get(), ParseError::SyntaxError,
+            "attribute lookups cannot have type annotations");
         return shared_ptr<Expression>(new AttributeLookup(base, name, offset));
       }
     }
@@ -837,50 +881,63 @@ shared_ptr<Expression> PythonParser::parse_expression(ssize_t end_offset,
     }
   }
 
-  // it's probably a constant if we get here
-  if (this->token_num == end_offset - 1) {
-    // if this is supposed to be an lvalue, the only valid token here is a
-    // local variable reference (_Dynamic)
-    if (lvalue_reference) {
-      this->expect_token_type(TokenType::_Dynamic, ParseError::SyntaxError,
-          "cannot parse constant as lvalue");
-      const auto& tok = this->head_token();
+  // if this is supposed to be an lvalue, the only valid token here is a
+  // local variable reference (_Dynamic) and maybe a type annotation
+  if (lvalue_reference) {
+    this->expect_token_type(TokenType::_Dynamic, ParseError::SyntaxError,
+        "cannot parse constant as lvalue");
+    const auto& tok = this->head_token();
+    this->advance_token();
+
+    if ((tok.string_data == "True") || (tok.string_data == "False") || (tok.string_data == "None")) {
+      expect_condition(false, ParseError::SyntaxError,
+          "built-in constants cannot be reassigned");
+    }
+
+    // if there's a : then it has a type annotation
+    shared_ptr<TypeAnnotation> type_annotation;
+    if (this->head_token().type == TokenType::_Colon) {
       this->advance_token();
+      type_annotation = this->parse_type_annotation();
+    }
 
-      if ((tok.string_data == "True") || (tok.string_data == "False") || (tok.string_data == "None")) {
-        expect_condition(false, ParseError::SyntaxError,
-            "built-in constants cannot be reassigned");
+    // make sure we used all the tokens
+    this->expect_offset(end_offset, ParseError::IncompleteParsing,
+        "incomplete lvalue reference");
+
+    // ref->base == NULL means a local variable reference
+    return shared_ptr<Expression>(new AttributeLValueReference(NULL,
+        tok.string_data, type_annotation, offset));
+
+  // if not an lvalue, there may be constants and stuff
+  } else {
+    const auto& tok = this->head_token();
+    this->advance_token();
+
+    // make sure we used all the tokens
+    this->expect_offset(end_offset, ParseError::IncompleteParsing,
+        "incomplete simple value");
+
+    if (tok.type == TokenType::_Integer) {
+      return shared_ptr<IntegerConstant>(new IntegerConstant(tok.int_data, offset));
+    } else if (tok.type == TokenType::_Float) {
+      return shared_ptr<FloatConstant>(new FloatConstant(tok.float_data, offset));
+    } else if (tok.type == TokenType::_BytesConstant) {
+      return shared_ptr<BytesConstant>(new BytesConstant(unescape_bytes(tok.string_data), offset));
+    } else if (tok.type == TokenType::_UnicodeConstant) {
+      return shared_ptr<UnicodeConstant>(new UnicodeConstant(unescape_unicode(tok.string_data), offset));
+    }
+    if (tok.type == TokenType::_Dynamic) {
+      if (tok.string_data == "True") {
+        return shared_ptr<TrueConstant>(new TrueConstant(offset));
       }
-
-      // ref->base == NULL means a local variable reference
-      return shared_ptr<Expression>(new AttributeLValueReference(NULL,
-          tok.string_data, offset));
-
-    } else {
-      const auto& tok = this->head_token();
-      this->advance_token();
-
-      if (tok.type == TokenType::_Integer) {
-        return shared_ptr<IntegerConstant>(new IntegerConstant(tok.int_data, offset));
-      } else if (tok.type == TokenType::_Float) {
-        return shared_ptr<FloatConstant>(new FloatConstant(tok.float_data, offset));
-      } else if (tok.type == TokenType::_BytesConstant) {
-        return shared_ptr<BytesConstant>(new BytesConstant(unescape_bytes(tok.string_data), offset));
-      } else if (tok.type == TokenType::_UnicodeConstant) {
-        return shared_ptr<UnicodeConstant>(new UnicodeConstant(unescape_unicode(tok.string_data), offset));
+      if (tok.string_data == "False") {
+        return shared_ptr<FalseConstant>(new FalseConstant(offset));
       }
-      if (tok.type == TokenType::_Dynamic) {
-        if (tok.string_data == "True") {
-          return shared_ptr<TrueConstant>(new TrueConstant(offset));
-        }
-        if (tok.string_data == "False") {
-          return shared_ptr<FalseConstant>(new FalseConstant(offset));
-        }
-        if (tok.string_data == "None") {
-          return shared_ptr<NoneConstant>(new NoneConstant(offset));
-        }
-        return shared_ptr<VariableLookup>(new VariableLookup(tok.string_data, offset));
+      if (tok.string_data == "None") {
+        return shared_ptr<NoneConstant>(new NoneConstant(offset));
       }
+      return shared_ptr<VariableLookup>(new VariableLookup(tok.string_data, offset));
     }
   }
 
@@ -1248,10 +1305,17 @@ vector<shared_ptr<Statement>> PythonParser::parse_compound_statement_suite(
             "expected close parenthesis at end of argument list");
         this->advance_token();
 
+        // if there's an _Arrow, then the return value has a type annotation
+        shared_ptr<TypeAnnotation> type_annotation;
+        if (this->head_token().type == TokenType::_Arrow) {
+          this->advance_token();
+          type_annotation = this->parse_type_annotation();
+        }
+
         auto items = this->parse_suite_from_colon(end_offset);
 
         ret.emplace_back(new FunctionDefinition(move(decorator_stack), name,
-            move(args), move(items), offset));
+            move(args), type_annotation, move(items), offset));
         newline_expected = false;
         break;
       }

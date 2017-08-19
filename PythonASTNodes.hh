@@ -88,6 +88,13 @@ struct Expression : ASTNode {
 
 
 
+struct TypeAnnotation {
+  std::string type_name;
+  std::vector<std::shared_ptr<TypeAnnotation>> generic_arguments;
+};
+
+
+
 struct LValueReference : Expression {
   LValueReference(size_t file_offset);
 
@@ -100,9 +107,11 @@ struct LValueReference : Expression {
 struct AttributeLValueReference : LValueReference {
   std::shared_ptr<Expression> base; // may be NULL for references to local vars
   std::string name;
+  std::shared_ptr<TypeAnnotation> type_annotation;
 
   AttributeLValueReference(std::shared_ptr<Expression> base,
-      const std::string& name, size_t file_offset);
+      const std::string& name, std::shared_ptr<TypeAnnotation> type_annotation,
+      size_t file_offset);
 
   virtual std::string str() const;
   virtual void accept(ASTVisitor* v);
@@ -284,9 +293,12 @@ struct SetComprehension : Expression {
 struct FunctionArguments {
   struct Argument {
     std::string name;
+    std::shared_ptr<TypeAnnotation> type_annotation; // NULL if not given
     std::shared_ptr<Expression> default_value; // NULL for non-keyword args
 
-    Argument(const std::string& name, std::shared_ptr<Expression> default_value);
+    Argument(const std::string& name,
+        std::shared_ptr<TypeAnnotation> type_annotation,
+        std::shared_ptr<Expression> default_value);
 
     std::string str() const;
   };
@@ -751,12 +763,14 @@ struct FunctionDefinition : CompoundStatement {
   std::vector<std::shared_ptr<Expression>> decorators;
   std::string name;
   FunctionArguments args;
+  std::shared_ptr<TypeAnnotation> return_type_annotation;
 
   // annotations
   int64_t function_id;
 
   FunctionDefinition(std::vector<std::shared_ptr<Expression>>&& decorators,
       const std::string& name, FunctionArguments&& args,
+      std::shared_ptr<TypeAnnotation> return_type_annotation,
       std::vector<std::shared_ptr<Statement>>&& items, size_t file_offset);
 
   virtual std::string str() const;
