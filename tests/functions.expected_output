@@ -1,0 +1,30 @@
+in f(), y is 4 and z is 7
+in g(), z is 10 and y is 4 and v is 7
+after all of that, w is 7 and z is 10
+a is 1
+b is 2
+c is 3
+d is 4
+e is 5
+f is 6
+g is 7
+h is 8
+i is 9
+j is 10
+the sum of 10 ints is 55
+a is 'a'
+b is 'b'
+c is 'c'
+d is 'd'
+e is 'e'
+f is 'f'
+g is 'g'
+h is 'h'
+i is 'i'
+j is 'j'
+the sum of 10 strs is 'abcdefghij'
+double(0) = 0
+double(1) = 2
+double(2) = 4
+double(3) = 6
+double('omg') = 'omgomg'

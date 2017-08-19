@@ -1,0 +1,6 @@
+z is 10 and is it > 0? True
+z is 7 and is it > 0? True
+z is 4 and is it > 0? True
+z is 1 and is it > 0? True
+z is -2 and is it > 0? False
+while test result: -2

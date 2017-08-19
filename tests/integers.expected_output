@@ -1,0 +1,7 @@
+a | b should be 1540: 1540
+a & b should be 4: 4
+a ^ b should be 1536: 1536
+a << 2 should be 2064: 2064
+a >> 2 should be 129: 129
+a + b should be 1544: 1544
+a - b should be -512: -512
