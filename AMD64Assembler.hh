@@ -265,11 +265,16 @@ enum Register {
   R15W = 15,
   R15B = 15,
 
+  Count = 16,
+
   RIP = 16,
   EIP = 16,
   IP = 16,
 
-  Count = 16,
+  SPL = 17,
+  BPL = 18,
+  SIL = 19,
+  DIL = 20,
 };
 
 enum OperandSize {
@@ -281,6 +286,8 @@ enum OperandSize {
 
 const char* name_for_register(Register r,
     OperandSize size = OperandSize::QuadWord);
+
+Register byte_register_for_register(Register r);
 
 struct MemoryReference {
   Register base_register;
@@ -542,8 +549,8 @@ private:
 
   static std::string disassemble_rm(const uint8_t* data, size_t size,
       size_t& offset, const char* opcode_name, bool is_load,
-      const char** op_name_table, bool reg_ext, bool base_ext, bool index_ext,
-      OperandSize operand_size);
+      const char** op_name_table, bool ext, bool reg_ext, bool base_ext,
+      bool index_ext, OperandSize operand_size);
   static std::string disassemble_jmp(const uint8_t* data, size_t size,
       size_t& offset, uint64_t addr, const char* opcode_name, bool is_32bit,
       std::multimap<size_t, std::string>& addr_to_label, uint64_t& next_label);

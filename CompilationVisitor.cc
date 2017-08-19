@@ -389,6 +389,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
   // all of the remaining operators use both operands, so evaluate both of them
   // into different registers
+  // TODO: it's kind of stupid that we push the result onto the stack; figure
+  // out a way to implement this without using memory access
   this->as.write_label(string_printf("__BinaryOperation_%p_evaluate_left", a));
   a->left->accept(this);
   this->write_push(this->target_register); // so right doesn't clobber it
@@ -399,37 +401,50 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   this->write_push(this->target_register); // for the destructor call later
   Variable& right_type = this->current_type;
 
+  MemoryReference left_mem(Register::RSP, 8);
+  MemoryReference right_mem(Register::RSP, 0);
+  MemoryReference target_mem(this->target_register);
+
+  // pick a temporary register that isn't the target register
+  this->reserve_register(this->target_register);
+  MemoryReference temp_mem(this->available_register());
+  this->release_register(this->target_register);
+
   this->as.write_label(string_printf("__BinaryOperation_%p_combine", a));
   switch (a->oper) {
     case BinaryOperator::LessThan:
-      // TODO
-      this->current_type = Variable(ValueType::Bool);
-      throw compile_error("LessThan not yet implemented", this->file_offset);
-
     case BinaryOperator::GreaterThan:
-      // TODO
-      this->current_type = Variable(ValueType::Bool);
-      throw compile_error("GreaterThan not yet implemented", this->file_offset);
-
-    case BinaryOperator::Equality:
-      // TODO
-      this->current_type = Variable(ValueType::Bool);
-      throw compile_error("Equality not yet implemented", this->file_offset);
-
-    case BinaryOperator::GreaterOrEqual:
-      // TODO
-      this->current_type = Variable(ValueType::Bool);
-      throw compile_error("GreaterOrEqual not yet implemented", this->file_offset);
-
     case BinaryOperator::LessOrEqual:
-      // TODO
-      this->current_type = Variable(ValueType::Bool);
-      throw compile_error("LessOrEqual not yet implemented", this->file_offset);
-
+    case BinaryOperator::GreaterOrEqual:
+    case BinaryOperator::Equality:
     case BinaryOperator::NotEqual:
-      // TODO
+      // integer comparisons
+      if (((left_type.type == ValueType::Int) ||
+           (left_type.type == ValueType::Bool)) &&
+          ((right_type.type == ValueType::Int) ||
+           (right_type.type == ValueType::Bool))) {
+        this->as.write_mov(target_mem, 0);
+        this->as.write_mov(temp_mem, left_mem);
+        this->as.write_cmp(temp_mem, right_mem);
+        target_mem.base_register = byte_register_for_register(target_mem.base_register);
+        if (a->oper == BinaryOperator::LessThan) {
+          this->as.write_setl(target_mem);
+        } else if (a->oper == BinaryOperator::GreaterThan) {
+          this->as.write_setg(target_mem);
+        } else if (a->oper == BinaryOperator::LessOrEqual) {
+          this->as.write_setle(target_mem);
+        } else if (a->oper == BinaryOperator::GreaterOrEqual) {
+          this->as.write_setge(target_mem);
+        } else if (a->oper == BinaryOperator::Equality) {
+          this->as.write_sete(target_mem);
+        } else if (a->oper == BinaryOperator::NotEqual) {
+          this->as.write_setne(target_mem);
+        }
+      } else {
+        throw compile_error("operator not yet implemented", this->file_offset);
+      }
       this->current_type = Variable(ValueType::Bool);
-      throw compile_error("NotEqual not yet implemented", this->file_offset);
+      break;
 
     case BinaryOperator::In:
     case BinaryOperator::NotIn:
@@ -578,19 +593,28 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       throw compile_error("unhandled binary operator", this->file_offset);
   }
 
-  // save the return value before destroying the temp values
-  this->write_push(this->target_register);
+  this->as.write_label(string_printf("__BinaryOperation_%p_cleanup", a));
 
-  // destroy the temp values
-  this->as.write_label(string_printf("__BinaryOperation_%p_destroy_left", a));
-  this->write_delete_reference(MemoryReference(Register::RSP, 8), left_type);
-  this->as.write_label(string_printf("__BinaryOperation_%p_destroy_right", a));
-  this->write_delete_reference(MemoryReference(Register::RSP, 16), right_type);
+  // if either value requires destruction, do so now
+  if (type_has_refcount(left_type.type) || type_has_refcount(right_type.type)) {
+    // save the return value before destroying the temp values
+    this->write_push(this->target_register);
 
-  // now load the result again and clean up the stack
-  this->as.write_mov(MemoryReference(this->target_register),
-      MemoryReference(Register::RSP, 0));
-  this->adjust_stack(0x18);
+    // destroy the temp values
+    this->as.write_label(string_printf("__BinaryOperation_%p_destroy_left", a));
+    this->write_delete_reference(MemoryReference(Register::RSP, 8), left_type);
+    this->as.write_label(string_printf("__BinaryOperation_%p_destroy_right", a));
+    this->write_delete_reference(MemoryReference(Register::RSP, 16), right_type);
+
+    // now load the result again and clean up the stack
+    this->as.write_mov(MemoryReference(this->target_register),
+        MemoryReference(Register::RSP, 0));
+    this->adjust_stack(0x18);
+
+  // no destructor call necessary; just remove left and right from the stack
+  } else {
+    this->adjust_stack(0x10);
+  }
 
   this->as.write_label(string_printf("__BinaryOperation_%p_complete", a));
 }

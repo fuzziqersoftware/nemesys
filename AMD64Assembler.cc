@@ -46,6 +46,14 @@ const char* name_for_register(Register r, OperandSize size) {
           return "r14b";
         case Register::R15B:
           return "r15b";
+        case Register::SPL:
+          return "spl";
+        case Register::BPL:
+          return "bpl";
+        case Register::SIL:
+          return "sil";
+        case Register::DIL:
+          return "dil";
         default:
           return "UNKNOWN8";
       }
@@ -170,6 +178,48 @@ const char* name_for_register(Register r, OperandSize size) {
   return "UNKNOWN";
 }
 
+Register byte_register_for_register(Register r) {
+  switch (r) {
+    case Register::None:
+      return Register::None;
+    case Register::RAX:
+      return Register::AL;
+    case Register::RCX:
+      return Register::CL;
+    case Register::RDX:
+      return Register::DL;
+    case Register::RBX:
+      return Register::BL;
+    case Register::RSP:
+      return Register::SPL;
+    case Register::RBP:
+      return Register::BPL;
+    case Register::RSI:
+      return Register::SIL;
+    case Register::RDI:
+      return Register::DIL;
+    case Register::R8:
+      return Register::R8B;
+    case Register::R9:
+      return Register::R9B;
+    case Register::R10:
+      return Register::R10B;
+    case Register::R11:
+      return Register::R11B;
+    case Register::R12:
+      return Register::R12B;
+    case Register::R13:
+      return Register::R13B;
+    case Register::R14:
+      return Register::R14B;
+    case Register::R15:
+      return Register::R15B;
+    default:
+      return Register::None;
+  }
+}
+
+
 
 MemoryReference::MemoryReference() : base_register(Register::None),
     index_register(Register::None), field_size(0), offset(0) { }
@@ -192,7 +242,11 @@ bool MemoryReference::operator!=(const MemoryReference& other) const {
 }
 
 static inline bool is_extension_register(Register r) {
-  return static_cast<int8_t>(r) >= 8;
+  return (static_cast<int8_t>(r) >= 8) && (static_cast<int8_t>(r) < 16);
+}
+
+static inline bool is_nonextension_byte_register(Register r) {
+  return static_cast<int8_t>(r) >= 17;
 }
 
 
@@ -220,8 +274,19 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
 
   string ret;
   if (!mem.field_size) { // behavior = 3 (register reference)
-    bool mem_ext = is_extension_register(mem.base_register);
+    Register mem_base = mem.base_register;
+    bool mem_ext = is_extension_register(mem_base);
+    bool mem_nonext_byte = is_nonextension_byte_register(mem_base);
     bool reg_ext = is_extension_register(reg);
+    bool reg_nonext_byte = is_nonextension_byte_register(reg);
+
+    // using spl, bpl, sil, dil require a prefix of 0x40
+    if (reg_nonext_byte) {
+      reg = static_cast<Register>(reg - 13); // convert from enum value to register number
+    }
+    if (mem_nonext_byte) {
+      mem_base = static_cast<Register>(mem_base - 13); // convert from enum value to register number
+    }
 
     uint8_t prefix_byte = 0x40 | (mem_ext ? 0x01 : 0) | (reg_ext ? 0x04 : 0);
     if (size == OperandSize::QuadWord) {
@@ -230,14 +295,14 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
       ret += 0x66;
     }
 
-    if (prefix_byte != 0x40) {
+    if (mem_nonext_byte || reg_nonext_byte || (prefix_byte != 0x40)) {
       ret += prefix_byte;
     }
     if (opcode > 0xFF) {
       ret += (opcode >> 8);
     }
     ret += (opcode & 0xFF);
-    ret += static_cast<char>(0xC0 | ((reg & 7) << 3) | (mem.base_register & 7));
+    ret += static_cast<char>(0xC0 | ((reg & 7) << 3) | (mem_base & 7));
     return ret;
   }
 
@@ -1254,6 +1319,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
   uint64_t next_label = 0;
 
   // prefix flags
+  bool ext = false;
   bool base_ext = false;
   bool index_ext = false;
   bool reg_ext = false;
@@ -1267,6 +1333,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
 
     // check for prefix bytes
     if ((opcode & 0xF0) == 0x40) {
+      ext = true;
       base_ext = opcode & 1;
       index_ext = opcode & 2;
       reg_ext = opcode & 4;
@@ -1302,11 +1369,11 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
           static const char* fake_names[] = {
               NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
           opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
-              names[opcode & 0x0F], false, fake_names, reg_ext, base_ext,
+              names[opcode & 0x0F], false, fake_names, ext, reg_ext, base_ext,
               index_ext, OperandSize::Byte);
 
         } else {
-          opcode_text = "<<unknown>>";
+          opcode_text = "<<unknown-0F>>";
         }
       }
 
@@ -1320,7 +1387,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
           operand_size = OperandSize::Byte;
         }
         opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
-            math_op_names[which], opcode & 2, NULL, reg_ext, base_ext,
+            math_op_names[which], opcode & 2, NULL, ext, reg_ext, base_ext,
             index_ext, operand_size);
       }
 
@@ -1355,7 +1422,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
         operand_size = OperandSize::Byte;
       }
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
-          true, math_op_names, reg_ext, base_ext, index_ext, operand_size);
+          true, math_op_names, ext, reg_ext, base_ext, index_ext, operand_size);
 
       uint32_t displacement;
       if ((opcode & 3) == 1) {
@@ -1372,25 +1439,25 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
         operand_size = OperandSize::Byte;
       }
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, "test",
-          true, NULL, reg_ext, base_ext, index_ext, operand_size);
+          true, NULL, ext, reg_ext, base_ext, index_ext, operand_size);
 
     } else if ((opcode & 0xFE) == 0x86) {
       if (!(opcode & 1)) {
         operand_size = OperandSize::Byte;
       }
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, "xchg",
-          true, NULL, reg_ext, base_ext, index_ext, operand_size);
+          true, NULL, ext, reg_ext, base_ext, index_ext, operand_size);
 
     } else if ((opcode & 0xFC) == 0x88) {
       if (!(opcode & 1)) {
         operand_size = OperandSize::Byte;
       }
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, "mov",
-          opcode & 2, NULL, reg_ext, base_ext, index_ext, operand_size);
+          opcode & 2, NULL, ext, reg_ext, base_ext, index_ext, operand_size);
 
     } else if (opcode == 0x8D) {
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, "lea",
-          true, NULL, reg_ext, base_ext, index_ext, operand_size);
+          true, NULL, ext, reg_ext, base_ext, index_ext, operand_size);
 
     } else if ((opcode & 0xF8) == 0xB8) {
       Register reg = make_reg(reg_ext, opcode & 7);
@@ -1437,7 +1504,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
       static const char* names[] = {
           "rol", "ror", "rcl", "rcr", "shl", "shr", "sal", "sar"};
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
-          true, names, reg_ext, base_ext, index_ext, operand_size);
+          true, names, ext, reg_ext, base_ext, index_ext, operand_size);
 
       if ((opcode & 0xFE) == 0xC0) {
         if (offset >= size) {
@@ -1462,7 +1529,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
       static const char* names[] = {
           "mov", NULL, NULL, NULL, NULL, NULL, NULL, NULL};
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
-          false, names, reg_ext, base_ext, index_ext, operand_size);
+          false, names, ext, reg_ext, base_ext, index_ext, operand_size);
 
       // TODO: factor this out with movabs
       if ((operand_size == OperandSize::QuadWord) ||
@@ -1506,7 +1573,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
       static const char* names[] = {
           NULL, NULL, "not", "neg", NULL, NULL, NULL, NULL};
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
-          true, names, reg_ext, base_ext, index_ext, operand_size);
+          true, names, ext, reg_ext, base_ext, index_ext, operand_size);
 
     } else if (opcode == 0xFF) {
       static const char* names[] = {
@@ -1516,10 +1583,10 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
         operand_size = OperandSize::QuadWord;
       }
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
-          false, names, reg_ext, base_ext, index_ext, operand_size);
+          false, names, ext, reg_ext, base_ext, index_ext, operand_size);
 
     } else {
-      opcode_text = "<<unknown>>";
+      opcode_text = "<<unknown-value>>";
     }
 
     string line = string_printf("%016" PRIX64 "  ", addr + opcode_start_offset);
@@ -1537,6 +1604,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
 
     addr_to_text.emplace(addr + opcode_start_offset, line);
 
+    ext = false;
     base_ext = false;
     index_ext = false;
     reg_ext = false;
@@ -1564,8 +1632,8 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
 
 string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
     size_t& offset, const char* opcode_name, bool is_load,
-    const char** op_name_table, bool reg_ext, bool base_ext, bool index_ext,
-    OperandSize operand_size) {
+    const char** op_name_table, bool ext, bool reg_ext, bool base_ext,
+    bool index_ext, OperandSize operand_size) {
   if (offset >= size) {
     return "<<incomplete>>";
   }
@@ -1581,6 +1649,12 @@ string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
 
   string mem_str;
   if (behavior == 3) {
+    // convert *h regs to spl, etc. if the extension prefix is given
+    if ((operand_size == OperandSize::Byte) && ext) {
+      if (base_reg >= 4 && base_reg <= 7) {
+        base_reg = static_cast<Register>(base_reg + 13);
+      }
+    }
     mem_str = name_for_register(base_reg, operand_size);
 
   } else {
@@ -1659,8 +1733,8 @@ string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
 
   if (op_name_table) {
     const char* name = op_name_table[subtype] ? op_name_table[subtype] : opcode_name;
-    if (!op_name_table[subtype]) {
-      return "<<unknown>>";
+    if (!name) {
+      return "<<unknown-name>>";
     }
     if (mem_str[0] == '[') {
       static const unordered_map<OperandSize, const char*> size_names({
