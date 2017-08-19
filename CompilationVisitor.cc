@@ -709,9 +709,10 @@ void CompilationVisitor::visit(FunctionCall* a) {
   struct ArgumentValue {
     shared_ptr<Expression> passed_value;
     Variable default_value; // Indeterminate for positional args
+    Variable type;
+    ssize_t stack_offset; // if < 0, this argument isn't stored on the stack
   };
   vector<ArgumentValue> arg_values;
-  vector<Variable> arg_types;
 
   // push positional args first
   size_t arg_index = 0;
@@ -757,24 +758,56 @@ void CompilationVisitor::visit(FunctionCall* a) {
     throw compile_error("incorrect argument count in function call", this->file_offset);
   }
 
-  // reserve stack space appropriately
-  ssize_t arg_stack_bytes = this->write_function_call_stack_prep(arg_values.size());
+  // now start writing code
 
-  // now generate code for all the arguments
+  // push all reserved registers
+  int64_t previously_reserved_registers = this->write_push_reserved_registers();
+
+  // reserve stack space as needed
+  ssize_t arg_stack_bytes = write_function_call_stack_prep(arg_values.size());
+
+  // now generate code for the arguments
+  Register original_target_register = this->target_register;
   for (arg_index = 0; arg_index < arg_values.size(); arg_index++) {
     auto& arg = arg_values[arg_index];
+
+    // figure out where to construct it into
+    if (arg_index < argument_register_order.size()) {
+      this->target_register = argument_register_order[arg_index];
+      arg.stack_offset = -1; // passed through register only
+    } else {
+      this->target_register = this->available_register();
+      arg.stack_offset = sizeof(int64_t) * (arg_index - argument_register_order.size());
+    }
+    if (arg.stack_offset >= arg_stack_bytes) {
+      throw compile_error(string_printf(
+          "argument stack overflow at function call time (0x%zX vs 0x%zX)",
+          arg.stack_offset, arg_stack_bytes), this->file_offset);
+    }
+
+    // generate code for the argument's value
     if (arg.passed_value.get()) {
       this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_passed_value",
           a, arg_index));
-      this->write_code_for_call_arg(arg.passed_value, arg_index);
-      arg_types.emplace_back(move(this->current_type));
+      arg.passed_value->accept(this);
+      arg.type = move(this->current_type);
     } else {
       this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_default_value",
           a, arg_index));
-      this->write_code_for_call_arg(arg.default_value, arg_index);
-      arg_types.emplace_back(arg.default_value);
+      this->write_code_for_value(arg.default_value);
+      arg.type = arg.default_value;
+    }
+
+    // store the value on the stack if needed; otherwise, mark the regsiter as
+    // reserved
+    if (arg.stack_offset < 0) {
+      this->reserve_register(this->target_register);
+    } else {
+      this->as.write_mov(MemoryReference(Register::RSP, arg.stack_offset),
+          MemoryReference(this->target_register));
     }
   }
+  this->target_register = original_target_register;
 
   // we can now unreserve the argument registers
   for (size_t arg_index = 0;
@@ -793,6 +826,10 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
   // figure out which fragment to call. if a fragment exists that has this
   // signature, use it; otherwise, generate a call to the compiler instead
+  vector<Variable> arg_types;
+  for (const auto& arg : arg_values) {
+    arg_types.emplace_back(arg.type);
+  }
   string arg_signature = type_signature_for_variables(arg_types);
   try {
     int64_t fragment_id = callee_context->arg_signature_to_fragment_id.at(arg_signature);
@@ -800,9 +837,17 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
     this->as.write_label(string_printf("__FunctionCall_%p_call_fragment_%" PRId64 "_%" PRId64 "_%s",
           a, a->callee_function_id, fragment_id, arg_signature.c_str()));
-    // TODO: deal with return value somehow
-    this->write_function_call(fragment.compiled, NULL, {}, arg_stack_bytes,
-        this->target_register);
+
+    // call the function
+    this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(fragment.compiled));
+    this->as.write_call(MemoryReference(Register::RAX));
+
+    // put the return value into the target register
+    if (this->target_register != Register::RAX) {
+      this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
+      this->as.write_mov(MemoryReference(this->target_register),
+          MemoryReference(Register::RAX));
+    }
 
     this->current_type = fragment.return_type;
 
@@ -813,7 +858,18 @@ void CompilationVisitor::visit(FunctionCall* a) {
     throw compile_error("referenced fragment does not exist", this->file_offset);
   }
 
-  // TODO: call destructors on arguments (not doing so is a memory leak!)
+  // note: we don't have to destroy the function arguments; we passed the
+  // references that we generated directly into the function and it's
+  // responsible for deleting those references
+
+  // unreserve the argument stack space
+  if (arg_stack_bytes) {
+    this->as.write_label(string_printf("__FunctionCall_%p_restore_stack", a));
+    this->adjust_stack(arg_stack_bytes);
+  }
+
+  // pop the registers that we saved earlier
+  this->write_pop_reserved_registers(previously_reserved_registers);
 }
 
 void CompilationVisitor::visit(ArrayIndex* a) {
@@ -847,13 +903,9 @@ void CompilationVisitor::visit(FloatConstant* a) {
 void CompilationVisitor::visit(BytesConstant* a) {
   this->file_offset = a->file_offset;
 
-  int64_t available = this->write_push_reserved_registers();
-
   const BytesObject* o = this->global->get_or_create_constant(a->value);
-  this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
-  this->write_add_reference(MemoryReference(Register::RDI, 0));
-
-  this->write_pop_reserved_registers(available);
+  this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(o));
+  this->write_add_reference(MemoryReference(this->target_register, 0));
 
   this->current_type = Variable(ValueType::Bytes);
 }
@@ -861,13 +913,9 @@ void CompilationVisitor::visit(BytesConstant* a) {
 void CompilationVisitor::visit(UnicodeConstant* a) {
   this->file_offset = a->file_offset;
 
-  int64_t available = this->write_push_reserved_registers();
-
   const UnicodeObject* o = this->global->get_or_create_constant(a->value);
   this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(o));
   this->write_add_reference(MemoryReference(this->target_register, 0));
-
-  this->write_pop_reserved_registers(available);
 
   this->current_type = Variable(ValueType::Unicode);
 }
@@ -1275,35 +1323,9 @@ void CompilationVisitor::visit(ClassDefinition* a) {
   throw compile_error("ClassDefinition not yet implemented", this->file_offset);
 }
 
-void CompilationVisitor::write_code_for_call_arg(
-    shared_ptr<Expression> value, size_t arg_index) {
-  Register original_target_register = this->target_register;
-  if (arg_index < argument_register_order.size()) {
-    // construct it directly into the register, then reserve the register
-    this->target_register = argument_register_order[arg_index];
-    value->accept(this);
-    this->reserve_register(this->target_register);
-  } else {
-    // construct it into any register, then generate code to put it on the stack
-    // in this case, don't reserve the register
-    this->target_register = this->available_register();
-    value->accept(this);
-    this->write_push(this->target_register);
-  }
-  this->target_register = original_target_register;
-}
-
-void CompilationVisitor::write_code_for_call_arg(const Variable& value,
-    size_t arg_index) {
+void CompilationVisitor::write_code_for_value(const Variable& value) {
   if (!value.value_known) {
     throw compile_error("can\'t generate code for unknown value", this->file_offset);
-  }
-
-  Register original_target_register = this->target_register;
-  if (arg_index < argument_register_order.size()) {
-    this->target_register = argument_register_order[arg_index];
-  } else {
-    this->target_register = this->available_register();
   }
 
   switch (value.type) {
@@ -1322,17 +1344,13 @@ void CompilationVisitor::write_code_for_call_arg(const Variable& value,
     case ValueType::Float:
       throw compile_error("Float default values not yet implemented", this->file_offset);
 
-    case ValueType::Bytes: {
-      const BytesObject* o = this->global->get_or_create_constant(*value.bytes_value);
-      this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
-      this->write_add_reference(MemoryReference(Register::RDI, 0));
-      break;
-    }
-
+    case ValueType::Bytes:
     case ValueType::Unicode: {
-      const UnicodeObject* o = this->global->get_or_create_constant(*value.unicode_value);
-      this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
-      this->write_add_reference(MemoryReference(Register::RDI, 0));
+      const void* o = (value.type == ValueType::Bytes) ?
+          reinterpret_cast<const void*>(this->global->get_or_create_constant(*value.bytes_value)) :
+          reinterpret_cast<const void*>(this->global->get_or_create_constant(*value.unicode_value));
+      this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(o));
+      this->write_add_reference(MemoryReference(this->target_register, 0));
       break;
     }
 
@@ -1353,23 +1371,18 @@ void CompilationVisitor::write_code_for_call_arg(const Variable& value,
     default:
       throw compile_error("default value has unknown type", this->file_offset);
   }
-
-  if (arg_index < argument_register_order.size()) {
-    this->reserve_register(this->target_register);
-  } else {
-    this->write_push(this->target_register);
-  }
-  this->target_register = original_target_register;
 }
 
 ssize_t CompilationVisitor::write_function_call_stack_prep(size_t arg_count) {
   ssize_t arg_stack_bytes = (arg_count > argument_register_order.size()) ?
       ((arg_count - argument_register_order.size()) * sizeof(int64_t)) : 0;
+
   // make sure the stack will be aligned at call time
-  arg_stack_bytes += 0x10 - ((this->stack_bytes_used + arg_stack_bytes) & 0x0F);
+  arg_stack_bytes += ((this->stack_bytes_used + arg_stack_bytes) & 0x0F);
   if (arg_stack_bytes) {
     this->adjust_stack(-arg_stack_bytes);
   }
+
   return arg_stack_bytes;
 }
 

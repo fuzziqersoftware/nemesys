@@ -25,6 +25,7 @@ static UnicodeObject* empty_unicode = unicode_new(NULL, NULL, 0);
 
 static void builtin_print(UnicodeObject* str) {
   fprintf(stdout, "%.*ls\n", static_cast<int>(str->count), str->data);
+  delete_reference(str);
 }
 
 static UnicodeObject* builtin_input(UnicodeObject* prompt) {
@@ -32,6 +33,7 @@ static UnicodeObject* builtin_input(UnicodeObject* prompt) {
     fprintf(stdout, "%.*ls", static_cast<int>(prompt->count), prompt->data);
     fflush(stdout);
   }
+  delete_reference(prompt);
 
   vector<wstring> blocks;
   while (blocks.empty() || blocks.back().back() != '\n') {
@@ -70,12 +72,16 @@ static UnicodeObject* builtin_input(UnicodeObject* prompt) {
   return unicode_new(NULL, data.data(), data.size());
 }
 
-static int64_t builtin_int_bytes(const BytesObject* s, int64_t base) {
-  return strtoll(reinterpret_cast<const char*>(s->data), NULL, 0);
+static int64_t builtin_int_bytes(BytesObject* s, int64_t base) {
+  int64_t ret = strtoll(reinterpret_cast<const char*>(s->data), NULL, base);
+  delete_reference(s);
+  return ret;
 }
 
-static int64_t builtin_int_unicode(const UnicodeObject* s, int64_t base) {
-  return wcstoll(s->data, NULL, 0);
+static int64_t builtin_int_unicode(UnicodeObject* s, int64_t base) {
+  int64_t ret = wcstoll(s->data, NULL, base);
+  delete_reference(s);
+  return ret;
 }
 
 static UnicodeObject* builtin_repr_none(void* None) {
@@ -104,7 +110,7 @@ static UnicodeObject* builtin_repr_float(double v) {
   return unicode_new(NULL, buf, wcslen(buf));
 }
 
-static UnicodeObject* builtin_repr_bytes(const BytesObject* v) {
+static UnicodeObject* builtin_repr_bytes(BytesObject* v) {
   string escape_ret = escape(v->data, v->count);
   UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 3);
   ret->data[0] = L'b';
@@ -114,10 +120,11 @@ static UnicodeObject* builtin_repr_bytes(const BytesObject* v) {
   }
   ret->data[escape_ret.size() + 2] = L'\'';
   ret->data[escape_ret.size() + 3] = 0;
+  delete_reference(v);
   return ret;
 }
 
-static UnicodeObject* builtin_repr_unicode(const UnicodeObject* v) {
+static UnicodeObject* builtin_repr_unicode(UnicodeObject* v) {
   string escape_ret = escape(v->data, v->count);
   UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 2);
   ret->data[0] = L'\'';
@@ -126,15 +133,20 @@ static UnicodeObject* builtin_repr_unicode(const UnicodeObject* v) {
   }
   ret->data[escape_ret.size() + 1] = L'\'';
   ret->data[escape_ret.size() + 2] = 0;
+  delete_reference(v);
   return ret;
 }
 
-static int64_t builtin_len_bytes(const BytesObject* s) {
-  return s->count;
+static int64_t builtin_len_bytes(BytesObject* s) {
+  int64_t ret = s->count;
+  delete_reference(s);
+  return ret;
 }
 
-static int64_t builtin_len_unicode(const UnicodeObject* s) {
-  return s->count;
+static int64_t builtin_len_unicode(UnicodeObject* s) {
+  int64_t ret = s->count;
+  delete_reference(s);
+  return ret;
 }
 
 

@@ -125,9 +125,7 @@ private:
   bool is_always_falsey(const Variable& type);
   void write_truth_value_test(Register reg, const Variable& type);
 
-  void write_code_for_call_arg(std::shared_ptr<Expression> value,
-      size_t arg_index);
-  void write_code_for_call_arg(const Variable& value, size_t arg_index);
+  void write_code_for_value(const Variable& value);
 
   ssize_t write_function_call_stack_prep(size_t arg_count);
   void write_function_call(const void* function,
