@@ -77,7 +77,7 @@ struct FunctionContext {
   // the rest of this isn't valid until Imported or later
 
   struct Fragment {
-    Variable return_type; // Indeterminate if this fragment doesn't return
+    Variable return_type;
     const void* compiled;
 
     Fragment(Variable return_type, const void* compiled);

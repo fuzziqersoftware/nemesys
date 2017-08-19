@@ -233,6 +233,9 @@ size_t dictionary_node_size(const DictionaryObject* d) {
 }
 
 
+DictionaryObject::SlotContents::SlotContents() : key(NULL), value(NULL),
+    occupied(false), is_subnode(false) { }
+
 DictionaryObject::Node::Node(uint8_t start, uint8_t end, uint8_t parent_slot,
     void* key, void* value, bool has_value) : start(start), end(end),
     parent_slot(parent_slot), has_value(has_value), key(key), value(value) {
@@ -555,27 +558,27 @@ DictionaryObject::Traversal DictionaryObject::traverse(void* k,
   return const_cast<DictionaryObject*>(this)->traverse(k, with_nodes, false);
 }
 
-DictionaryObject::SlotContents DictionaryObject::next_item(void* k, bool starting) const {
-  SlotContents ret;
+bool dictionary_next_item(const DictionaryObject* d,
+    DictionaryObject::SlotContents* ret) {
+  ret->is_subnode = false;
 
-  DictionaryObject::Node* node = this->root;
+  DictionaryObject::Node* node = d->root;
   if (!node) {
-    ret.occupied = false;
-    return ret;
+    return false;
   }
 
   int16_t slot_id = 0;
-  size_t k_len = starting ? 0 : this->key_length(k);
+  size_t k_len = ret->occupied ? d->key_length(ret->key) : 0;
   vector<DictionaryObject::Node*> nodes;
   nodes.reserve(k_len);
   nodes.emplace_back(node);
 
-  if (starting) {
+  if (!ret->occupied) {
     if (node->has_value) {
-      ret.key = node->key;
-      ret.value = node->value;
-      ret.occupied = true;
-      return ret;
+      ret->key = node->key;
+      ret->value = node->value;
+      ret->occupied = true;
+      return true;
     }
 
   // current is not NULL - we're continuing iteration
@@ -584,7 +587,7 @@ DictionaryObject::SlotContents DictionaryObject::next_item(void* k, bool startin
 
     // follow links to the leaf node as far as possible
     while (k_offset != k_len) {
-      uint8_t ch = this->key_char(k, k_offset);
+      uint8_t ch = d->key_char(ret->key, k_offset);
       // if current is before anything in this node, then we have to iterate the
       // node's children, but not the node itself (the node's value is at some
       // prefix of current, so it's not after current).
@@ -621,10 +624,10 @@ DictionaryObject::SlotContents DictionaryObject::next_item(void* k, bool startin
     // check the node's value if we need to
     if (slot_id < 0) {
       if (node->has_value) {
-        ret.occupied = true;
-        ret.key = node->key;
-        ret.value = node->value;
-        return ret;
+        ret->occupied = true;
+        ret->key = node->key;
+        ret->value = node->value;
+        return true;
       }
       slot_id = node->start;
 
@@ -636,8 +639,7 @@ DictionaryObject::SlotContents DictionaryObject::next_item(void* k, bool startin
     if (slot_id > node->end) {
       nodes.pop_back();
       if (nodes.empty()) {
-        ret.occupied = false;
-        return ret;
+        return false;
       }
       slot_id = node->parent_slot + 1;
       node = nodes.back();
@@ -653,7 +655,10 @@ DictionaryObject::SlotContents DictionaryObject::next_item(void* k, bool startin
 
     // if the slot contains a value, we're done
     if (!slot_contents.is_subnode) {
-      return slot_contents;
+      ret->key = slot_contents.key;
+      ret->value = slot_contents.value;
+      ret->occupied = true;
+      return true;
     }
 
     // the slot contains a subnode, so move to it and check if it has a value
@@ -663,16 +668,7 @@ DictionaryObject::SlotContents DictionaryObject::next_item(void* k, bool startin
   }
 
   // if we didn't find a value, we're done iterating the tree
-  throw out_of_range("done iterating tree");
-}
-
-DictionaryObject::SlotContents dictionary_first_item(const DictionaryObject* d) {
-  return d->next_item(NULL, true);
-}
-
-DictionaryObject::SlotContents dictionary_next_item(const DictionaryObject* d,
-    void* k) {
-  return d->next_item(k);
+  return false;
 }
 
 string dictionary_structure(const DictionaryObject* d) {

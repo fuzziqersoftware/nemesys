@@ -129,6 +129,14 @@ static UnicodeObject* builtin_repr_unicode(const UnicodeObject* v) {
   return ret;
 }
 
+static int64_t builtin_len_bytes(const BytesObject* s) {
+  return s->count;
+}
+
+static int64_t builtin_len_unicode(const UnicodeObject* s) {
+  return s->count;
+}
+
 
 
 // all builtin functions have negative function IDs
@@ -137,6 +145,7 @@ const unordered_map<string, int64_t> builtin_function_to_id({
   {"input", -2},
   {"int",   -3},
   {"repr",  -4},
+  {"len",   -5},
 });
 
 
@@ -183,6 +192,15 @@ unordered_map<int64_t, FunctionContext> builtin_function_definitions({
         reinterpret_cast<const void*>(&builtin_repr_bytes)),
       FragDef({Variable(ValueType::Unicode)}, Variable(ValueType::Unicode),
         reinterpret_cast<const void*>(&builtin_repr_unicode)),
+    })},
+  // Int len(Bytes)
+  // Int len(Unicode)
+  {builtin_function_to_id.at("len"),
+    FunctionContext(NULL, builtin_function_to_id.at("len"), "len", {
+      FragDef({Variable(ValueType::Bytes)}, Variable(ValueType::Int),
+        reinterpret_cast<const void*>(&builtin_len_bytes)),
+      FragDef({Variable(ValueType::Unicode)}, Variable(ValueType::Int),
+        reinterpret_cast<const void*>(&builtin_len_unicode)),
     })},
 });
 
@@ -311,7 +329,7 @@ const unordered_map<string, Variable> builtin_names({
   {"isinstance",                Variable(ValueType::Function)},
   {"issubclass",                Variable(ValueType::Function)},
   {"iter",                      Variable(ValueType::Function)},
-  {"len",                       Variable(ValueType::Function)},
+  {"len",                       Variable(builtin_function_to_id.at("len"), false)},
   {"license",                   Variable(ValueType::Function)},
   {"list",                      Variable(ValueType::Function)},
   {"locals",                    Variable(ValueType::Function)},

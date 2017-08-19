@@ -113,6 +113,7 @@ enum Operation {
   CALL32     = 0xE8,
   JMP32      = 0xE9,
   JMP8       = 0xEB,
+  LOCK       = 0xF0,
   NOT_NEG    = 0xF7,
   INC_DEC8   = 0xFE,
   INC_DEC    = 0xFF,
@@ -313,6 +314,8 @@ public:
       uint64_t addr = 0,
       const std::multimap<size_t, std::string>* label_offsets = NULL);
 
+  void reset();
+
   // label support
   void write_label(const std::string& name);
 
@@ -478,6 +481,9 @@ public:
   void write_setnle(const MemoryReference& target);
   void write_setg(const MemoryReference& target);
 
+  // other stuff
+  void write_lock();
+
 private:
   static std::string generate_jmp(Operation op8, Operation op32,
     int64_t opcode_address, int64_t target_address);
@@ -538,6 +544,6 @@ private:
       const char** op_name_table, bool reg_ext, bool base_ext, bool index_ext,
       OperandSize operand_size);
   static std::string disassemble_jmp(const uint8_t* data, size_t size,
-    size_t& offset, uint64_t addr, const char* opcode_name, bool is_32bit,
-    std::multimap<size_t, std::string>& addr_to_label, uint64_t& next_label);
+      size_t& offset, uint64_t addr, const char* opcode_name, bool is_32bit,
+      std::multimap<size_t, std::string>& addr_to_label, uint64_t& next_label);
 };

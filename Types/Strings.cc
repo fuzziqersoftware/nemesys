@@ -1,6 +1,9 @@
 #include "Strings.hh"
 
+#include <inttypes.h>
 #include <stdlib.h>
+
+#include <phosg/Strings.hh>
 
 using namespace std;
 
@@ -49,9 +52,9 @@ size_t bytes_length(const BytesObject* s) {
   return s->count;
 }
 
-bool bytes_contains(const BytesObject* s, const BytesObject* other) {
-  return memmem(s->data, s->count * sizeof(uint8_t),
-      other->data, other->count * sizeof(uint8_t));
+bool bytes_contains(const BytesObject* haystack, const BytesObject* needle) {
+  return memmem(haystack->data, haystack->count * sizeof(uint8_t),
+      needle->data, needle->count * sizeof(uint8_t));
 }
 
 
@@ -99,7 +102,7 @@ size_t unicode_length(const UnicodeObject* s) {
   return s->count;
 }
 
-bool unicode_contains(const UnicodeObject* s, const UnicodeObject* other) {
-  return memmem(s->data, s->count * sizeof(wchar_t),
-      other->data, other->count * sizeof(wchar_t));
+bool unicode_contains(const UnicodeObject* haystack, const UnicodeObject* needle) {
+  return memmem(haystack->data, haystack->count * sizeof(wchar_t),
+      needle->data, needle->count * sizeof(wchar_t));
 }

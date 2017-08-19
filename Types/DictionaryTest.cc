@@ -53,14 +53,13 @@ void verify_state(
   }
 
   auto missing_elements = expected;
-  auto item = dictionary_first_item(d);
-  while (item.occupied) {
+  DictionaryObject::SlotContents item;
+  while (dictionary_next_item(d, &item)) {
     BytesObject* k = reinterpret_cast<BytesObject*>(item.key);
     auto missing_it = missing_elements.find(k);
     expect_ne(missing_it, missing_elements.end());
     expect_eq(missing_it->second, item.value);
     missing_elements.erase(missing_it);
-    item = dictionary_next_item(d, item.key);
   }
   expect_eq(true, missing_elements.empty());
 

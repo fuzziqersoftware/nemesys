@@ -94,6 +94,7 @@ private:
 
   FunctionContext* target_function;
   int64_t target_split_id;
+  int64_t target_fragment_id;
 
   std::unordered_map<std::string, int64_t> variable_to_stack_offset;
 
@@ -130,10 +131,14 @@ private:
 
   ssize_t write_function_call_stack_prep(size_t arg_count);
   void write_function_call(const void* function,
+      const MemoryReference* function_loc,
       const std::vector<const MemoryReference>& args,
       ssize_t arg_stack_bytes = -1, Register return_register = Register::None);
+  void write_compiler_call(uint64_t num_args, ssize_t arg_stack_bytes = -1,
+      Register return_register = Register::None);
 
-  void write_destructor_call(const MemoryReference& mem, const Variable& type);
+  void write_add_reference(const MemoryReference& mem);
+  void write_delete_reference(const MemoryReference& mem, const Variable& type);
 
   void write_push(Register reg);
   void write_pop(Register reg);

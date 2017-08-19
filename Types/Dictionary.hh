@@ -29,6 +29,8 @@ struct DictionaryObject {
     void* value;
     bool occupied;
     bool is_subnode;
+
+    SlotContents();
   };
 
   struct Node {
@@ -53,7 +55,8 @@ struct DictionaryObject {
     const uint8_t* flags_array() const;
 
     SlotContents get_slot(uint16_t ch) const;
-    void set_slot(uint16_t ch, void* k, void* v, bool occupied, bool is_subnode);
+    void set_slot(uint16_t ch, void* k, void* v, bool occupied,
+        bool is_subnode);
 
     bool has_children() const;
   };
@@ -69,8 +72,6 @@ struct DictionaryObject {
   Traversal traverse(void* k, bool with_nodes) const;
 
   std::string structure_for_node(const Node* n) const;
-
-  SlotContents next_item(void* k, bool starting = false) const;
 };
 
 DictionaryObject* dictionary_new(DictionaryObject* d,
@@ -83,9 +84,8 @@ void dictionary_clear(DictionaryObject* d);
 
 bool dictionary_exists(const DictionaryObject* d, void* k);
 void* dictionary_at(const DictionaryObject* d, void* k);
-DictionaryObject::SlotContents dictionary_first_item(const DictionaryObject* d);
-DictionaryObject::SlotContents dictionary_next_item(const DictionaryObject* d,
-    void* k);
+bool dictionary_next_item(const DictionaryObject* d,
+    DictionaryObject::SlotContents* item);
 size_t dictionary_size(const DictionaryObject* d);
 size_t dictionary_node_size(const DictionaryObject* d);
 

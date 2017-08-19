@@ -195,6 +195,14 @@ static inline bool is_extension_register(Register r) {
 
 
 
+void AMD64Assembler::reset() {
+  this->name_to_label.clear();
+  this->labels.clear();
+  this->stream.clear();
+}
+
+
+
 void AMD64Assembler::write_label(const std::string& name) {
   this->labels.emplace_back(name, this->stream.size());
   if (!this->name_to_label.emplace(name, &this->labels.back()).second) {
@@ -1064,6 +1072,10 @@ void AMD64Assembler::write_setg(const MemoryReference& target) {
   this->write_rm(Operation::SETG, target, 0, OperandSize::Byte);
 }
 
+void AMD64Assembler::write_lock() {
+  this->write("\xF0");
+}
+
 
 
 void AMD64Assembler::write(const string& data) {
@@ -1472,6 +1484,9 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
           (opcode & 1) ? "jmp" : "call", !(opcode & 2), addr_to_label,
           next_label);
 
+    } else if (opcode == 0xF0) {
+      opcode_text = "lock";
+
     } else if ((opcode & 0xFE) == 0xF6) {
       if (!(opcode & 1)) {
         operand_size = OperandSize::Byte;
@@ -1631,12 +1646,20 @@ string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
   }
 
   if (op_name_table) {
-    if (op_name_table[subtype]) {
-      return string_printf("%-8s %s", op_name_table[subtype], mem_str.c_str());
-    } else if (opcode_name) {
-      return string_printf("%-8s %s", opcode_name, mem_str.c_str());
-    } else {
+    const char* name = op_name_table[subtype] ? op_name_table[subtype] : opcode_name;
+    if (!op_name_table[subtype]) {
       return "<<unknown>>";
+    }
+    if (mem_str[0] == '[') {
+      static const unordered_map<OperandSize, const char*> size_names({
+          {OperandSize::Byte, "byte"},
+          {OperandSize::Word, "word"},
+          {OperandSize::DoubleWord, "dword"},
+          {OperandSize::QuadWord, "qword"}});
+      return string_printf("%-8s %s ptr %s", name, size_names.at(operand_size),
+          mem_str.c_str());
+    } else {
+      return string_printf("%-8s %s", name, mem_str.c_str());
     }
   }
 

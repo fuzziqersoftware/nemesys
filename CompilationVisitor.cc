@@ -52,8 +52,8 @@ using namespace std;
 // R11 = caller = temp values
 // R12 = callee = unused
 // R13 = callee = global space pointer
-// R14 = callee = built-in function array pointer
-// R15 = callee = unused
+// R14 = callee = exception block pointer
+// R15 = callee = active exception
 //
 // globals are referenced by offsets from r13. each module has a
 // statically-assigned space above r13, and should read/write globals with
@@ -225,7 +225,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         this->as.write_mov(this->target_register, 1);
       }
 
-      this->write_destructor_call(this->target_register, this->current_type);
+      this->write_delete_reference(this->target_register, this->current_type);
       this->current_type = Variable(ValueType::Bool);
       break;
 
@@ -299,7 +299,7 @@ void CompilationVisitor::write_truth_value_test(Register reg,
     case ValueType::Dict: {
       // we have to use a register for this
       Register size_reg = this->available_register();
-      this->as.write_mov(MemoryReference(size_reg), MemoryReference(reg, 0x08));
+      this->as.write_mov(MemoryReference(size_reg), MemoryReference(reg, 0x10));
       this->as.write_test(MemoryReference(size_reg), MemoryReference(size_reg));
       break;
     }
@@ -412,9 +412,12 @@ void CompilationVisitor::visit(BinaryOperation* a) {
            (right_type.type == ValueType::Bytes)) ||
           ((left_type.type == ValueType::Unicode) &&
            (right_type.type == ValueType::Unicode))) {
-        this->write_function_call(reinterpret_cast<const void*>(&unicode_contains),
-            {MemoryReference(Register::RSP, 8),
-              MemoryReference(this->target_register)}, -1,
+        const void* target_function = (left_type.type == ValueType::Bytes) ?
+            reinterpret_cast<const void*>(&bytes_contains) :
+            reinterpret_cast<const void*>(&unicode_contains);
+        this->write_function_call(target_function,
+            NULL, {MemoryReference(this->target_register),
+              MemoryReference(Register::RSP, 8)}, -1,
             this->target_register);
       } else {
         // TODO
@@ -496,14 +499,14 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       if ((left_type.type == ValueType::Bytes) &&
           (right_type.type == ValueType::Bytes)) {
         this->write_function_call(reinterpret_cast<const void*>(&bytes_concat),
-            {MemoryReference(Register::RSP, 8),
+            NULL, {MemoryReference(Register::RSP, 8),
               MemoryReference(this->target_register)}, -1,
             this->target_register);
         break;
       } else if ((left_type.type == ValueType::Unicode) &&
                  (right_type.type == ValueType::Unicode)) {
         this->write_function_call(reinterpret_cast<const void*>(&unicode_concat),
-            {MemoryReference(Register::RSP, 8),
+            NULL, {MemoryReference(Register::RSP, 8),
               MemoryReference(this->target_register)}, -1,
             this->target_register);
         break;
@@ -555,9 +558,9 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
   // destroy the temp values
   this->as.write_label(string_printf("__BinaryOperation_%p_destroy_left", a));
-  this->write_destructor_call(MemoryReference(Register::RSP, 8), left_type);
+  this->write_delete_reference(MemoryReference(Register::RSP, 8), left_type);
   this->as.write_label(string_printf("__BinaryOperation_%p_destroy_right", a));
-  this->write_destructor_call(MemoryReference(Register::RSP, 16), right_type);
+  this->write_delete_reference(MemoryReference(Register::RSP, 16), right_type);
 
   // now load the result again and clean up the stack
   this->as.write_mov(MemoryReference(this->target_register),
@@ -798,7 +801,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
     this->as.write_label(string_printf("__FunctionCall_%p_call_fragment_%" PRId64 "_%" PRId64 "_%s",
           a, a->callee_function_id, fragment_id, arg_signature.c_str()));
     // TODO: deal with return value somehow
-    this->write_function_call(fragment.compiled, {}, arg_stack_bytes,
+    this->write_function_call(fragment.compiled, NULL, {}, arg_stack_bytes,
         this->target_register);
 
     this->current_type = fragment.return_type;
@@ -848,8 +851,7 @@ void CompilationVisitor::visit(BytesConstant* a) {
 
   const BytesObject* o = this->global->get_or_create_constant(a->value);
   this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
-  this->write_function_call(reinterpret_cast<const void*>(add_reference), {},
-      this->write_function_call_stack_prep(1), this->target_register);
+  this->write_add_reference(MemoryReference(Register::RDI, 0));
 
   this->write_pop_reserved_registers(available);
 
@@ -862,9 +864,8 @@ void CompilationVisitor::visit(UnicodeConstant* a) {
   int64_t available = this->write_push_reserved_registers();
 
   const UnicodeObject* o = this->global->get_or_create_constant(a->value);
-  this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
-  this->write_function_call(reinterpret_cast<const void*>(add_reference), {},
-      this->write_function_call_stack_prep(1), this->target_register);
+  this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(o));
+  this->write_add_reference(MemoryReference(this->target_register, 0));
 
   this->write_pop_reserved_registers(available);
 
@@ -900,8 +901,12 @@ void CompilationVisitor::visit(VariableLookup* a) {
   // for globals, use [r13 + slot + module_base]; for locals [rbp + slot]
   MemoryReference mem(loc.is_global ? Register::R13 : Register::RBP,
       loc.offset + (loc.is_global ? this->module->global_base_offset : 0));
-  this->write_function_call(reinterpret_cast<const void*>(&add_reference),
-      {mem}, -1, this->target_register);
+
+  // if this is an object, add a reference to it; otherwise just load it
+  this->as.write_mov(MemoryReference(this->target_register), mem);
+  if (type_has_refcount(loc.type.type)) {
+    this->write_add_reference(MemoryReference(this->target_register, 0));
+  }
 
   this->current_type = loc.type;
 }
@@ -956,20 +961,31 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   // have to treat it like a function, but it has no local variables (everything
   // it writes is global, so based on R13, not RSP). the global pointer is
   // passed as an argument (RDI) instead of already being in R13, so we move it
-  // into place.
+  // into place. it returns the active exception object (NULL means success).
   this->write_push(Register::RBP);
   this->as.write_mov(MemoryReference(Register::RBP),
       MemoryReference(Register::RSP));
+  this->write_push(Register::R12);
+  this->as.write_mov(MemoryReference(Register::R12), 0);
   this->write_push(Register::R13);
   this->as.write_mov(MemoryReference(Register::R13),
       MemoryReference(Register::RDI));
+  this->write_push(Register::R14);
+  this->as.write_mov(MemoryReference(Register::R14), 0);
+  this->write_push(Register::R15);
+  this->as.write_mov(MemoryReference(Register::R15), 0);
 
   // generate the function's code
   this->RecursiveASTVisitor::visit(a);
 
   // hooray we're done
   this->as.write_label(string_printf("__ModuleStatement_%p_return", a));
+  this->as.write_mov(MemoryReference(Register::RAX),
+      MemoryReference(Register::R15));
+  this->write_pop(Register::R15);
+  this->write_pop(Register::R14);
   this->write_pop(Register::R13);
+  this->write_pop(Register::R12);
   this->write_pop(Register::RBP);
 
   if (this->stack_bytes_used != 8) {
@@ -1309,16 +1325,14 @@ void CompilationVisitor::write_code_for_call_arg(const Variable& value,
     case ValueType::Bytes: {
       const BytesObject* o = this->global->get_or_create_constant(*value.bytes_value);
       this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
-      this->write_function_call(reinterpret_cast<const void*>(&add_reference),
-          {}, this->write_function_call_stack_prep(1), this->target_register);
+      this->write_add_reference(MemoryReference(Register::RDI, 0));
       break;
     }
 
     case ValueType::Unicode: {
       const UnicodeObject* o = this->global->get_or_create_constant(*value.unicode_value);
       this->as.write_mov(Register::RDI, reinterpret_cast<int64_t>(o));
-      this->write_function_call(reinterpret_cast<const void*>(&add_reference),
-          {}, this->write_function_call_stack_prep(1), this->target_register);
+      this->write_add_reference(MemoryReference(Register::RDI, 0));
       break;
     }
 
@@ -1360,6 +1374,7 @@ ssize_t CompilationVisitor::write_function_call_stack_prep(size_t arg_count) {
 }
 
 void CompilationVisitor::write_function_call(const void* function,
+    const MemoryReference* function_loc,
     const std::vector<const MemoryReference>& args, ssize_t arg_stack_bytes,
     Register return_register) {
 
@@ -1444,8 +1459,14 @@ void CompilationVisitor::write_function_call(const void* function,
   }
 
   // finally, call the function
-  this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(function));
-  this->as.write_call(MemoryReference(Register::RAX));
+  if (function) {
+    this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(function));
+    this->as.write_call(MemoryReference(Register::RAX));
+  } else if (function_loc) {
+    this->as.write_call(*function_loc);
+  } else {
+    throw compile_error("can\'t generate call to no function", this->file_offset);
+  }
 
   // put the return value into the target register
   if ((return_register != Register::None) &&
@@ -1460,46 +1481,33 @@ void CompilationVisitor::write_function_call(const void* function,
   }
 }
 
-void CompilationVisitor::write_destructor_call(const MemoryReference& mem,
+void CompilationVisitor::write_add_reference(const MemoryReference& mem) {
+  this->as.write_lock();
+  this->as.write_inc(mem);
+}
+
+void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
     const Variable& type) {
-  switch (type.type) {
-    case ValueType::Indeterminate:
-      throw compile_error("can\'t call destructor for Indeterminate value", this->file_offset);
+  if (type.type == ValueType::Indeterminate) {
+    throw compile_error("can\'t call destructor for Indeterminate value", this->file_offset);
+  }
 
-    // these types have a trivial destructor - nothing needs to be done
-    case ValueType::None:
-    case ValueType::Bool:
-    case ValueType::Int:
-    case ValueType::Float:
-    // these types do not have refcounts and cannot be destroyed
-    case ValueType::Function:
-    case ValueType::Class:
-    case ValueType::Module:
-      break;
+  if (type_has_refcount(type.type)) {
+    static uint64_t skip_label_id = 0;
+    Register r = this->available_register();
+    string skip_label = string_printf("__delete_reference_skip_%" PRIu64,
+        skip_label_id++);
 
-    case ValueType::Bytes:
-    case ValueType::Unicode:
-      // these types use basic_remove_reference
-      // TODO: call the destructor from the object's header instead
-      this->write_function_call(
-          reinterpret_cast<const void*>(&delete_reference), {mem});
-      break;
+    if (mem.field_size || (r != mem.base_register)) {
+      this->as.write_mov(MemoryReference(r), mem);
+    }
+    this->as.write_lock();
+    this->as.write_dec(MemoryReference(r, 0));
+    this->as.write_jnz(skip_label);
 
-    case ValueType::List:
-      throw compile_error("destructor call not yet implemented", this->file_offset);
-      break;
-
-    case ValueType::Tuple:
-      throw compile_error("destructor call not yet implemented", this->file_offset);
-      break;
-
-    case ValueType::Set:
-      throw compile_error("destructor call not yet implemented", this->file_offset);
-      break;
-
-    case ValueType::Dict:
-      throw compile_error("destructor call not yet implemented", this->file_offset);
-      break;
+    MemoryReference function_loc(r, 8);
+    this->write_function_call(NULL, &function_loc, {MemoryReference(r)});
+    this->as.write_label(skip_label);
   }
 }
 

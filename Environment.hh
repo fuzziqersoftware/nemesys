@@ -90,6 +90,8 @@ namespace std {
   };
 }
 
+bool type_has_refcount(ValueType type);
+
 std::string type_signature_for_variables(const std::vector<Variable>& vars);
 
 Variable execute_unary_operator(UnaryOperator oper, const Variable& var);

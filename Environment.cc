@@ -424,6 +424,18 @@ bool Variable::operator!=(const Variable& other) const {
 
 
 
+bool type_has_refcount(ValueType type) {
+  return (type != ValueType::Indeterminate) &&
+         (type != ValueType::None) &&
+         (type != ValueType::Bool) &&
+         (type != ValueType::Int) &&
+         (type != ValueType::Float) &&
+         (type != ValueType::Function) &&
+         (type != ValueType::Module);
+}
+
+
+
 std::string type_signature_for_variables(const vector<Variable>& vars) {
   string ret;
   for (const Variable& var : vars) {
