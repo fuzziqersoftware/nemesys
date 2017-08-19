@@ -171,6 +171,8 @@ const char* name_for_register(Register r, OperandSize size) {
 }
 
 
+MemoryReference::MemoryReference() : base_register(Register::None),
+    index_register(Register::None), field_size(0), offset(0) { }
 MemoryReference::MemoryReference(Register base_register, int64_t offset,
     Register index_register, uint8_t field_size) : base_register(base_register),
     index_register(index_register), field_size(field_size), offset(offset) { }
@@ -1330,6 +1332,16 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
         opcode_text = string_printf("push     %s", name_for_register(reg));
       }
 
+    } else if (opcode == 0x6A) {
+      if (offset >= size) {
+        opcode_text += ", <<incomplete>>";
+      } else {
+        bool negative = data[offset] < 0;
+        opcode_text = string_printf("push     %s0x%02X",
+            negative ? "-" : "", negative ? data[offset] : -data[offset]);
+        offset += 1;
+      }
+
     } else if ((opcode & 0xF0) == 0x70) {
       if (offset >= size) {
         opcode_text = "<<incomplete>>";
@@ -1400,7 +1412,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
               *reinterpret_cast<const uint32_t*>(&data[offset]));
           offset += 4;
         }
-      } else if (operand_size == OperandSize::QuadWord) {
+      } else if (operand_size == OperandSize::Word) {
         if (offset >= size - 1) {
           opcode_text = string_printf("movabs   %s, <<incomplete>>", reg_name.c_str());
         } else {
@@ -1408,7 +1420,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
               *reinterpret_cast<const uint16_t*>(&data[offset]));
           offset += 2;
         }
-      } else if (operand_size == OperandSize::QuadWord) {
+      } else if (operand_size == OperandSize::Byte) {
         if (offset >= size) {
           opcode_text = string_printf("movabs   %s, <<incomplete>>", reg_name.c_str());
         } else {
@@ -1462,7 +1474,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
               *reinterpret_cast<const uint32_t*>(&data[offset]));
           offset += 4;
         }
-      } else if (operand_size == OperandSize::QuadWord) {
+      } else if (operand_size == OperandSize::Word) {
         if (offset >= size - 1) {
           opcode_text += ", <<incomplete>>";
         } else {
@@ -1470,7 +1482,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
               *reinterpret_cast<const uint16_t*>(&data[offset]));
           offset += 2;
         }
-      } else if (operand_size == OperandSize::QuadWord) {
+      } else if (operand_size == OperandSize::Byte) {
         if (offset >= size) {
           opcode_text += ", <<incomplete>>";
         } else {

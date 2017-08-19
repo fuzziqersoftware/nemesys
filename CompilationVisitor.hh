@@ -19,11 +19,14 @@
 
 class CompilationVisitor : public RecursiveASTVisitor {
 public:
+  // note: local_overrides is the argument types
   CompilationVisitor(GlobalAnalysis* global, ModuleAnalysis* module,
-      int64_t target_function_id = 0, int64_t target_split_id = 0);
+      int64_t target_function_id = 0, int64_t target_split_id = 0,
+      const std::unordered_map<std::string, Variable>* local_overrides = NULL);
   ~CompilationVisitor() = default;
 
   AMD64Assembler& assembler();
+  const std::unordered_set<Variable>& return_types();
 
   using RecursiveASTVisitor::visit;
 
@@ -91,12 +94,16 @@ private:
   // environment
   GlobalAnalysis* global;
   ModuleAnalysis* module;
+  std::unordered_map<std::string, Variable> local_overrides;
 
+  // targeting
   FunctionContext* target_function;
   int64_t target_split_id;
   int64_t target_fragment_id;
-
   std::unordered_map<std::string, int64_t> variable_to_stack_offset;
+
+  // output values
+  std::unordered_set<Variable> function_return_types;
 
   // compilation state
   int64_t available_registers; // bit mask; check for (1 << register)
@@ -104,9 +111,11 @@ private:
   int64_t stack_bytes_used;
 
   struct VariableLocation {
+    std::string name;
     int64_t offset;
     bool is_global;
     Variable type;
+    MemoryReference mem;
   };
   VariableLocation lvalue_target;
   Variable current_type;
@@ -139,6 +148,8 @@ private:
   void write_delete_reference(const MemoryReference& mem, const Variable& type);
 
   void write_push(Register reg);
+  void write_push(const MemoryReference& mem);
+  void write_push(int64_t value);
   void write_pop(Register reg);
   void adjust_stack(ssize_t bytes);
 

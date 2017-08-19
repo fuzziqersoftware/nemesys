@@ -83,14 +83,39 @@ static const int64_t default_available_registers =
 
 
 CompilationVisitor::CompilationVisitor(GlobalAnalysis* global,
-    ModuleAnalysis* module, int64_t target_function_id, int64_t target_split_id)
-    : file_offset(-1), global(global), module(module),
+    ModuleAnalysis* module, int64_t target_function_id, int64_t target_split_id,
+    const unordered_map<string, Variable>* local_overrides) : file_offset(-1),
+    global(global), module(module),
     target_function(this->global->context_for_function(target_function_id)),
     target_split_id(target_split_id),
-    available_registers(default_available_registers), stack_bytes_used(0) { }
+    available_registers(default_available_registers), stack_bytes_used(0) {
+
+  if (target_function_id) {
+
+    // sanity check
+    if (!this->target_function) {
+      throw compile_error(string_printf("function %" PRId64 " apparently does not exist", target_function_id));
+    }
+    if (!local_overrides) {
+      throw compile_error("no local overrides given to function call");
+    }
+    this->local_overrides = *local_overrides;
+
+    // make sure everything in local_overrides actually refers to a local
+    for (const auto& it : this->local_overrides) {
+      if (!this->target_function->locals.count(it.first)) {
+        throw compile_error(string_printf("argument %s in function %" PRId64 " overrides a nonlocal variable", it.first.c_str(), target_function_id));
+      }
+    }
+  }
+}
 
 AMD64Assembler& CompilationVisitor::assembler() {
   return this->as;
+}
+
+const unordered_set<Variable>& CompilationVisitor::return_types() {
+  return this->function_return_types;
 }
 
 
@@ -707,6 +732,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
   const unordered_map<string, shared_ptr<Expression>> keyword_call_args = a->kwargs;
 
   struct ArgumentValue {
+    string name;
     shared_ptr<Expression> passed_value;
     Variable default_value; // Indeterminate for positional args
     Variable type;
@@ -732,6 +758,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
     }
 
     arg_values.emplace_back();
+    arg_values.back().name = callee_arg.name;
     arg_values.back().passed_value = call_arg;
     arg_values.back().default_value = Variable(ValueType::Indeterminate);
   }
@@ -824,39 +851,63 @@ void CompilationVisitor::visit(FunctionCall* a) {
         this->available_registers, default_available_registers), this->file_offset);
   }
 
-  // figure out which fragment to call. if a fragment exists that has this
-  // signature, use it; otherwise, generate a call to the compiler instead
+  // figure out which fragment to call
   vector<Variable> arg_types;
+  unordered_map<string, Variable> callee_local_overrides;
   for (const auto& arg : arg_values) {
     arg_types.emplace_back(arg.type);
+    callee_local_overrides.emplace(arg.name, arg.type);
   }
-  string arg_signature = type_signature_for_variables(arg_types);
+
+  // get the argument type signature
+  string arg_signature;
   try {
-    int64_t fragment_id = callee_context->arg_signature_to_fragment_id.at(arg_signature);
-    const auto& fragment = callee_context->fragments.at(fragment_id);
+    arg_signature = type_signature_for_variables(arg_types);
+  } catch (const invalid_argument&) {
+    throw compile_error("can\'t generate argument signature for function call", this->file_offset);
+  }
 
-    this->as.write_label(string_printf("__FunctionCall_%p_call_fragment_%" PRId64 "_%" PRId64 "_%s",
-          a, a->callee_function_id, fragment_id, arg_signature.c_str()));
-
-    // call the function
-    this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(fragment.compiled));
-    this->as.write_call(MemoryReference(Register::RAX));
-
-    // put the return value into the target register
-    if (this->target_register != Register::RAX) {
-      this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
-      this->as.write_mov(MemoryReference(this->target_register),
-          MemoryReference(Register::RAX));
+  // generate a fragment id if necessary
+  int64_t fragment_id;
+  try {
+    fragment_id = callee_context->arg_signature_to_fragment_id.at(arg_signature);
+  } catch (const std::out_of_range& e) {
+    // built-in functions can't be recompiled
+    if (!callee_context->module) {
+      throw compile_error(string_printf("built-in fragment %" PRId64 "+%s does not exist",
+          a->callee_function_id, arg_signature.c_str()), this->file_offset);
     }
 
-    this->current_type = fragment.return_type;
-
-  } catch (const std::out_of_range& e) {
-    // the fragment doesn't exist. we won't build it just yet; we'll generate a
-    // call to the compiler that will build it later
-    // TODO
-    throw compile_error("referenced fragment does not exist", this->file_offset);
+    fragment_id = callee_context->arg_signature_to_fragment_id.emplace(
+        arg_signature, callee_context->fragments.size()).first->second;
   }
+
+  // generate the fragment if necessary
+  const FunctionContext::Fragment* fragment;
+  try {
+    fragment = &callee_context->fragments.at(fragment_id);
+  } catch (const std::out_of_range& e) {
+    // o noez - it doesn't exist! try to compile it
+    auto new_fragment = this->global->compile_scope(callee_context->module,
+        callee_context, &callee_local_overrides);
+    fragment = &callee_context->fragments.emplace(fragment_id, move(new_fragment)).first->second;
+  }
+
+  this->as.write_label(string_printf("__FunctionCall_%p_call_fragment_%" PRId64 "_%" PRId64 "_%s",
+      a, a->callee_function_id, fragment_id, arg_signature.c_str()));
+
+  // call the fragment
+  this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(fragment->compiled));
+  this->as.write_call(MemoryReference(Register::RAX));
+
+  // put the return value into the target register
+  if (this->target_register != Register::RAX) {
+    this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
+    this->as.write_mov(MemoryReference(this->target_register),
+        MemoryReference(Register::RAX));
+  }
+
+  this->current_type = fragment->return_type;
 
   // note: we don't have to destroy the function arguments; we passed the
   // references that we generated directly into the function and it's
@@ -946,12 +997,8 @@ void CompilationVisitor::visit(VariableLookup* a) {
 
   VariableLocation loc = this->location_for_variable(a->name);
 
-  // for globals, use [r13 + slot + module_base]; for locals [rbp + slot]
-  MemoryReference mem(loc.is_global ? Register::R13 : Register::RBP,
-      loc.offset + (loc.is_global ? this->module->global_base_offset : 0));
-
   // if this is an object, add a reference to it; otherwise just load it
-  this->as.write_mov(MemoryReference(this->target_register), mem);
+  this->as.write_mov(MemoryReference(this->target_register), loc.mem);
   if (type_has_refcount(loc.type.type)) {
     this->write_add_reference(MemoryReference(this->target_register, 0));
   }
@@ -1071,6 +1118,32 @@ void CompilationVisitor::visit(AssignmentStatement* a) {
   this->target_register = available_register();
   a->value->accept(this);
 
+  // typecheck the result. the type of a variable can only be changed if it's
+  // Indeterminate; otherwise it's an error
+  // TODO: deduplicate some of this with location_for_variable
+  Variable* target_variable = NULL;
+  if (this->lvalue_target.is_global) {
+    target_variable = &this->module->globals.at(this->lvalue_target.name);
+  } else {
+    try {
+      target_variable = &this->local_overrides.at(this->lvalue_target.name);
+    } catch (const out_of_range&) {
+      target_variable = &this->target_function->locals.at(this->lvalue_target.name);
+    }
+  }
+  if (!target_variable) {
+    throw compile_error("target variable not found");
+  }
+  if (target_variable->type == ValueType::Indeterminate) {
+    *target_variable = this->current_type;
+  } else if (*target_variable != this->lvalue_target.type) {
+    string target_type_str = target_variable->str();
+    string value_type_str = this->current_type.str();
+    throw compile_error(string_printf("variable %s changes type from %s to %s\n",
+        this->lvalue_target.name.c_str(), target_type_str.c_str(),
+        value_type_str.c_str()), this->file_offset);
+  }
+
   // now save the value to the appropriate slot. global slots are offsets from
   // R13; local slots are offsets from RSP
   this->as.write_label(string_printf("__AssignmentStatement_%p_write_value", a));
@@ -1143,11 +1216,20 @@ void CompilationVisitor::visit(ContinueStatement* a) {
 void CompilationVisitor::visit(ReturnStatement* a) {
   this->file_offset = a->file_offset;
 
+  if (!this->target_function) {
+    throw compile_error("return statement outside function definition", a->file_offset);
+  }
+
   // the value should be returned in rax
   this->target_register = Register::RAX;
   a->value->accept(this);
-  // TODO: generate return or jmp opcodes appropriately
-  throw compile_error("ReturnStatement not completely implemented", this->file_offset);
+
+  // record this return type
+  this->function_return_types.emplace(this->current_type);
+
+  // generate a jump to the end of the function (this is right before the
+  // relevant destructor calls)
+  this->as.write_jmp(string_printf("__FunctionCall_%p_destroy_locals", this->target_function->ast_root));
 }
 
 void CompilationVisitor::visit(RaiseStatement* a) {
@@ -1287,33 +1369,93 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
   // treat it as an assignment (of the function context to the local/global var)
   if (!this->target_function ||
       (this->target_function->id != a->function_id)) {
-    int64_t context = reinterpret_cast<int64_t>(
-        this->global->context_for_function(a->function_id));
-    if (!this->target_function) {
-      // TODO: globals should be static (and prepopulated) in the future so we
-      // don't have to generate code that just writes them once at import time
-      ssize_t target_offset = static_cast<ssize_t>(distance(
-          this->module->globals.begin(), this->module->globals.find(a->name))) * sizeof(int64_t);
-      this->as.write_mov(this->target_register, context);
-      this->as.write_mov(
-          MemoryReference(Register::R13, this->module->global_base_offset + target_offset),
-          MemoryReference(this->target_register));
 
-    } else {
-      ssize_t target_offset = -static_cast<ssize_t>(distance(
-          this->target_function->locals.begin(),
-          this->target_function->locals.find(a->name))) * sizeof(int64_t);
-      // TODO: use `mov [r+off], val` (not yet implemented in the assembler)
-      this->as.write_mov(this->target_register, context);
-      this->as.write_mov(
-          MemoryReference(Register::RBP, target_offset),
-          MemoryReference(this->target_register));
-    }
+    // if the function being declared is a closure, fail. if a function has a
+    // name in its globals set that isn't in the module's globals dict, then
+    // it's a closure
+    // TODO: actually implement this check
+
+    // write the function's context to the variable. note that Function-typed
+    // variables don't point directly to the code; this is necessary for us to
+    // figure out the right fragment at call time
+    auto* declared_function_context = this->global->context_for_function(a->function_id);
+    auto loc = this->location_for_variable(a->name);
+    this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(declared_function_context));
+    this->as.write_mov(loc.mem, MemoryReference(this->target_register));
     return;
   }
 
-  // TODO: we should generate lead-in and lead-out code here, then recur
-  throw compile_error("FunctionDefinition not yet implemented", this->file_offset);
+  // get ready to rumble
+  this->as.write_label(string_printf("__FunctionDefinition_%p_%s", a, a->name.c_str()));
+  this->stack_bytes_used = 8;
+
+  // lead-in (stack frame setup)
+  this->write_push(Register::RBP);
+  this->as.write_mov(MemoryReference(Register::RBP),
+      MemoryReference(Register::RSP));
+
+  // reserve space for locals and write args into the right places
+  {
+    unordered_map<string, Register> arg_to_register;
+    unordered_map<string, int64_t> arg_to_stack_offset;
+    for (size_t arg_index = 0; arg_index < this->target_function->args.size(); arg_index++) {
+      const auto& arg = this->target_function->args[arg_index];
+      if (arg_index < argument_register_order.size()) {
+        arg_to_register.emplace(arg.name, argument_register_order[arg_index]);
+      } else {
+        // add 2, since at this point we've called the function and pushed RBP
+        arg_to_stack_offset.emplace(arg.name,
+            sizeof(int64_t) * (arg_index - argument_register_order.size() + 2));
+      }
+    }
+
+    // set up the local space
+    for (const auto& local : this->target_function->locals) {
+      // if it's a register arg, push it drectly
+      try {
+        this->write_push(arg_to_register.at(local.first));
+        continue;
+      } catch (const out_of_range&) { }
+
+      // if it's a stack arg, push it via r/m push
+      try {
+        this->write_push(MemoryReference(Register::RBP, arg_to_stack_offset.at(local.first)));
+        continue;
+      } catch (const out_of_range&) { }
+
+      // else, initialize it to zero
+      this->write_push(0);
+    }
+  }
+
+  // generate the function's code
+  this->RecursiveASTVisitor::visit(a);
+
+  // call destructors for all the local variables that have refcounts
+  this->as.write_label(string_printf("__FunctionCall_%p_destroy_locals", this->target_function->ast_root));
+  for (auto it = this->target_function->locals.crbegin();
+       it != this->target_function->locals.crend(); it++) {
+    if (type_has_refcount(it->second.type)) {
+      this->write_pop(Register::RDI);
+      this->write_delete_reference(MemoryReference(Register::RDI), it->second);
+    } else {
+      // no destructor; just skip it
+      // TODO: we can coalesce these for great justice
+      this->adjust_stack(8);
+    }
+  }
+
+  // hooray we're done
+  this->as.write_label(string_printf("__FunctionDefinition_%p_return", a));
+  this->write_pop(Register::RBP);
+
+  if (this->stack_bytes_used != 8) {
+    throw compile_error(string_printf(
+        "stack misaligned at end of function (%" PRId64 " bytes used; should be 8)",
+        this->stack_bytes_used), this->file_offset);
+  }
+
+  this->as.write_ret();
 }
 
 void CompilationVisitor::visit(ClassDefinition* a) {
@@ -1529,6 +1671,16 @@ void CompilationVisitor::write_push(Register reg) {
   this->stack_bytes_used += 8;
 }
 
+void CompilationVisitor::write_push(const MemoryReference& mem) {
+  this->as.write_push(mem);
+  this->stack_bytes_used += 8;
+}
+
+void CompilationVisitor::write_push(int64_t value) {
+  this->as.write_push(value);
+  this->stack_bytes_used += 8;
+}
+
 void CompilationVisitor::write_pop(Register reg) {
   this->stack_bytes_used -= 8;
   this->as.write_pop(reg);
@@ -1546,9 +1698,10 @@ void CompilationVisitor::adjust_stack(ssize_t bytes) {
 CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
     const string& name) {
   VariableLocation loc;
+  loc.name = name;
 
   // if we're writing a global, use its global slot offset (from R13)
-  if (!this->target_function || this->target_function->globals.count(name)) {
+  if (!this->target_function || !this->target_function->locals.count(name)) {
     auto it = this->module->globals.find(name);
     if (it == this->module->globals.end()) {
       throw compile_error("nonexistent global: " + name, this->file_offset);
@@ -1557,6 +1710,8 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
     loc.offset = offset * sizeof(int64_t);
     loc.is_global = true;
     loc.type = it->second;
+    loc.mem = MemoryReference(Register::R13,
+        loc.offset + this->module->global_base_offset);
 
   // if we're writing a local, use its local slot offset (from RBP)
   } else {
@@ -1564,11 +1719,16 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
     if (it == this->target_function->locals.end()) {
       throw compile_error("nonexistent local: " + name, this->file_offset);
     }
-    ssize_t offset = distance(this->target_function->locals.begin(), it);
-    offset -= this->target_function->locals.size();
-    loc.offset = offset * sizeof(int64_t);
+    loc.offset = sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->target_function->locals.begin(), it)));
     loc.is_global = false;
-    loc.type = it->second;
+    loc.mem = MemoryReference(Register::RBP, loc.offset);
+
+    // use the argument type if given
+    try {
+      loc.type = this->local_overrides.at(name);
+    } catch (const out_of_range&) {
+      loc.type = it->second;
+    }
   }
 
   return loc;

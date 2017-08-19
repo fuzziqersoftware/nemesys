@@ -385,8 +385,11 @@ bool Variable::truth_value() const {
 
 
 bool Variable::operator==(const Variable& other) const {
-  if ((this->type != other.type) || !this->value_known || !other.value_known) {
+  if ((this->type != other.type) || (this->value_known != other.value_known)) {
     return false;
+  }
+  if (!this->value_known) {
+    return true; // types match, values are unknown
   }
   switch (this->type) {
     case ValueType::None:

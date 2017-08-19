@@ -102,7 +102,7 @@ void AnnotationVisitor::visit(GlobalStatement* a) {
     }
     // assume mutable if referenced explicitly in a global statement
     this->module->globals_mutable[name] = true;
-    context->globals.emplace(name);
+    context->explicit_globals.emplace(name);
   }
 
   this->RecursiveASTVisitor::visit(a);
@@ -266,7 +266,7 @@ void AnnotationVisitor::record_write(const string& name, size_t file_offset) {
 
   auto* context = this->current_function();
   if (context) {
-    if (context->globals.count(name)) {
+    if (context->explicit_globals.count(name)) {
       this->module->globals_mutable[name] = true;
     } else {
       context->locals.emplace(piecewise_construct, forward_as_tuple(name),

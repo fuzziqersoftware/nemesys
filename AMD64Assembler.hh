@@ -288,6 +288,7 @@ struct MemoryReference {
   int8_t field_size; // if 0, this is a register reference (not memory)
   int64_t offset;
 
+  MemoryReference();
   MemoryReference(Register base_register, int64_t offset,
       Register index_register = Register::None, uint8_t field_size = 1);
   MemoryReference(Register base_register);

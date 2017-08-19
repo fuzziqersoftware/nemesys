@@ -68,7 +68,7 @@ struct FunctionContext {
   std::string varkwargs_name; // Annotated
   int64_t num_splits; // Annotated
 
-  std::unordered_set<std::string> globals; // Annotated
+  std::unordered_set<std::string> explicit_globals; // Annotated
   std::map<std::string, Variable> locals; // keys Annotated, values Analyzed
   std::unordered_set<std::string> deleted_variables; // Analyzed
 
@@ -79,8 +79,11 @@ struct FunctionContext {
   struct Fragment {
     Variable return_type;
     const void* compiled;
+    std::multimap<size_t, std::string> compiled_labels;
 
     Fragment(Variable return_type, const void* compiled);
+    Fragment(Variable return_type, const void* compiled,
+        std::multimap<size_t, std::string>&& compiled_labels);
   };
 
   std::unordered_map<std::string, int64_t> arg_signature_to_fragment_id;
@@ -128,7 +131,7 @@ public:
   std::shared_ptr<SourceFile> source;
 
   // the following are valid in the Parsed phase and later:
-  std::shared_ptr<ModuleStatement> ast;
+  std::shared_ptr<ModuleStatement> ast_root;
 
   // the following are valid in the Annotated phase and later:
   // TODO: de-derpify this by merging these two maps into one
@@ -166,11 +169,15 @@ public:
   GlobalAnalysis();
   ~GlobalAnalysis();
 
-  void print_compile_error(FILE* stream, std::shared_ptr<ModuleAnalysis> module,
+  void print_compile_error(FILE* stream, const ModuleAnalysis* module,
       const compile_error& e);
 
   void advance_module_phase(std::shared_ptr<ModuleAnalysis> module,
       ModuleAnalysis::Phase phase);
+  FunctionContext::Fragment compile_scope(ModuleAnalysis* module,
+      FunctionContext* context = NULL,
+      const std::unordered_map<std::string, Variable>* local_overrides = NULL);
+
   std::shared_ptr<ModuleAnalysis> create_module(const std::string& module_name,
       const std::string* module_code = NULL);
   std::shared_ptr<ModuleAnalysis> get_module_at_phase(

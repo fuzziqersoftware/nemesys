@@ -101,6 +101,11 @@ compile_error::compile_error(const std::string& what, ssize_t where) :
 FunctionContext::Fragment::Fragment(Variable return_type, const void* compiled)
     : return_type(return_type), compiled(compiled) { }
 
+FunctionContext::Fragment::Fragment(Variable return_type, const void* compiled,
+    std::multimap<size_t, std::string>&& compiled_labels) :
+    return_type(return_type), compiled(compiled),
+    compiled_labels(move(compiled_labels)) { }
+
 FunctionContext::BuiltinFunctionFragmentDefinition::BuiltinFunctionFragmentDefinition(
     const std::vector<Variable>& arg_types, Variable return_type,
     const void* compiled) : arg_types(arg_types), return_type(return_type),
@@ -207,7 +212,7 @@ static void print_source_location(FILE* stream, shared_ptr<const SourceFile> f,
 }
 
 void GlobalAnalysis::print_compile_error(FILE* stream,
-    shared_ptr<ModuleAnalysis> module, const compile_error& e) {
+    const ModuleAnalysis* module, const compile_error& e) {
   if (e.where >= 0) {
     size_t line_num = module->source->line_number_of_offset(e.where);
     fprintf(stream, "[%s] failure at line %zu (offset %zd): %s\n",
@@ -248,10 +253,10 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           fputc('\n', stderr);
         }
         PythonParser parser(lexer);
-        module->ast = parser.get_root();
+        module->ast_root = parser.get_root();
         if (this->debug_flags & DebugFlag::Parsing) {
           fprintf(stderr, "[%s] ======== module parsed\n", module->name.c_str());
-          module->ast->print(stderr);
+          module->ast_root->print(stderr);
           fputc('\n', stderr);
         }
         module->phase = ModuleAnalysis::Phase::Parsed;
@@ -261,16 +266,16 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
       case ModuleAnalysis::Phase::Parsed: {
         AnnotationVisitor v(this, module.get());
         try {
-          module->ast->accept(&v);
+          module->ast_root->accept(&v);
         } catch (const compile_error& e) {
-          this->print_compile_error(stderr, module, e);
+          this->print_compile_error(stderr, module.get(), e);
           throw;
         }
         this->update_global_space();
 
         if (this->debug_flags & DebugFlag::Annotation) {
           fprintf(stderr, "[%s] ======== module annotated\n", module->name.c_str());
-          module->ast->print(stderr);
+          module->ast_root->print(stderr);
 
           fprintf(stderr, "# split count: %" PRIu64 "\n", module->num_splits);
 
@@ -294,15 +299,15 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
       case ModuleAnalysis::Phase::Annotated: {
         AnalysisVisitor v(this, module.get());
         try {
-          module->ast->accept(&v);
+          module->ast_root->accept(&v);
         } catch (const compile_error& e) {
-          this->print_compile_error(stderr, module, e);
+          this->print_compile_error(stderr, module.get(), e);
           throw;
         }
 
         if (this->debug_flags & DebugFlag::Analysis) {
           fprintf(stderr, "[%s] ======== module analyzed\n", module->name.c_str());
-          module->ast->print(stderr);
+          module->ast_root->print(stderr);
 
           int64_t offset = module->global_base_offset;
           for (const auto& it : module->globals) {
@@ -331,44 +336,9 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
       }
 
       case ModuleAnalysis::Phase::Analyzed: {
-        // compile the root scope
-        CompilationVisitor v(this, module.get());
-        try {
-          module->ast->accept(&v);
-        } catch (const compile_error& e) {
-          this->print_compile_error(stderr, module, e);
-
-          fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
-              module->name.c_str());
-          const string& compiled = v.assembler().assemble(
-              &module->compiled_labels, true);
-          print_data(stderr, compiled.data(), compiled.size());
-          string disassembly = AMD64Assembler::disassemble(compiled.data(),
-              compiled.size(), 0, &module->compiled_labels);
-          fprintf(stderr, "\n%s\n", disassembly.c_str());
-
-          throw;
-        }
-
-        if (this->debug_flags & DebugFlag::Compilation) {
-          fprintf(stderr, "[%s] ======== module root scope compiled\n\n",
-              module->name.c_str());
-        }
-
-        string compiled = v.assembler().assemble(&module->compiled_labels);
-        module->compiled = reinterpret_cast<void(*)(int64_t*)>(
-            this->code.append(compiled));
-
-        if (this->debug_flags & DebugFlag::Assembly) {
-          fprintf(stderr, "[%s] ======== module root scope assembled\n",
-              module->name.c_str());
-          uint64_t addr = reinterpret_cast<uint64_t>(module->compiled);
-          print_data(stderr, compiled.data(), compiled.size(), addr);
-          string disassembly = AMD64Assembler::disassemble(
-              reinterpret_cast<void*>(module->compiled), compiled.size(), addr,
-              &module->compiled_labels);
-          fprintf(stderr, "\n%s\n", disassembly.c_str());
-        }
+        auto fragment = this->compile_scope(module.get());
+        module->compiled = reinterpret_cast<void(*)(int64_t*)>(const_cast<void*>(fragment.compiled));
+        module->compiled_labels = move(fragment.compiled_labels);
 
         if (this->debug_flags & DebugFlag::Execution) {
           fprintf(stderr, "[%s] ======== executing root scope\n",
@@ -392,6 +362,84 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
   }
 
   this->in_progress.erase(module);
+}
+
+FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
+    FunctionContext* context,
+    const unordered_map<string, Variable>* local_overrides) {
+
+  // if a context is given, then the module must match it
+  if (context && (context->module != module)) {
+    throw compile_error("module context incorrect for function");
+  }
+
+  // if a context is not given, local_overrides must not be given either
+  if (!context && local_overrides) {
+    throw compile_error("local overrides cannot be given for module scope");
+  }
+
+  // create the compilation visitor
+  string scope_name;
+  multimap<size_t, string> compiled_labels;
+  unique_ptr<CompilationVisitor> v;
+  if (context) {
+    scope_name = string_printf("%s.%s+%" PRId64, module->name.c_str(),
+          context->name.c_str(), context->id);
+    v.reset(new CompilationVisitor(this, module, context->id, 0, local_overrides));
+  } else {
+    scope_name = module->name;
+    v.reset(new CompilationVisitor(this, module));
+  }
+
+  // compile it
+  try {
+    if (context) {
+      context->ast_root->accept(v.get());
+    } else {
+      module->ast_root->accept(v.get());
+    }
+
+  } catch (const compile_error& e) {
+    this->print_compile_error(stderr, module, e);
+
+    fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
+        scope_name.c_str());
+    const string& compiled = v->assembler().assemble(&compiled_labels, true);
+    print_data(stderr, compiled.data(), compiled.size());
+    string disassembly = AMD64Assembler::disassemble(compiled.data(),
+        compiled.size(), 0, &compiled_labels);
+    fprintf(stderr, "\n%s\n", disassembly.c_str());
+
+    throw;
+  }
+
+  if (this->debug_flags & DebugFlag::Compilation) {
+    fprintf(stderr, "[%s] ======== scope compiled\n\n",
+        scope_name.c_str());
+  }
+
+  string compiled = v->assembler().assemble(&compiled_labels);
+  const void* executable = this->code.append(compiled);
+
+  if (this->debug_flags & DebugFlag::Assembly) {
+    fprintf(stderr, "[%s] ======== scope assembled\n", scope_name.c_str());
+    uint64_t addr = reinterpret_cast<uint64_t>(executable);
+    print_data(stderr, compiled.data(), compiled.size(), addr);
+    string disassembly = AMD64Assembler::disassemble(compiled.data(),
+        compiled.size(), addr, &compiled_labels);
+    fprintf(stderr, "\n%s\n", disassembly.c_str());
+  }
+
+  Variable return_type(ValueType::None);
+  if (v->return_types().size() > 1) {
+    throw compile_error("scope has multiple return types");
+  }
+  if (!v->return_types().empty()) {
+    // there's exactly one return type
+    return_type = *v->return_types().begin();
+  }
+
+  return FunctionContext::Fragment(return_type, executable, move(compiled_labels));
 }
 
 shared_ptr<ModuleAnalysis> GlobalAnalysis::create_module(

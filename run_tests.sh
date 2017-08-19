@@ -12,5 +12,7 @@ echo "-- tests.repr"
 ./nemesys tests.repr | diff -U3 tests/repr.expected_output -
 echo "-- tests.integers"
 ./nemesys tests.integers | diff -U3 tests/integers.expected_output -
+echo "-- tests.functions"
+./nemesys tests.functions | diff -U3 tests/functions.expected_output -
 
 echo "-- all tests passed"

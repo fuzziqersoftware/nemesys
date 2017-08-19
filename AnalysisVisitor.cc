@@ -410,14 +410,10 @@ void AnalysisVisitor::visit(VariableLookup* a) {
   try {
     if (this->in_function_id) {
       auto* context = this->current_function();
-      if (context->globals.count(a->name)) {
+      try {
+        this->current_value = context->locals.at(a->name);
+      } catch (const out_of_range& e) {
         this->current_value = this->module->globals.at(a->name);
-      } else {
-        try {
-          this->current_value = context->locals.at(a->name);
-        } catch (const out_of_range& e) {
-          this->current_value = this->module->globals.at(a->name);
-        }
       }
     } else {
       // all lookups outside of a function are globals
@@ -945,7 +941,7 @@ FunctionContext* AnalysisVisitor::current_function() {
 void AnalysisVisitor::record_assignment(const std::string& name,
     const Variable& var, size_t file_offset) {
   auto* context = this->current_function();
-  bool is_global = !context || context->globals.count(name);
+  bool is_global = !context || !context->locals.count(name);
   bool is_mutable = !is_global || this->module->globals_mutable.at(name);
 
   if (is_global) {
