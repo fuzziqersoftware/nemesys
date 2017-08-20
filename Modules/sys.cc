@@ -14,10 +14,13 @@
 
 #include "../Analysis.hh"
 #include "../Types/Strings.hh"
+#include "../Types/List.hh"
 
 using namespace std;
 
 
+
+extern shared_ptr<GlobalAnalysis> global;
 
 static wstring __doc__ = L"Common built-in objects and functions.\n\
 \n\
@@ -75,6 +78,15 @@ static map<string, Variable> globals({
 });
 
 std::shared_ptr<ModuleAnalysis> sys_module(new ModuleAnalysis("sys", globals));
+
+void sys_set_argv(const vector<const char*>& sys_argv) {
+  vector<shared_ptr<Variable>> argv;
+  for (const char* arg : sys_argv) {
+    argv.emplace_back(new Variable(ValueType::Bytes,
+        reinterpret_cast<const uint8_t*>(arg)));
+  }
+  sys_module->globals.emplace("argv", Variable(ValueType::List, argv));
+}
 
 void sys_initialize() {
   // nothing to do here for now. in the future this is where we would create

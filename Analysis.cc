@@ -177,7 +177,7 @@ ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename,
       forward_as_tuple(ValueType::Unicode, unescape_unicode(name)));
   if (is_code) {
     this->globals.emplace(piecewise_construct, forward_as_tuple("__file__"),
-        forward_as_tuple(ValueType::Unicode, L"__imm__"));
+        forward_as_tuple(ValueType::Unicode, L"__main__"));
   } else {
     this->globals.emplace(piecewise_construct, forward_as_tuple("__file__"),
         forward_as_tuple(ValueType::Unicode, unescape_unicode(filename)));
@@ -482,7 +482,7 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
 }
 
 shared_ptr<ModuleAnalysis> GlobalAnalysis::get_or_create_module(
-    const string& module_name, const string* module_code) {
+    const string& module_name, const string& filename, bool filename_is_code) {
 
   // if it already exists, return it
   try {
@@ -499,10 +499,10 @@ shared_ptr<ModuleAnalysis> GlobalAnalysis::get_or_create_module(
   }
 
   // if code is given, create a module directly from that code
-  if (module_code) {
+  if (filename_is_code) {
     auto module = this->modules.emplace(piecewise_construct,
         forward_as_tuple(module_name),
-        forward_as_tuple(new ModuleAnalysis(module_name, *module_code, true))).first->second;
+        forward_as_tuple(new ModuleAnalysis(module_name, filename, true))).first->second;
     if (this->debug_flags & DebugFlag::Source) {
       fprintf(stderr, "[%s] added code from memory (%zu lines, %zu bytes)\n\n",
           module_name.c_str(), module->source->line_count(),
@@ -511,14 +511,19 @@ shared_ptr<ModuleAnalysis> GlobalAnalysis::get_or_create_module(
     return module;
   }
 
-    // else, create a module by loading a file
-  string filename = this->find_source_file(module_name);
+  // if no filename is given, search for the correct file and load it
+  string found_filename;
+  if (filename.empty()) {
+    found_filename = this->find_source_file(module_name);
+  } else {
+    found_filename = filename;
+  }
   auto module = this->modules.emplace(piecewise_construct,
       forward_as_tuple(module_name),
-      forward_as_tuple(new ModuleAnalysis(module_name, filename, false))).first->second;
+      forward_as_tuple(new ModuleAnalysis(module_name, found_filename, false))).first->second;
   if (this->debug_flags & DebugFlag::Source) {
     fprintf(stderr, "[%s] loaded %s (%zu lines, %zu bytes)\n\n",
-        module_name.c_str(), filename.c_str(), module->source->line_count(),
+        module_name.c_str(), found_filename.c_str(), module->source->line_count(),
         module->source->file_size());
   }
   return module;

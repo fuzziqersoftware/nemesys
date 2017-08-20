@@ -28,14 +28,14 @@ struct UnicodeObject {
   UnicodeObject();
 };
 
-BytesObject* bytes_new(BytesObject* s, const uint8_t* data, size_t count);
+BytesObject* bytes_new(BytesObject* s, const uint8_t* data, ssize_t count);
 BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b);
 uint8_t bytes_at(const BytesObject* s, size_t which);
 size_t bytes_length(const BytesObject* s);
 bool bytes_contains(const BytesObject* needle, const BytesObject* haystack);
 std::string bytes_to_cxx_string(const BytesObject* s);
 
-UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, size_t count);
+UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count);
 UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b);
 wchar_t unicode_at(const UnicodeObject* s, size_t which);
 size_t unicode_length(const UnicodeObject* s);

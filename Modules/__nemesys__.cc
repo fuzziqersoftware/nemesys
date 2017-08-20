@@ -21,7 +21,7 @@ using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
 
 
 
-static shared_ptr<GlobalAnalysis> global;
+extern shared_ptr<GlobalAnalysis> global;
 
 static wstring __doc__ = L"Built-in objects specific to nemesys.";
 
@@ -105,10 +105,6 @@ static BytesObject* module_source(UnicodeObject* module_name) {
 }
 
 
-
-void __nemesys___set_global(shared_ptr<GlobalAnalysis> new_global) {
-  global = new_global;
-}
 
 void __nemesys___initialize() {
   __nemesys___module->create_builtin_function("module_phase",

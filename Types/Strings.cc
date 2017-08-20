@@ -11,7 +11,10 @@ using namespace std;
 
 BytesObject::BytesObject() : basic(free), count(0) { }
 
-BytesObject* bytes_new(BytesObject* s, const uint8_t* data, size_t count) {
+BytesObject* bytes_new(BytesObject* s, const uint8_t* data, ssize_t count) {
+  if (count < 0) {
+    count = strlen(reinterpret_cast<const char*>(data));
+  }
   if (!s) {
     size_t size = sizeof(BytesObject) + sizeof(uint8_t) * (count + 1);
     s = reinterpret_cast<BytesObject*>(malloc(size));
@@ -65,7 +68,10 @@ string bytes_to_cxx_string(const BytesObject* s) {
 
 UnicodeObject::UnicodeObject() : basic(free), count(0) { }
 
-UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, size_t count) {
+UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count) {
+  if (count < 0) {
+    count = wcslen(data);
+  }
   if (!s) {
     size_t size = sizeof(UnicodeObject) + sizeof(wchar_t) * (count + 1);
     s = reinterpret_cast<UnicodeObject*>(malloc(size));

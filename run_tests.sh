@@ -3,20 +3,20 @@
 set -e
 
 echo "-- tests.hello_world_trivial"
-./nemesys tests.hello_world_trivial | diff -U3 tests/hello_world.expected_output -
+./nemesys tests/hello_world_trivial.py | diff -U3 tests/hello_world.expected_output -
 echo "-- tests.hello_world_combination"
-./nemesys tests.hello_world_combination | diff -U3 tests/hello_world.expected_output -
+./nemesys tests/hello_world_combination.py | diff -U3 tests/hello_world.expected_output -
 echo "-- tests.echo_once"
-echo 'Hello world!' | ./nemesys tests.echo_once | diff -U3 tests/hello_world.expected_output -
+echo 'Hello world!' | ./nemesys tests/echo_once.py | diff -U3 tests/hello_world.expected_output -
 echo "-- tests.repr"
-./nemesys tests.repr | diff -U3 tests/repr.expected_output -
+./nemesys tests/repr.py | diff -U3 tests/repr.expected_output -
 echo "-- tests.integers"
-./nemesys tests.integers | diff -U3 tests/integers.expected_output -
+./nemesys tests/integers.py | diff -U3 tests/integers.expected_output -
 echo "-- tests.functions"
-./nemesys tests.functions | diff -U3 tests/functions.expected_output -
+./nemesys tests/functions.py | diff -U3 tests/functions.expected_output -
 echo "-- tests.lists"
-./nemesys tests.lists | diff -U3 tests/lists.expected_output -
+./nemesys tests/lists.py | diff -U3 tests/lists.expected_output -
 echo "-- tests.loops"
-./nemesys tests.loops | diff -U3 tests/loops.expected_output -
+./nemesys tests/loops.py | diff -U3 tests/loops.expected_output -
 
 echo "-- all tests passed"

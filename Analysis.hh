@@ -192,7 +192,8 @@ public:
       const std::unordered_map<std::string, Variable>* local_overrides = NULL);
 
   std::shared_ptr<ModuleAnalysis> get_or_create_module(
-      const std::string& module_name, const std::string* module_code = NULL);
+      const std::string& module_name, const std::string& filename = "",
+      bool filename_is_code = false);
   std::shared_ptr<ModuleAnalysis> get_module_at_phase(
       const std::string& module_name, ModuleAnalysis::Phase phase);
   std::string find_source_file(const std::string& module_name);

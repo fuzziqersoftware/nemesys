@@ -10,7 +10,7 @@ using namespace std;
 
 
 SourceFile::SourceFile(const string& filename, bool is_data) :
-    original_filename(is_data ? "__imm__" : filename),
+    original_filename(is_data ? "<no_file>" : filename),
     contents(is_data ? filename : load_file(this->original_filename)) {
 
   // find the start offsets of all the lines
