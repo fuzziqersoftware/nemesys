@@ -16,65 +16,232 @@ using namespace std;
 
 
 
-static int64_t ipow(int64_t base, int64_t exponent) {
-  // TODO: implement log-time exponentiation
-  int64_t res = 1;
-  for (; exponent > 0; exponent--) {
-    res *= base;
+static vector<Variable> compute_list_extension_type(
+    const vector<shared_ptr<Variable>>& list_value) {
+  // lists must have an extension type! if it's empty, we can't know what the
+  // extension type is, so we'll make it Indeterminate for now
+  Variable extension_type = list_value.empty() ?
+      Variable() : list_value[0]->type_only();
+
+  // all items in the list must have the same type, but can be an extended type
+  for (const auto& it : list_value) {
+    if (extension_type != it->type_only()) {
+      throw invalid_argument("list contains multiple types");
+    }
   }
-  return res;
+
+  vector<Variable> ret;
+  ret.emplace_back(move(extension_type));
+  return ret;
+}
+
+static vector<Variable> compute_tuple_extension_type(
+    const vector<shared_ptr<Variable>>& tuple_value) {
+  // a tuple's extension types are the types of ALL of the elements
+  vector<Variable> ret;
+  for (const auto& it : tuple_value) {
+    ret.emplace_back(it->type_only());
+  }
+  return ret;
+}
+
+static vector<Variable> compute_set_extension_type(
+    const unordered_set<Variable>& set_value) {
+  // basically the same as for List
+
+  Variable extension_type = set_value.empty() ?
+      Variable() : set_value.begin()->type_only();
+  for (const auto& it : set_value) {
+    if (extension_type != it.type_only()) {
+      throw invalid_argument("set contains multiple types");
+    }
+  }
+
+  vector<Variable> ret;
+  ret.emplace_back(move(extension_type));
+  return ret;
+}
+
+static vector<Variable> compute_dict_extension_type(
+    const unordered_map<Variable, shared_ptr<Variable>>& dict_value) {
+  // basically the same as for List/Set, but we have a key and value type
+
+  Variable key_type = dict_value.empty() ?
+      Variable() : dict_value.begin()->first.type_only();
+  Variable value_type = dict_value.empty() ?
+      Variable() : dict_value.begin()->second->type_only();
+  for (const auto& it : dict_value) {
+    if (key_type != it.first.type_only()) {
+      throw invalid_argument("dict contains multiple key types");
+    }
+    if (value_type != it.second->type_only()) {
+      throw invalid_argument("dict contains multiple value types");
+    }
+  }
+
+  vector<Variable> ret;
+  ret.emplace_back(move(key_type));
+  ret.emplace_back(move(value_type));
+  return ret;
 }
 
 
 
+// Indeterminate
 Variable::Variable() : type(ValueType::Indeterminate), value_known(false) { }
+
+// any type, unknown value (except None, whose value is always known)
 Variable::Variable(ValueType type) : type(type),
     value_known(type == ValueType::None) { }
 
-Variable::Variable(bool bool_value) : type(ValueType::Bool),
-    value_known(true), int_value(bool_value) { }
-Variable::Variable(int64_t int_value) : type(ValueType::Int),
-    value_known(true), int_value(int_value) { }
-Variable::Variable(double float_value) : type(ValueType::Float),
-    value_known(true), float_value(float_value) { }
-Variable::Variable(const uint8_t* bytes_value, bool is_module) :
-    type(is_module ? ValueType::Module : ValueType::Bytes),
-    value_known(true), bytes_value(new string(reinterpret_cast<const char*>(bytes_value))) { }
-Variable::Variable(const uint8_t* bytes_value, size_t size, bool is_module) :
-    type(is_module ? ValueType::Module : ValueType::Bytes),
-    value_known(true), bytes_value(new string(reinterpret_cast<const char*>(bytes_value), size)) { }
-Variable::Variable(const string& bytes_value, bool is_module) :
-    type(is_module ? ValueType::Module : ValueType::Bytes),
-    value_known(true), bytes_value(new string(bytes_value)) { }
-Variable::Variable(string&& bytes_value, bool is_module) :
-    type(is_module ? ValueType::Module : ValueType::Bytes),
-    value_known(true), bytes_value(new string(move(bytes_value))) { }
-Variable::Variable(const wchar_t* unicode_value) : type(ValueType::Unicode),
-    value_known(true), unicode_value(new wstring(unicode_value)) { }
-Variable::Variable(const wchar_t* unicode_value, size_t size) : type(ValueType::Unicode),
-    value_known(true), unicode_value(new wstring(unicode_value, size)) { }
-Variable::Variable(const wstring& unicode_value) : type(ValueType::Unicode),
-    value_known(true), unicode_value(new wstring(unicode_value)) { }
-Variable::Variable(wstring&& unicode_value) : type(ValueType::Unicode),
-    value_known(true), unicode_value(new wstring(move(unicode_value))) { }
-Variable::Variable(const vector<shared_ptr<Variable>>& list_value, bool is_tuple) :
-    type(is_tuple ? ValueType::Tuple : ValueType::List),
-    value_known(true), list_value(new vector<shared_ptr<Variable>>(list_value)) { }
-Variable::Variable(vector<shared_ptr<Variable>>&& list_value, bool is_tuple) :
-    type(is_tuple ? ValueType::Tuple : ValueType::List),
-    value_known(true), list_value(new vector<shared_ptr<Variable>>(move(list_value))) { }
-Variable::Variable(const unordered_set<Variable>& set_value) : type(ValueType::Set),
-    value_known(true), set_value(new unordered_set<Variable>(set_value)) { }
-Variable::Variable(unordered_set<Variable>&& set_value) : type(ValueType::Set),
-    value_known(true), set_value(new unordered_set<Variable>(move(set_value))) { }
-Variable::Variable(const unordered_map<Variable, shared_ptr<Variable>>& dict_value) : type(ValueType::Dict),
-    value_known(true), dict_value(new unordered_map<Variable, shared_ptr<Variable>>(dict_value)) { }
-Variable::Variable(unordered_map<Variable, shared_ptr<Variable>>&& dict_value) : type(ValueType::Dict),
-    value_known(true), dict_value(new unordered_map<Variable, shared_ptr<Variable>>(move(dict_value))) { }
-Variable::Variable(int64_t function_or_class_id, bool is_class) :
-    type(is_class ? ValueType::Class : ValueType::Function),
-    value_known(true), function_id(function_or_class_id) { }
+// any extended type, unknown value (except None, whose value is always known)
+Variable::Variable(ValueType type, const vector<Variable>& extension_types) :
+    type(type), value_known(type == ValueType::None),
+    extension_types(extension_types) { }
+Variable::Variable(ValueType type, vector<Variable>&& extension_types) :
+    type(type), value_known(type == ValueType::None),
+    extension_types(move(extension_types)) { }
 
+// Bool
+Variable::Variable(ValueType type, bool bool_value) : type(type),
+    value_known(true), int_value(bool_value) {
+  if (this->type != ValueType::Bool) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+}
+
+// Int/Function/Class
+Variable::Variable(ValueType type, int64_t int_value) : type(type),
+    value_known(true), int_value(int_value) {
+  if ((this->type != ValueType::Int) &&
+      (this->type != ValueType::Function) &&
+      (this->type != ValueType::Class)) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+}
+
+// Float
+Variable::Variable(ValueType type, double float_value) : type(type),
+    value_known(true), float_value(float_value) {
+  if (this->type != ValueType::Float) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+}
+
+// Bytes/Module
+Variable::Variable(ValueType type, const uint8_t* bytes_value, size_t size) :
+    type(type), value_known(true),
+    bytes_value(new string(reinterpret_cast<const char*>(bytes_value), size)) {
+  if ((this->type != ValueType::Bytes) &&
+      (this->type != ValueType::Module)) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+}
+Variable::Variable(ValueType type, const uint8_t* bytes_value) :
+    Variable(type, bytes_value, strlen(reinterpret_cast<const char*>(bytes_value))) { }
+Variable::Variable(ValueType type, const string& bytes_value) : type(type),
+    value_known(true), bytes_value(new string(bytes_value)) {
+  if ((this->type != ValueType::Bytes) &&
+      (this->type != ValueType::Module)) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+}
+Variable::Variable(ValueType type, string&& bytes_value) : type(type),
+    value_known(true), bytes_value(new string(move(bytes_value))) {
+  if ((this->type != ValueType::Bytes) &&
+      (this->type != ValueType::Module)) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+}
+
+// Unicode
+Variable::Variable(ValueType type, const wchar_t* unicode_value, size_t size) :
+    type(type), value_known(true),
+    unicode_value(new wstring(unicode_value, size)) {
+  if (this->type != ValueType::Unicode) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+}
+Variable::Variable(ValueType type, const wchar_t* unicode_value) :
+    Variable(type, unicode_value, wcslen(unicode_value)) { }
+Variable::Variable(ValueType type, const wstring& unicode_value) : type(type),
+    value_known(true), unicode_value(new wstring(unicode_value)) {
+  if (this->type != ValueType::Unicode) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+}
+Variable::Variable(ValueType type, wstring&& unicode_value) : type(type),
+    value_known(true), unicode_value(new wstring(move(unicode_value))) {
+  if (this->type != ValueType::Unicode) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+}
+
+// List/Tuple
+Variable::Variable(ValueType type,
+    const vector<shared_ptr<Variable>>& list_value) : type(type),
+    value_known(true),
+    list_value(new vector<shared_ptr<Variable>>(list_value)) {
+  if ((this->type != ValueType::List) && (this->type != ValueType::Tuple)) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+  if (this->type == ValueType::Tuple) {
+    this->extension_types = compute_tuple_extension_type(*this->list_value);
+  } else {
+    this->extension_types = compute_list_extension_type(*this->list_value);
+  }
+}
+Variable::Variable(ValueType type, vector<shared_ptr<Variable>>&& list_value) :
+    type(type), value_known(true),
+    list_value(new vector<shared_ptr<Variable>>(move(list_value))) {
+  if ((this->type != ValueType::List) && (this->type != ValueType::Tuple)) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+  if (this->type == ValueType::Tuple) {
+    this->extension_types = compute_tuple_extension_type(*this->list_value);
+  } else {
+    this->extension_types = compute_list_extension_type(*this->list_value);
+  }
+}
+
+// Set
+Variable::Variable(ValueType type, const unordered_set<Variable>& set_value) :
+    type(type), value_known(true),
+    set_value(new unordered_set<Variable>(set_value)) {
+  if (this->type != ValueType::Set) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+  this->extension_types = compute_set_extension_type(*this->set_value);
+}
+Variable::Variable(ValueType type, unordered_set<Variable>&& set_value) :
+    type(type), value_known(true),
+    set_value(new unordered_set<Variable>(move(set_value))) {
+  if (this->type != ValueType::Set) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+  this->extension_types = compute_set_extension_type(*this->set_value);
+}
+
+// Dict
+Variable::Variable(ValueType type,
+    const unordered_map<Variable, shared_ptr<Variable>>& dict_value) :
+    type(type), value_known(true),
+    dict_value(new unordered_map<Variable, shared_ptr<Variable>>(dict_value)) {
+  if (this->type != ValueType::Dict) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+  this->extension_types = compute_dict_extension_type(*this->dict_value);
+}
+Variable::Variable(ValueType type, unordered_map<Variable, shared_ptr<Variable>>&& dict_value) :
+    type(type), value_known(true),
+    dict_value(new unordered_map<Variable, shared_ptr<Variable>>(move(dict_value))) {
+  if (this->type != ValueType::Dict) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
+  this->extension_types = compute_dict_extension_type(*this->dict_value);
+}
+
+// copy/move constructors
 Variable::Variable(const Variable& other) {
   *this = other;
 }
@@ -90,6 +257,7 @@ Variable& Variable::operator=(const Variable& other) {
 
   this->type = other.type;
   this->value_known = other.value_known;
+  this->extension_types = other.extension_types;
 
   if (this->value_known) {
     switch (this->type) {
@@ -139,6 +307,7 @@ Variable& Variable::operator=(Variable&& other) {
 
   this->type = other.type;
   this->value_known = other.value_known;
+  this->extension_types = move(other.extension_types);
 
   if (this->value_known) {
     switch (this->type) {
@@ -223,6 +392,12 @@ void Variable::clear_value() {
       delete this->dict_value;
       break;
   }
+}
+
+Variable Variable::type_only() const {
+  Variable ret = *this;
+  ret.clear_value();
+  return ret;
 }
 
 string Variable::str() const {
@@ -557,16 +732,16 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
       if (!var.value_known) {
         return Variable(ValueType::Bool); // also unknown, but it's a bool
       }
-      return Variable(!var.truth_value());
+      return Variable(ValueType::Bool, !var.truth_value());
 
     case UnaryOperator::Not: {
       // this operator only works on bools and ints
       if (var.type == ValueType::Bool) {
         if (var.value_known) {
           if (var.int_value) {
-            return Variable(static_cast<int64_t>(-2));
+            return Variable(ValueType::Int, static_cast<int64_t>(-2));
           } else {
-            return Variable(static_cast<int64_t>(-1));
+            return Variable(ValueType::Int, static_cast<int64_t>(-1));
           }
         } else {
           return Variable(ValueType::Int);
@@ -575,7 +750,7 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
 
       if (var.type != ValueType::Int) {
         if (var.value_known) {
-          return Variable(~var.int_value);
+          return Variable(ValueType::Int, ~var.int_value);
         } else {
           return Variable(ValueType::Int);
         }
@@ -595,9 +770,9 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
       if (var.type == ValueType::Bool) {
         if (var.value_known) {
           if (var.int_value) {
-            return Variable(static_cast<int64_t>(1));
+            return Variable(ValueType::Int, static_cast<int64_t>(1));
           } else {
-            return Variable(static_cast<int64_t>(0));
+            return Variable(ValueType::Int, static_cast<int64_t>(0));
           }
         } else {
           return Variable(ValueType::Int);
@@ -621,9 +796,9 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
       if (var.type == ValueType::Bool) {
         if (var.value_known) {
           if (var.int_value) {
-            return Variable(static_cast<int64_t>(-1));
+            return Variable(ValueType::Int, static_cast<int64_t>(-1));
           } else {
-            return Variable(static_cast<int64_t>(0));
+            return Variable(ValueType::Int, static_cast<int64_t>(0));
           }
         } else {
           return Variable(ValueType::Int);
@@ -632,14 +807,14 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
 
       if (var.type == ValueType::Int) {
         if (var.value_known) {
-          return Variable(-var.int_value);
+          return Variable(ValueType::Int, -var.int_value);
         } else {
           return Variable(ValueType::Int);
         }
       }
       if (var.type == ValueType::Float) {
         if (var.value_known) {
-          return Variable(-var.float_value);
+          return Variable(ValueType::Float, -var.float_value);
         } else {
           return Variable(ValueType::Float);
         }
@@ -712,10 +887,10 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
         case ValueType::Bool:
         case ValueType::Int: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
-            return Variable(left.int_value < right.int_value);
+            return Variable(ValueType::Bool, left.int_value < right.int_value);
           }
           if (right.type == ValueType::Float) {
-            return Variable(left.int_value < right.float_value);
+            return Variable(ValueType::Bool, left.int_value < right.float_value);
           }
 
           string left_str = left.str();
@@ -725,10 +900,10 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
         case ValueType::Float: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
-            return Variable(left.float_value < right.int_value);
+            return Variable(ValueType::Bool, left.float_value < right.int_value);
           }
           if (right.type == ValueType::Float) {
-            return Variable(left.float_value < right.float_value);
+            return Variable(ValueType::Bool, left.float_value < right.float_value);
           }
 
           string left_str = left.str();
@@ -738,7 +913,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
         case ValueType::Bytes: {
           if (right.type == ValueType::Bytes) {
-            return Variable(left.bytes_value < right.bytes_value);
+            return Variable(ValueType::Bool, left.bytes_value < right.bytes_value);
           }
 
           string left_str = left.str();
@@ -748,7 +923,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
         case ValueType::Unicode: {
           if (right.type == ValueType::Unicode) {
-            return Variable(left.unicode_value < right.unicode_value);
+            return Variable(ValueType::Bool, left.unicode_value < right.unicode_value);
           }
 
           string left_str = left.str();
@@ -763,25 +938,25 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             size_t right_len = right.list_value->size();
             for (size_t x = 0; x < min(left_len, right_len); x++) {
               Variable less_result = execute_binary_operator(
-                  BinaryOperator::LessThan, (*left.list_value)[x].get(),
-                  (*right.list_value)[x].get());
+                  BinaryOperator::LessThan, *(*left.list_value)[x],
+                  *(*right.list_value)[x]);
               if (!less_result.value_known) {
                 return Variable(ValueType::Bool);
               }
               if (less_result.int_value) {
-                return Variable(true);
+                return Variable(ValueType::Bool, true);
               }
               Variable greater_result = execute_binary_operator(
-                  BinaryOperator::GreaterThan, (*left.list_value)[x].get(),
-                  (*right.list_value)[x].get());
+                  BinaryOperator::GreaterThan, *(*left.list_value)[x],
+                  *(*right.list_value)[x]);
               if (!greater_result.value_known) {
                 return Variable(ValueType::Bool);
               }
               if (greater_result.int_value) {
-                return Variable(false);
+                return Variable(ValueType::Bool, false);
               }
             }
-            return Variable(left_len < right_len);
+            return Variable(ValueType::Bool, left_len < right_len);
           }
 
           string left_str = left.str();
@@ -816,55 +991,55 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
       if ((left.type == ValueType::Bool) || (left.type == ValueType::Int)) {
         if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
-          return Variable(left.int_value == right.int_value);
+          return Variable(ValueType::Bool, left.int_value == right.int_value);
         }
         if (right.type == ValueType::Float) {
-          return Variable(left.int_value == right.float_value);
+          return Variable(ValueType::Bool, left.int_value == right.float_value);
         }
-        return Variable(false);
+        return Variable(ValueType::Bool, false);
       }
 
       if (left.type == ValueType::Float) {
         if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
-          return Variable(left.float_value == right.int_value);
+          return Variable(ValueType::Bool, left.float_value == right.int_value);
         }
         if (right.type == ValueType::Float) {
-          return Variable(left.float_value == right.float_value);
+          return Variable(ValueType::Bool, left.float_value == right.float_value);
         }
-        return Variable(false);
+        return Variable(ValueType::Bool, false);
       }
 
       // for all non-numeric types, the types must match exactly for equality
       if (right.type != left.type) {
-        return Variable(false);
+        return Variable(ValueType::Bool, false);
       }
 
       switch (left.type) {
         case ValueType::Bytes:
-          return Variable(left.bytes_value == right.bytes_value);
+          return Variable(ValueType::Bool, left.bytes_value == right.bytes_value);
 
         case ValueType::Unicode:
-          return Variable(left.unicode_value == right.unicode_value);
+          return Variable(ValueType::Bool, left.unicode_value == right.unicode_value);
 
         case ValueType::List:
         case ValueType::Tuple: {
           size_t len = left.list_value->size();
           if (right.list_value->size() != len) {
-            return Variable(false);
+            return Variable(ValueType::Bool, false);
           }
 
           for (size_t x = 0; x < len; x++) {
             Variable equal_result = execute_binary_operator(
-                BinaryOperator::Equality, (*left.list_value)[x].get(),
-                (*right.list_value)[x].get());
+                BinaryOperator::Equality, *(*left.list_value)[x],
+                *(*right.list_value)[x]);
             if (!equal_result.value_known) {
               return Variable(ValueType::Bool);
             }
             if (!equal_result.int_value) {
-              return Variable(false);
+              return Variable(ValueType::Bool, false);
             }
           }
-          return Variable(true);
+          return Variable(ValueType::Bool, true);
         }
 
         default: {
@@ -910,12 +1085,13 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
           }
 
           if (left.value_known && left.bytes_value->empty()) {
-            return Variable(true);
+            return Variable(ValueType::Bool, true);
           }
           if (!left.value_known || !right.value_known) {
             return Variable(ValueType::Bool);
           }
-          return Variable(right.bytes_value->find(*left.bytes_value) != string::npos);
+          return Variable(ValueType::Bool,
+              right.bytes_value->find(*left.bytes_value) != string::npos);
 
         case ValueType::Unicode:
           if (left.type != ValueType::Unicode) {
@@ -925,17 +1101,18 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
           }
 
           if (left.value_known && left.unicode_value->empty()) {
-            return Variable(true);
+            return Variable(ValueType::Bool, true);
           }
           if (!left.value_known || !right.value_known) {
             return Variable(ValueType::Bool);
           }
-          return Variable(right.unicode_value->find(*left.unicode_value) != string::npos);
+          return Variable(ValueType::Bool,
+              right.unicode_value->find(*left.unicode_value) != string::npos);
 
         case ValueType::List:
         case ValueType::Tuple:
           if (right.value_known && right.list_value->empty()) {
-            return Variable(false);
+            return Variable(ValueType::Bool, false);
           }
           if (!left.value_known || !right.value_known) {
             return Variable(ValueType::Bool);
@@ -943,35 +1120,37 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
           for (const auto& item : *right.list_value) {
             Variable equal_result = execute_binary_operator(
-                BinaryOperator::Equality, left, item.get());
+                BinaryOperator::Equality, left, *item);
             if (!equal_result.value_known) {
               return Variable(ValueType::Bool);
             }
             if (equal_result.int_value) {
-              return Variable(true);
+              return Variable(ValueType::Bool, true);
             }
           }
-          return Variable(false);
+          return Variable(ValueType::Bool, false);
 
         case ValueType::Set:
           if (right.value_known && right.set_value->empty()) {
-            return Variable(false);
+            return Variable(ValueType::Bool, false);
           }
           if (!left.value_known || !right.value_known) {
             return Variable(ValueType::Bool);
           }
 
-          return Variable(static_cast<bool>(right.set_value->count(left)));
+          return Variable(ValueType::Bool,
+              static_cast<bool>(right.set_value->count(left)));
 
         case ValueType::Dict:
           if (right.value_known && right.dict_value->empty()) {
-            return Variable(false);
+            return Variable(ValueType::Bool, false);
           }
           if (!left.value_known || !right.value_known) {
             return Variable(ValueType::Bool);
           }
 
-          return Variable(static_cast<bool>(right.dict_value->count(left)));
+          return Variable(ValueType::Bool,
+              static_cast<bool>(right.dict_value->count(left)));
 
         default: {
           string left_str = left.str();
@@ -993,7 +1172,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
           for (const auto& item : *right.set_value) {
             result.emplace(item);
           }
-          return Variable(move(result));
+          return Variable(ValueType::Set, move(result));
         } else {
           return Variable(ValueType::Set);
         }
@@ -1014,21 +1193,22 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
       if ((left.type == ValueType::Bool) && (left.type == ValueType::Bool)) {
         if (left.value_known && left.int_value) {
-          return Variable(true);
+          return Variable(ValueType::Bool, true);
         }
         if (right.value_known && right.int_value) {
-          return Variable(true);
+          return Variable(ValueType::Bool, true);
         }
         if (!left.value_known || !right.value_known) {
           return Variable(ValueType::Bool);
         }
-        return Variable(static_cast<bool>(left.int_value || right.int_value));
+        return Variable(ValueType::Bool,
+            static_cast<bool>(left.int_value || right.int_value));
       }
 
       if (!left.value_known || !right.value_known) {
         return Variable(ValueType::Int);
       }
-      return Variable(left.int_value | right.int_value);
+      return Variable(ValueType::Int, left.int_value | right.int_value);
 
     case BinaryOperator::And:
       // handle set-intersection operation
@@ -1042,7 +1222,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
               it++;
             }
           }
-          return Variable(move(result));
+          return Variable(ValueType::Set, move(result));
         } else {
           return Variable(ValueType::Set);
         }
@@ -1063,21 +1243,21 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
       if ((left.type == ValueType::Bool) && (left.type == ValueType::Bool)) {
         if (left.value_known && !left.int_value) {
-          return Variable(false);
+          return Variable(ValueType::Bool, false);
         }
         if (right.value_known && !right.int_value) {
-          return Variable(false);
+          return Variable(ValueType::Bool, false);
         }
         if (!left.value_known || !right.value_known) {
           return Variable(ValueType::Bool);
         }
-        return Variable(static_cast<bool>(left.int_value && right.int_value));
+        return Variable(ValueType::Bool, static_cast<bool>(left.int_value && right.int_value));
       }
 
       if (!left.value_known || !right.value_known) {
         return Variable(ValueType::Int);
       }
-      return Variable(left.int_value & right.int_value);
+      return Variable(ValueType::Int, left.int_value & right.int_value);
 
     case BinaryOperator::Xor:
       // handle set-xor operation
@@ -1089,7 +1269,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
               result.erase(item);
             }
           }
-          return Variable(move(result));
+          return Variable(ValueType::Set, move(result));
         } else {
           return Variable(ValueType::Set);
         }
@@ -1112,13 +1292,14 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
         if (!left.value_known || !right.value_known) {
           return Variable(ValueType::Bool);
         }
-        return Variable(static_cast<bool>(left.int_value ^ right.int_value));
+        return Variable(ValueType::Bool,
+            static_cast<bool>(left.int_value ^ right.int_value));
       }
 
       if (!left.value_known || !right.value_known) {
         return Variable(ValueType::Int);
       }
-      return Variable(left.int_value ^ right.int_value);
+      return Variable(ValueType::Int, left.int_value ^ right.int_value);
 
     case BinaryOperator::LeftShift:
       // if either side is Indeterminate, the result is Indeterminate
@@ -1137,7 +1318,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       if (!left.value_known || !right.value_known) {
         return Variable(ValueType::Int);
       }
-      return Variable(left.int_value << right.int_value);
+      return Variable(ValueType::Int, left.int_value << right.int_value);
 
     case BinaryOperator::RightShift:
       // if either side is Indeterminate, the result is Indeterminate
@@ -1156,7 +1337,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       if (!left.value_known || !right.value_known) {
         return Variable(ValueType::Int);
       }
-      return Variable(left.int_value >> right.int_value);
+      return Variable(ValueType::Int, left.int_value >> right.int_value);
 
     case BinaryOperator::Addition:
       // if either side is Indeterminate, the result is Indeterminate
@@ -1171,13 +1352,13 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Int);
             }
-            return Variable(left.int_value + right.int_value);
+            return Variable(ValueType::Int, left.int_value + right.int_value);
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(left.int_value + right.float_value);
+            return Variable(ValueType::Float, left.int_value + right.float_value);
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1189,13 +1370,13 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(left.float_value + right.int_value);
+            return Variable(ValueType::Float, left.float_value + right.int_value);
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(left.float_value + right.float_value);
+            return Variable(ValueType::Float, left.float_value + right.float_value);
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1208,7 +1389,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
               return Variable(ValueType::Bytes);
             }
             string new_value = *left.bytes_value + *right.bytes_value;
-            return Variable(move(new_value));
+            return Variable(ValueType::Bytes, move(new_value));
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1221,7 +1402,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
               return Variable(ValueType::Unicode);
             }
             wstring new_value = *left.unicode_value + *right.unicode_value;
-            return Variable(move(new_value));
+            return Variable(ValueType::Unicode, move(new_value));
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1238,7 +1419,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
           vector<shared_ptr<Variable>> result = *left.list_value;
           result.insert(result.end(), right.list_value->begin(), right.list_value->end());
-          return Variable(result, (left.type == ValueType::Tuple));
+          return Variable(left.type, move(result));
         }
 
         default: {
@@ -1262,7 +1443,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
           for (const auto& item : *right.set_value) {
             result.erase(item);
           }
-          return Variable(move(result));
+          return Variable(ValueType::Set, move(result));
         } else {
           return Variable(ValueType::Set);
         }
@@ -1297,14 +1478,12 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
           throw invalid_argument(string_printf("can\'t multiply %s by %s", left_str.c_str(), right_str.c_str()));
         }
 
-        bool is_tuple = (list->type == ValueType::Tuple);
-
         // short-circuit cases first
         if (list->value_known && list->list_value->empty()) {
-          return Variable(vector<shared_ptr<Variable>>(), is_tuple);
+          return Variable(list->type, vector<shared_ptr<Variable>>());
         }
         if (multiplier->value_known && (multiplier->int_value == 0)) {
-          return Variable(vector<shared_ptr<Variable>>(), is_tuple);
+          return Variable(list->type, vector<shared_ptr<Variable>>());
         }
         if (multiplier->value_known && (multiplier->int_value == 1)) {
           return *list;
@@ -1318,7 +1497,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
         for (int64_t x = 0; x < multiplier->int_value; x++) {
           result.insert(result.end(), list->list_value->begin(), list->list_value->end());
         }
-        return Variable(move(result), is_tuple);
+        return Variable(list->type, move(result));
       }
 
       switch (left.type) {
@@ -1328,13 +1507,13 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Int);
             }
-            return Variable(left.int_value * right.int_value);
+            return Variable(ValueType::Int, left.int_value * right.int_value);
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(left.int_value * right.float_value);
+            return Variable(ValueType::Float, left.int_value * right.float_value);
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1346,13 +1525,13 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(left.float_value * right.int_value);
+            return Variable(ValueType::Float, left.float_value * right.int_value);
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(left.float_value * right.float_value);
+            return Variable(ValueType::Float, left.float_value * right.float_value);
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1381,14 +1560,16 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(static_cast<double>(left.int_value) /
-                static_cast<double>(right.int_value));
+            return Variable(ValueType::Int,
+                static_cast<double>(left.int_value) /
+                  static_cast<double>(right.int_value));
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(static_cast<double>(left.int_value) / right.float_value);
+            return Variable(ValueType::Float,
+                static_cast<double>(left.int_value) / right.float_value);
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1400,13 +1581,14 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(left.float_value / static_cast<double>(right.int_value));
+            return Variable(ValueType::Float,
+                left.float_value / static_cast<double>(right.int_value));
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(left.float_value / right.float_value);
+            return Variable(ValueType::Float, left.float_value / right.float_value);
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1443,13 +1625,14 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Int);
             }
-            return Variable(left.int_value % right.int_value);
+            return Variable(ValueType::Int, left.int_value % right.int_value);
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(fmod(static_cast<double>(left.int_value), right.float_value));
+            return Variable(ValueType::Float,
+                fmod(static_cast<double>(left.int_value), right.float_value));
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1461,13 +1644,15 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(fmod(left.float_value, static_cast<double>(right.int_value)));
+            return Variable(ValueType::Float,
+                fmod(left.float_value, static_cast<double>(right.int_value)));
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(fmod(left.float_value, right.float_value));
+            return Variable(ValueType::Float,
+                fmod(left.float_value, right.float_value));
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1495,13 +1680,14 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Int);
             }
-            return Variable(left.int_value / right.int_value);
+            return Variable(ValueType::Int, left.int_value / right.int_value);
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(floor(static_cast<double>(left.int_value) / right.float_value));
+            return Variable(ValueType::Float,
+                floor(static_cast<double>(left.int_value) / right.float_value));
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1513,13 +1699,15 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(floor(left.float_value / static_cast<double>(right.int_value)));
+            return Variable(ValueType::Float,
+                floor(left.float_value / static_cast<double>(right.int_value)));
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(floor(left.float_value / right.float_value));
+            return Variable(ValueType::Float,
+                floor(left.float_value / right.float_value));
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1545,10 +1733,10 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
         case ValueType::Int: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (right.value_known && (right.int_value == 0)) {
-              return Variable(static_cast<int64_t>(0));
+              return Variable(ValueType::Int, static_cast<int64_t>(0));
             }
             if (left.value_known && (left.int_value == 1)) {
-              return Variable(static_cast<int64_t>(1));
+              return Variable(ValueType::Int, static_cast<int64_t>(1));
             }
 
             // TODO: this returns a Float if right is negative. for now we just
@@ -1565,16 +1753,30 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             }
 
             if (right.int_value < 0) {
-              return Variable(pow(static_cast<double>(left.int_value), static_cast<double>(right.float_value)));
+              return Variable(ValueType::Int,
+                  pow(static_cast<double>(left.int_value),
+                    static_cast<double>(right.float_value)));
             }
-            return Variable(ipow(left.int_value, right.int_value));
+
+            // TODO: factor this out somewhere? it's basically the same as
+            // what's in notes/pow.s
+            int64_t ret = 1, base = left.int_value, exponent = right.int_value;
+            for (; exponent > 0; exponent >>= 1) {
+              if (exponent & 1) {
+                ret *= base;
+              }
+              base *= base;
+            }
+
+            return Variable(ValueType::Int, ret);
           }
 
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(pow(static_cast<double>(left.int_value), right.float_value));
+            return Variable(ValueType::Int,
+                pow(static_cast<double>(left.int_value), right.float_value));
           }
           string left_str = left.str();
           string right_str = right.str();
@@ -1586,13 +1788,15 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(pow(left.float_value, static_cast<double>(right.int_value)));
+            return Variable(ValueType::Float,
+                pow(left.float_value, static_cast<double>(right.int_value)));
           }
           if (right.type == ValueType::Float) {
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(pow(left.float_value, right.float_value));
+            return Variable(ValueType::Float,
+                pow(left.float_value, right.float_value));
           }
           string left_str = left.str();
           string right_str = right.str();

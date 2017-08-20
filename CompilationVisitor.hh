@@ -160,5 +160,8 @@ private:
       const std::string& name);
   VariableLocation location_for_variable(const std::string& name);
 
+  void write_write_variable_slot(Register value_register,
+      const VariableLocation& lvalue_target, const Variable& current_type);
+
   FunctionContext* current_function();
 };

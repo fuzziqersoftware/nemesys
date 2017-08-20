@@ -64,42 +64,42 @@ void AnalysisVisitor::visit(TernaryOperation* a) {
 }
 
 void AnalysisVisitor::visit(ListConstructor* a) {
-  Variable list(vector<shared_ptr<Variable>>(), false);
+  vector<shared_ptr<Variable>> items;
   for (auto item : a->items) {
     item->accept(this);
-    list.list_value->emplace_back(new Variable(move(this->current_value)));
+    items.emplace_back(new Variable(move(this->current_value)));
   }
-  this->current_value = move(list);
+  this->current_value = Variable(ValueType::List, move(items));
 }
 
 void AnalysisVisitor::visit(SetConstructor* a) {
-  Variable set((unordered_set<Variable>()));
+  unordered_set<Variable> items;
   for (auto item : a->items) {
     item->accept(this);
-    set.set_value->emplace(move(this->current_value));
+    items.emplace(move(this->current_value));
   }
-  this->current_value = move(set);
+  this->current_value = Variable(ValueType::Set, move(items));
 }
 
 void AnalysisVisitor::visit(DictConstructor* a) {
-  Variable dict((unordered_map<Variable, shared_ptr<Variable>>()));
+  unordered_map<Variable, shared_ptr<Variable>> items;
   for (auto item : a->items) {
     item.first->accept(this);
     Variable key(move(this->current_value));
     item.second->accept(this);
-    dict.dict_value->emplace(piecewise_construct, forward_as_tuple(move(key)),
+    items.emplace(piecewise_construct, forward_as_tuple(move(key)),
         forward_as_tuple(new Variable(move(this->current_value))));
   }
-  this->current_value = move(dict);
+  this->current_value = Variable(ValueType::Dict, move(items));
 }
 
 void AnalysisVisitor::visit(TupleConstructor* a) {
-  Variable list(vector<shared_ptr<Variable>>(), true);
+  vector<shared_ptr<Variable>> items;
   for (auto item : a->items) {
     item->accept(this);
-    list.list_value->emplace_back(new Variable(move(this->current_value)));
+    items.emplace_back(new Variable(move(this->current_value)));
   }
-  this->current_value = move(list);
+  this->current_value = Variable(ValueType::Tuple, move(items));
 }
 
 void AnalysisVisitor::visit(ListComprehension* a) {
@@ -151,14 +151,14 @@ void AnalysisVisitor::visit(LambdaDefinition* a) {
 
   this->in_function_id = prev_function_id;
 
-  this->current_value = Variable(a->function_id, false);
+  this->current_value = Variable(ValueType::Function, a->function_id);
 }
 
 void AnalysisVisitor::visit(FunctionCall* a) {
   // the function reference had better be a function
   a->function->accept(this);
   if (this->current_value.type != ValueType::Function) {
-    throw compile_error("cannot call a non-function object", a->file_offset);
+    throw compile_error("cannot call a non-function object: " + this->current_value.str(), a->file_offset);
   }
   Variable function = move(this->current_value);
 
@@ -255,7 +255,8 @@ void AnalysisVisitor::visit(ArrayIndex* a) {
       // TODO: IndexError here too
       throw compile_error("bytes index out of range");
     }
-    this->current_value = Variable(array.bytes_value->substr(index, 1));
+    this->current_value = Variable(ValueType::Bytes,
+        array.bytes_value->substr(index, 1));
 
   } else if (array.type == ValueType::Unicode) {
     // TODO: deduplicate with the above case somehow
@@ -283,7 +284,8 @@ void AnalysisVisitor::visit(ArrayIndex* a) {
       // TODO: IndexError here too
       throw compile_error("unicode index out of range");
     }
-    this->current_value = Variable(array.unicode_value->substr(index, 1));
+    this->current_value = Variable(ValueType::Unicode,
+        array.unicode_value->substr(index, 1));
 
   } else if ((array.type == ValueType::List) || (array.type == ValueType::Tuple)) {
     // if the array is empty, all subscript references throw IndexError
@@ -373,27 +375,27 @@ void AnalysisVisitor::visit(ArraySlice* a) {
 }
 
 void AnalysisVisitor::visit(IntegerConstant* a) {
-  this->current_value = Variable(a->value);
+  this->current_value = Variable(ValueType::Int, a->value);
 }
 
 void AnalysisVisitor::visit(FloatConstant* a) {
-  this->current_value = Variable(a->value);
+  this->current_value = Variable(ValueType::Float, a->value);
 }
 
 void AnalysisVisitor::visit(BytesConstant* a) {
-  this->current_value = Variable(a->value);
+  this->current_value = Variable(ValueType::Bytes, a->value);
 }
 
 void AnalysisVisitor::visit(UnicodeConstant* a) {
-  this->current_value = Variable(a->value);
+  this->current_value = Variable(ValueType::Unicode, a->value);
 }
 
 void AnalysisVisitor::visit(TrueConstant* a) {
-  this->current_value = Variable(true);
+  this->current_value = Variable(ValueType::Bool, true);
 }
 
 void AnalysisVisitor::visit(FalseConstant* a) {
-  this->current_value = Variable(false);
+  this->current_value = Variable(ValueType::Bool, false);
 }
 
 void AnalysisVisitor::visit(NoneConstant* a) {
@@ -943,14 +945,16 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
 
   this->in_function_id = prev_function_id;
 
-  this->record_assignment(a->name, Variable(a->function_id, false), a->file_offset);
+  this->record_assignment(a->name,
+      Variable(ValueType::Function, a->function_id), a->file_offset);
 }
 
 void AnalysisVisitor::visit(ClassDefinition* a) {
   // TODO
   throw compile_error("ClassDefinition not yet implemented", a->file_offset);
 
-  this->record_assignment(a->name, Variable(a->class_id, true), a->file_offset);
+  this->record_assignment(a->name, Variable(ValueType::Class, a->class_id),
+      a->file_offset);
 }
 
 FunctionContext* AnalysisVisitor::current_function() {
@@ -973,14 +977,17 @@ void AnalysisVisitor::record_assignment(const std::string& name,
     // for immutable globals, we keep track of both
     } else if (is_mutable) {
       if (global.type != var.type) {
+        string global_str = global.str();
+        string var_str = var.str();
         throw compile_error(string_printf(
-            "global variable `%s` cannot change type", name.c_str()), file_offset);
+              "global variable %s cannot change type (%s -> %s)",
+              name.c_str(), global_str.c_str(), var_str.c_str()), file_offset);
       }
       global.clear_value();
 
     } else {
       throw compile_error(string_printf(
-          "immutable global `%s` was written multiple times", name.c_str()), file_offset);
+          "immutable global %s was written multiple times", name.c_str()), file_offset);
     }
 
   } else {

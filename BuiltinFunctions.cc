@@ -176,16 +176,16 @@ unordered_map<int64_t, FunctionContext> builtin_function_definitions({
   // Unicode input(Unicode='')
   {builtin_function_to_id.at("input"),
     FunctionContext(NULL, builtin_function_to_id.at("input"), "input",
-        {Variable(L"")}, Variable(ValueType::Unicode),
+        {Variable(ValueType::Unicode, L"")}, Variable(ValueType::Unicode),
         reinterpret_cast<const void*>(&builtin_input))},
   // Int int(Bytes, Int=0)
   // Int int(Unicode, Int=0)
   {builtin_function_to_id.at("int"),
     FunctionContext(NULL, builtin_function_to_id.at("int"), "int", {
-      FragDef({Variable(ValueType::Bytes), Variable(0LL)}, Variable(ValueType::Int),
-        reinterpret_cast<const void*>(&builtin_int_bytes)),
-      FragDef({Variable(ValueType::Unicode), Variable(0LL)}, Variable(ValueType::Int),
-        reinterpret_cast<const void*>(&builtin_int_unicode)),
+      FragDef({Variable(ValueType::Bytes), Variable(ValueType::Int, 0LL)},
+        Variable(ValueType::Int), reinterpret_cast<const void*>(&builtin_int_bytes)),
+      FragDef({Variable(ValueType::Unicode), Variable(ValueType::Int, 0LL)},
+        Variable(ValueType::Int), reinterpret_cast<const void*>(&builtin_int_unicode)),
     })},
   // Unicode repr(None)
   // Unicode repr(Bool)
@@ -222,7 +222,7 @@ unordered_map<int64_t, FunctionContext> builtin_function_definitions({
 
 
 unordered_map<Variable, shared_ptr<Variable>> empty_dict_contents;
-static const Variable empty_dict(empty_dict_contents);
+static const Variable empty_dict(ValueType::Dict, empty_dict_contents);
 
 
 
@@ -230,7 +230,7 @@ static const Variable empty_dict(empty_dict_contents);
 const unordered_map<string, Variable> builtin_names({
   {"__annotations__",           empty_dict},
   {"__build_class__",           Variable(ValueType::Function)},
-  {"__debug__",                 Variable(true)}, // in CPython, False iff -O was given
+  {"__debug__",                 Variable(ValueType::Bool, true)},
   {"__doc__",                   Variable(ValueType::None)},
   {"__import__",                Variable(ValueType::Function)},
   {"__loader__",                Variable(ValueType::None)},
@@ -339,12 +339,12 @@ const unordered_map<string, Variable> builtin_names({
   {"help",                      Variable(ValueType::Function)},
   {"hex",                       Variable(ValueType::Function)},
   {"id",                        Variable(ValueType::Function)},
-  {"input",                     Variable(builtin_function_to_id.at("input"), false)},
-  {"int",                       Variable(builtin_function_to_id.at("int"), false)},
+  {"input",                     Variable(ValueType::Function, builtin_function_to_id.at("input"))},
+  {"int",                       Variable(ValueType::Function, builtin_function_to_id.at("int"))},
   {"isinstance",                Variable(ValueType::Function)},
   {"issubclass",                Variable(ValueType::Function)},
   {"iter",                      Variable(ValueType::Function)},
-  {"len",                       Variable(builtin_function_to_id.at("len"), false)},
+  {"len",                       Variable(ValueType::Function, builtin_function_to_id.at("len"))},
   {"license",                   Variable(ValueType::Function)},
   {"list",                      Variable(ValueType::Function)},
   {"locals",                    Variable(ValueType::Function)},
@@ -358,11 +358,11 @@ const unordered_map<string, Variable> builtin_names({
   {"open",                      Variable(ValueType::Function)},
   {"ord",                       Variable(ValueType::Function)},
   {"pow",                       Variable(ValueType::Function)},
-  {"print",                     Variable(builtin_function_to_id.at("print"), false)},
+  {"print",                     Variable(ValueType::Function, builtin_function_to_id.at("print"))},
   {"property",                  Variable(ValueType::Function)},
   {"quit",                      Variable(ValueType::Function)},
   {"range",                     Variable(ValueType::Function)},
-  {"repr",                      Variable(builtin_function_to_id.at("repr"), false)},
+  {"repr",                      Variable(ValueType::Function, builtin_function_to_id.at("repr"))},
   {"reversed",                  Variable(ValueType::Function)},
   {"round",                     Variable(ValueType::Function)},
   {"set",                       Variable(ValueType::Function)},

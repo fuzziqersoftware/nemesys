@@ -171,13 +171,16 @@ ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename,
     num_splits(0), compiled(NULL) {
   // TODO: using unescape_unicode is a stupid hack, but these strings can't
   // contain backslashes anyway (right? ...right?)
-  this->globals.emplace("__name__", unescape_unicode(name));
+  this->globals.emplace(piecewise_construct, forward_as_tuple("__name__"),
+      forward_as_tuple(ValueType::Unicode, unescape_unicode(name)));
   this->globals_mutable.emplace("__name__", false);
   if (is_code) {
-    this->globals.emplace("__file__", L"__imm__");
+    this->globals.emplace(piecewise_construct, forward_as_tuple("__file__"),
+        forward_as_tuple(ValueType::Unicode, L"__imm__"));
     this->globals_mutable.emplace("__file__", false);
   } else {
-    this->globals.emplace("__file__", unescape_unicode(filename));
+    this->globals.emplace(piecewise_construct, forward_as_tuple("__file__"),
+        forward_as_tuple(ValueType::Unicode, unescape_unicode(filename)));
     this->globals_mutable.emplace("__file__", false);
   }
 }

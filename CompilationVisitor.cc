@@ -14,6 +14,7 @@
 #include "AMD64Assembler.hh"
 #include "Types/Reference.hh"
 #include "Types/Strings.hh"
+#include "Types/List.hh"
 
 using namespace std;
 
@@ -693,8 +694,67 @@ void CompilationVisitor::visit(TernaryOperation* a) {
 void CompilationVisitor::visit(ListConstructor* a) {
   this->file_offset = a->file_offset;
 
-  // TODO: generate malloc call, item constructor code
-  throw compile_error("ListConstructor not yet implemented", this->file_offset);
+  this->as.write_label(string_printf("__ListConstructor_%p_setup", a));
+
+  // we'll use rbx to store the list ptr while constructing items and I'm lazy
+  if (this->target_register == Register::RBX) {
+    throw compile_error("cannot use rbx as target register for list construction");
+  }
+  this->write_push(Register::RBX);
+  int64_t previously_reserved_registers = this->write_push_reserved_registers();
+
+  // allocate the list object
+  this->as.write_label(string_printf("__ListConstructor_%p_allocate", a));
+  vector<const MemoryReference> args({
+    MemoryReference(argument_register_order[0]),
+    MemoryReference(argument_register_order[1]),
+    MemoryReference(argument_register_order[2]),
+  });
+  this->as.write_mov(args[0], 0);
+  this->as.write_mov(args[1], a->items.size());
+  this->as.write_mov(args[2], 0);
+  this->write_function_call(reinterpret_cast<void*>(list_new), NULL, args, -1,
+      this->target_register);
+
+  // save the list items pointer
+  this->as.write_mov(MemoryReference(Register::RBX),
+      MemoryReference(this->target_register, 0x20));
+  this->write_push(Register::RAX);
+
+  // generate code for each item and track the extension type
+  Variable extension_type;
+  size_t item_index = 0;
+  for (const auto& item : a->items) {
+    this->as.write_label(string_printf("__ListConstructor_%p_item_%zu", a, item_index));
+    item->accept(this);
+    this->as.write_mov(MemoryReference(Register::RBX, item_index * 8),
+        MemoryReference(this->target_register));
+    item_index++;
+
+    // merge the type with the known extension type
+    if (extension_type.type == ValueType::Indeterminate) {
+      extension_type = move(this->current_type);
+    } else if (extension_type != this->current_type) {
+      throw compile_error("list contains different object types");
+    }
+  }
+
+  // get the list pointer back
+  this->as.write_label(string_printf("__ListConstructor_%p_finalize", a));
+  this->write_pop(this->target_register);
+
+  // if the extension type is an object of some sort, set the destructor flag
+  if (type_has_refcount(extension_type.type)) {
+    this->as.write_mov(MemoryReference(this->target_register, 0x18), 1);
+  }
+
+  // restore the regs we saved
+  this->write_pop_reserved_registers(previously_reserved_registers);
+  this->write_pop(Register::RBX);
+
+  // the result type is List[extension_type]
+  vector<Variable> extension_types({extension_type});
+  this->current_type = Variable(ValueType::List, extension_types);
 }
 
 void CompilationVisitor::visit(SetConstructor* a) {
@@ -754,7 +814,7 @@ void CompilationVisitor::visit(LambdaDefinition* a) {
     // figure out the right fragment at call time
     auto* declared_function_context = this->global->context_for_function(a->function_id);
     this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(declared_function_context));
-    this->current_type = Variable(a->function_id, false);
+    this->current_type = Variable(ValueType::Function, a->function_id);
     return;
   }
 
@@ -1199,6 +1259,12 @@ void CompilationVisitor::visit(ExpressionStatement* a) {
   // just evaluate it into some random register
   this->target_register = this->available_register();
   a->expr->accept(this);
+
+  // write a destructor call if necessary
+  if (type_has_refcount(this->current_type.type)) {
+    this->write_delete_reference(MemoryReference(this->target_register),
+        this->current_type);
+  }
 }
 
 void CompilationVisitor::visit(AssignmentStatement* a) {
@@ -1219,44 +1285,9 @@ void CompilationVisitor::visit(AssignmentStatement* a) {
   this->target_register = available_register();
   a->value->accept(this);
 
-  // typecheck the result. the type of a variable can only be changed if it's
-  // Indeterminate; otherwise it's an error
-  // TODO: deduplicate some of this with location_for_variable
-  Variable* target_variable = NULL;
-  if (this->lvalue_target.is_global) {
-    target_variable = &this->module->globals.at(this->lvalue_target.name);
-  } else {
-    try {
-      target_variable = &this->local_overrides.at(this->lvalue_target.name);
-    } catch (const out_of_range&) {
-      target_variable = &this->target_function->locals.at(this->lvalue_target.name);
-    }
-  }
-  if (!target_variable) {
-    throw compile_error("target variable not found");
-  }
-  if (target_variable->type == ValueType::Indeterminate) {
-    *target_variable = this->current_type;
-  } else if (*target_variable != this->lvalue_target.type) {
-    string target_type_str = target_variable->str();
-    string value_type_str = this->current_type.str();
-    throw compile_error(string_printf("variable %s changes type from %s to %s\n",
-        this->lvalue_target.name.c_str(), target_type_str.c_str(),
-        value_type_str.c_str()), this->file_offset);
-  }
-
-  // now save the value to the appropriate slot. global slots are offsets from
-  // R13; local slots are offsets from RSP
   this->as.write_label(string_printf("__AssignmentStatement_%p_write_value", a));
-  if (this->lvalue_target.is_global) {
-    this->as.write_mov(
-        MemoryReference(Register::R13, this->module->global_base_offset + this->lvalue_target.offset),
-        MemoryReference(this->target_register));
-  } else {
-    this->as.write_mov(
-        MemoryReference(Register::RBP, this->lvalue_target.offset),
-        MemoryReference(this->target_register));
-  }
+  this->write_write_variable_slot(this->target_register, this->lvalue_target,
+      this->current_type);
 }
 
 void CompilationVisitor::visit(AugmentStatement* a) {
@@ -1403,8 +1434,82 @@ void CompilationVisitor::visit(ElifStatement* a) {
 void CompilationVisitor::visit(ForStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("ForStatement not yet implemented", this->file_offset);
+  // get the collection object and save it on the stack
+  this->as.write_label(string_printf("__ForStatement_%p_get_collection", a));
+  a->collection->accept(this);
+  Variable collection_type = this->current_type;
+  this->write_push(this->target_register);
+
+  string next_label = string_printf("__ForStatement_%p_next", a);
+  string end_label = string_printf("__ForStatement_%p_complete", a);
+  string break_label = string_printf("__ForStatement_%p_broken", a);
+
+  // currently this is only implemented for lists
+  if (collection_type.type == ValueType::List) {
+
+    // we'll store the item index in rbx
+    if (this->target_register == Register::RBX) {
+      throw compile_error("cannot use rbx as target register for list iteration");
+    }
+    this->write_push(Register::RBX);
+    MemoryReference rbx_mem(Register::RBX);
+    this->as.write_mov(rbx_mem, 0);
+
+    this->as.write_label(next_label);
+    // get the list object
+    this->as.write_mov(MemoryReference(this->target_register),
+        MemoryReference(Register::RSP, 8));
+    // check if we're at the end
+    this->as.write_cmp(rbx_mem, MemoryReference(this->target_register, 0x10));
+    // if we are, skip the loop body
+    this->as.write_jge(end_label);
+    // else, get the list items
+    this->as.write_mov(MemoryReference(this->target_register),
+        MemoryReference(this->target_register, 0x20));
+    // get the current item from the list
+    this->as.write_mov(MemoryReference(this->target_register),
+        MemoryReference(this->target_register, 0, Register::RBX, 8));
+    // increment the item index
+    this->as.write_inc(rbx_mem);
+
+    // load the value into the correct local variable slot
+    this->as.write_label(string_printf("__ForStatement_%p_write_value", a));
+    this->current_type = collection_type.extension_types[0];
+    a->variable->accept(this);
+    this->write_write_variable_slot(this->target_register, this->lvalue_target,
+        this->current_type);
+
+    // now do the loop body
+    this->as.write_label(string_printf("__ForStatement_%p_body", a));
+    this->visit_list(a->items);
+    this->as.write_jmp(next_label);
+    this->as.write_label(end_label);
+
+    // restore rbx
+    this->write_pop(Register::RBX);
+
+  } else {
+    throw compile_error("iteration not implemented for " + collection_type.str(),
+        this->file_offset);
+  }
+
+  // if there's an else statement, generate the body here
+  if (a->else_suite.get()) {
+    a->else_suite->accept(this);
+  }
+
+  // any break statement will jump over the loop body and the else statement
+  this->as.write_label(break_label);
+
+  // we still own a reference to the collection; destroy it now
+  // note: all collection types have refcounts; dunno why I bothered checking
+  if (type_has_refcount(collection_type.type)) {
+    this->write_pop(this->target_register);
+    this->write_delete_reference(MemoryReference(this->target_register),
+        collection_type);
+  } else {
+    this->as.write_add(MemoryReference(Register::RSP), 8);
+  }
 }
 
 void CompilationVisitor::visit(WhileStatement* a) {
@@ -1422,6 +1527,7 @@ void CompilationVisitor::visit(WhileStatement* a) {
   this->as.write_jz(end_label);
 
   // generate the loop body
+  this->as.write_label(string_printf("__WhileStatement_%p_body", a));
   this->visit_list(a->items);
   this->as.write_jmp(start_label);
   this->as.write_label(end_label);
@@ -1849,4 +1955,45 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
   }
 
   return loc;
+}
+
+void CompilationVisitor::write_write_variable_slot(Register value_register,
+    const VariableLocation& lvalue_target, const Variable& current_type) {
+  // typecheck the result. the type of a variable can only be changed if it's
+  // Indeterminate; otherwise it's an error
+  // TODO: deduplicate some of this with location_for_variable
+  Variable* target_variable = NULL;
+  if (lvalue_target.is_global) {
+    target_variable = &this->module->globals.at(lvalue_target.name);
+  } else {
+    try {
+      target_variable = &this->local_overrides.at(lvalue_target.name);
+    } catch (const out_of_range&) {
+      target_variable = &this->target_function->locals.at(lvalue_target.name);
+    }
+  }
+  if (!target_variable) {
+    throw compile_error("target variable not found");
+  }
+  if (target_variable->type == ValueType::Indeterminate) {
+    *target_variable = current_type;
+  } else if (*target_variable != lvalue_target.type) {
+    string target_type_str = target_variable->str();
+    string value_type_str = current_type.str();
+    throw compile_error(string_printf("variable %s changes type from %s to %s\n",
+        lvalue_target.name.c_str(), target_type_str.c_str(),
+        value_type_str.c_str()), this->file_offset);
+  }
+
+  // now save the value to the appropriate slot. global slots are offsets from
+  // R13; local slots are offsets from RSP
+  if (lvalue_target.is_global) {
+    this->as.write_mov(
+        MemoryReference(Register::R13, this->module->global_base_offset + lvalue_target.offset),
+        MemoryReference(target_register));
+  } else {
+    this->as.write_mov(
+        MemoryReference(Register::RBP, lvalue_target.offset),
+        MemoryReference(target_register));
+  }
 }

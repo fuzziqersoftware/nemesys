@@ -19,28 +19,28 @@ using namespace std;
 
 
 
-static string __doc__ = "Common built-in objects and functions.\n\
+static wstring __doc__ = L"Common built-in objects and functions.\n\
 \n\
 Attributes that are present have the same meaning as in Python 3.";
 
-static string copyright = "TODO";
+static wstring copyright = L"TODO";
 
 static map<string, Variable> globals({
-  {"__doc__",              Variable(__doc__)},
-  {"__name__",             Variable(L"sys")},
+  {"__doc__",              Variable(ValueType::Unicode, __doc__)},
+  {"__name__",             Variable(ValueType::Unicode, L"sys")},
   {"__package__",          Variable(ValueType::None)},
   {"__stderr__",           Variable()},
   {"__stdin__",            Variable()},
   {"__stdout__",           Variable()},
-  {"abiflags",             Variable(L"")},
-  {"api_version",          Variable(static_cast<int64_t>(0))},
+  {"abiflags",             Variable(ValueType::Unicode, L"")},
+  {"api_version",          Variable(ValueType::Int, 0LL)},
   {"argv",                 Variable()},
   {"base_exec_prefix",     Variable()},
   {"base_prefix",          Variable()},
   {"builtin_module_names", Variable()},
-  {"byteorder",            Variable(L"little")},
-  {"copyright",            Variable(copyright)},
-  {"dont_write_bytecode",  Variable(true)},
+  {"byteorder",            Variable(ValueType::Unicode, L"little")},
+  {"copyright",            Variable(ValueType::Unicode, copyright)},
+  {"dont_write_bytecode",  Variable(ValueType::Bool, true)},
   {"exc_info",             Variable()},
   {"exec_prefix",          Variable()},
   {"executable",           Variable()},
@@ -58,19 +58,19 @@ static map<string, Variable> globals({
   {"last_traceback",       Variable()},
   {"last_type",            Variable()},
   {"last_value",           Variable()},
-  {"maxsize",              Variable(0x7FFFFFFFFFFFFFFFLL)},
-  {"maxunicode",           Variable(0x10FFFFLL)},
+  {"maxsize",              Variable(ValueType::Int, 0x7FFFFFFFFFFFFFFFLL)},
+  {"maxunicode",           Variable(ValueType::Int, 0x10FFFFLL)},
   {"modules",              Variable()},
   {"path",                 Variable()},
   {"platform",             Variable()},
   {"prefix",               Variable()},
-  {"ps1",                  Variable(L"> ")},
-  {"ps2",                  Variable(L". ")},
+  {"ps1",                  Variable(ValueType::Unicode, L"> ")},
+  {"ps2",                  Variable(ValueType::Unicode, L". ")},
   {"stderr",               Variable()},
   {"stdin",                Variable()},
   {"stdout",               Variable()},
   {"thread_info",          Variable()},
-  {"version",              Variable(L"nemesys")},
+  {"version",              Variable(ValueType::Unicode, L"nemesys")},
   {"version_info",         Variable()},
 });
 

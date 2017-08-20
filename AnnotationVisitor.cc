@@ -56,7 +56,7 @@ void AnnotationVisitor::visit(ImportStatement* a) {
       // we actually don't care if the module is even parseable or not; we
       // don't need anything from it yet other than its existence
       this->global->get_module_at_phase(it.first, ModuleAnalysis::Phase::Initial);
-      if (!scope->emplace(it.second, Variable(it.first, true)).second) {
+      if (!scope->emplace(it.second, Variable(ValueType::Module, it.first)).second) {
         throw compile_error("name overwritten by import", a->file_offset);
       }
       if (!context) {

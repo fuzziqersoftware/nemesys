@@ -41,30 +41,46 @@ struct Variable {
     int64_t function_id;
     int64_t class_id;
   };
+  std::vector<Variable> extension_types;
 
   // unknown value constructors
-  Variable(); // Indeterminate
-  Variable(ValueType type); // any type, unknown value
+  Variable();
+  Variable(ValueType type);
+  Variable(ValueType type, const std::vector<Variable>& extension_types);
+  Variable(ValueType type, std::vector<Variable>&& extension_types);
 
-  // known value constructors
-  Variable(bool bool_value);
-  Variable(int64_t int_value);
-  Variable(double float_value);
-  Variable(const uint8_t* bytes_value, bool is_module = false);
-  Variable(const uint8_t* bytes_value, size_t size, bool is_module = false);
-  Variable(const std::string& bytes_value, bool is_module = false);
-  Variable(std::string&& bytes_value, bool is_module = false);
-  Variable(const wchar_t* unicode_value);
-  Variable(const wchar_t* unicode_value, size_t size);
-  Variable(const std::wstring& unicode_value);
-  Variable(std::wstring&& unicode_value);
-  Variable(const std::vector<std::shared_ptr<Variable>>& list_value, bool is_tuple);
-  Variable(std::vector<std::shared_ptr<Variable>>&& list_value, bool is_tuple);
-  Variable(const std::unordered_set<Variable>& set_value);
-  Variable(std::unordered_set<Variable>&& set_value);
-  Variable(const std::unordered_map<Variable, std::shared_ptr<Variable>>& dict_value);
-  Variable(std::unordered_map<Variable, std::shared_ptr<Variable>>&& dict_value);
-  Variable(int64_t function_or_class_id, bool is_class);
+  // Bool
+  Variable(ValueType type, bool bool_value);
+
+  // Int/Function/Class
+  Variable(ValueType type, int64_t int_value);
+
+  // Float
+  Variable(ValueType type, double float_value);
+
+  // Bytes/Module
+  Variable(ValueType type, const uint8_t* bytes_value, size_t size);
+  Variable(ValueType type, const uint8_t* bytes_value);
+  Variable(ValueType type, const std::string& bytes_value);
+  Variable(ValueType type, std::string&& bytes_value);
+
+  // Unicode
+  Variable(ValueType type, const wchar_t* unicode_value, size_t size);
+  Variable(ValueType type, const wchar_t* unicode_value);
+  Variable(ValueType type, const std::wstring& unicode_value);
+  Variable(ValueType type, std::wstring&& unicode_value);
+
+  // List/Tuple (extension types auto-computed)
+  Variable(ValueType type, const std::vector<std::shared_ptr<Variable>>& list_value);
+  Variable(ValueType type, std::vector<std::shared_ptr<Variable>>&& list_value);
+
+  // Set (extension types auto-computed)
+  Variable(ValueType type, const std::unordered_set<Variable>& set_value);
+  Variable(ValueType type, std::unordered_set<Variable>&& set_value);
+
+  // Dict (extension types auto-computed)
+  Variable(ValueType type, const std::unordered_map<Variable, std::shared_ptr<Variable>>& dict_value);
+  Variable(ValueType type, std::unordered_map<Variable, std::shared_ptr<Variable>>&& dict_value);
 
   // copy/move constructors
   Variable(const Variable&);
@@ -75,6 +91,7 @@ struct Variable {
   ~Variable();
 
   void clear_value();
+  Variable type_only() const;
 
   std::string str() const;
 
