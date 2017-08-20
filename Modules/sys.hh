@@ -5,3 +5,4 @@
 #include "../Analysis.hh"
 
 extern std::shared_ptr<ModuleAnalysis> sys_module;
+void sys_initialize();

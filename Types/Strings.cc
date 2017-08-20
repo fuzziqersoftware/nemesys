@@ -57,6 +57,10 @@ bool bytes_contains(const BytesObject* haystack, const BytesObject* needle) {
       needle->data, needle->count * sizeof(uint8_t));
 }
 
+string bytes_to_cxx_string(const BytesObject* s) {
+  return string(s->data, s->count);
+}
+
 
 
 UnicodeObject::UnicodeObject() : basic(free), count(0) { }
@@ -105,4 +109,8 @@ size_t unicode_length(const UnicodeObject* s) {
 bool unicode_contains(const UnicodeObject* haystack, const UnicodeObject* needle) {
   return memmem(haystack->data, haystack->count * sizeof(wchar_t),
       needle->data, needle->count * sizeof(wchar_t));
+}
+
+wstring unicode_to_cxx_wstring(const UnicodeObject* s) {
+  return wstring(s->data, s->count);
 }

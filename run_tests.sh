@@ -14,5 +14,9 @@ echo "-- tests.integers"
 ./nemesys tests.integers | diff -U3 tests/integers.expected_output -
 echo "-- tests.functions"
 ./nemesys tests.functions | diff -U3 tests/functions.expected_output -
+echo "-- tests.lists"
+./nemesys tests.lists | diff -U3 tests/lists.expected_output -
+echo "-- tests.loops"
+./nemesys tests.loops | diff -U3 tests/loops.expected_output -
 
 echo "-- all tests passed"

@@ -23,6 +23,7 @@ void* CodeBuffer::append(const void* data, size_t size) {
     shared_ptr<Block> block = block_it->second;
     this->free_bytes_to_block.erase(block_it);
     this->free_bytes_to_block.emplace(block->size - block->used_bytes, block);
+    this->used_bytes += size;
     return block->append(data, size);
   }
 
@@ -31,6 +32,8 @@ void* CodeBuffer::append(const void* data, size_t size) {
       (size + 0x0FFF) & 0xFFFFFFFFFFFFF000 : this->block_size;
   shared_ptr<Block> block(new Block(new_block_size));
   this->free_bytes_to_block.emplace(new_block_size - size, block);
+  this->size += new_block_size;
+  this->used_bytes += size;
   return block->append(data, size);
 }
 

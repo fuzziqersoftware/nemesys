@@ -170,7 +170,7 @@ FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
 ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename,
     bool is_code) : phase(Phase::Initial), name(name),
     source(new SourceFile(filename, is_code)), global_base_offset(-1),
-    num_splits(0), compiled(NULL) {
+    num_splits(0), compiled(NULL), compiled_size(0) {
   // TODO: using unescape_unicode is a stupid hack, but these strings can't
   // contain backslashes anyway (right? ...right?)
   this->globals.emplace(piecewise_construct, forward_as_tuple("__name__"),
@@ -452,8 +452,18 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
         scope_name.c_str());
   }
 
+  Variable return_type(ValueType::None);
+  if (v->return_types().size() > 1) {
+    throw compile_error("scope has multiple return types");
+  }
+  if (!v->return_types().empty()) {
+    // there's exactly one return type
+    return_type = *v->return_types().begin();
+  }
+
   string compiled = v->assembler().assemble(&compiled_labels);
   const void* executable = this->code.append(compiled);
+  module->compiled_size += compiled.size();
 
   if (this->debug_flags & DebugFlag::Assembly) {
     fprintf(stderr, "[%s] ======== scope assembled\n", scope_name.c_str());
@@ -462,15 +472,6 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
     string disassembly = AMD64Assembler::disassemble(compiled.data(),
         compiled.size(), addr, &compiled_labels);
     fprintf(stderr, "\n%s\n", disassembly.c_str());
-  }
-
-  Variable return_type(ValueType::None);
-  if (v->return_types().size() > 1) {
-    throw compile_error("scope has multiple return types");
-  }
-  if (!v->return_types().empty()) {
-    // there's exactly one return type
-    return_type = *v->return_types().begin();
   }
 
   return FunctionContext::Fragment(return_type, executable, move(compiled_labels));

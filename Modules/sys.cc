@@ -75,3 +75,8 @@ static map<string, Variable> globals({
 });
 
 std::shared_ptr<ModuleAnalysis> sys_module(new ModuleAnalysis("sys", globals));
+
+void sys_initialize() {
+  // nothing to do here for now. in the future this is where we would create
+  // function ids for the functions defined in this module
+}

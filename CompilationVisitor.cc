@@ -1374,6 +1374,7 @@ void CompilationVisitor::visit(ReturnStatement* a) {
   }
 
   // the value should be returned in rax
+  this->as.write_label(string_printf("__ReturnStatement_%p_evaluate_expression", a));
   this->target_register = Register::RAX;
   a->value->accept(this);
 
@@ -1382,6 +1383,7 @@ void CompilationVisitor::visit(ReturnStatement* a) {
 
   // generate a jump to the end of the function (this is right before the
   // relevant destructor calls)
+  this->as.write_label(string_printf("__ReturnStatement_%p_return", a));
   this->as.write_jmp(this->return_label);
 }
 
@@ -1847,11 +1849,15 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
   for (auto it = this->target_function->locals.crbegin();
        it != this->target_function->locals.crend(); it++) {
     if (type_has_refcount(it->second.type)) {
-      this->write_pop(Register::RDI);
-      this->write_delete_reference(MemoryReference(Register::RDI), it->second);
+      // TODO: this is dumb; we can probably optimize this to eliminate some
+      // memory accesses here. we have to preserve the value in rax somehow but
+      // we can't easily use the stack since we're popping locals off of it
+      this->as.write_xchg(Register::RAX, MemoryReference(Register::RSP, 0));
+      this->write_delete_reference(MemoryReference(Register::RAX), it->second);
+      this->write_pop(Register::RAX);
     } else {
       // no destructor; just skip it
-      // TODO: we can coalesce these for great justice
+      // TODO: we can coalesce these adds for great justice
       this->adjust_stack(8);
     }
   }

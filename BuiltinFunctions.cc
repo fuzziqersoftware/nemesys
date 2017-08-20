@@ -18,6 +18,7 @@
 #include "PythonLexer.hh" // for escape()
 
 // builtin module implementations
+#include "Modules/__nemesys__.hh"
 #include "Modules/sys.hh"
 
 using namespace std;
@@ -161,47 +162,69 @@ static int64_t builtin_len_list(ListObject* l) {
 
 
 
-// all builtin functions have negative function IDs
-const unordered_map<string, int64_t> builtin_function_to_id({
-  {"print", -1},
-  {"input", -2},
-  {"int",   -3},
-  {"repr",  -4},
-  {"len",   -5},
-});
+unordered_map<string, int64_t> builtin_function_to_id;
+unordered_map<int64_t, FunctionContext> builtin_function_definitions;
+unordered_map<string, Variable> builtin_names;
 
 
 
 using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
 
-unordered_map<int64_t, FunctionContext> builtin_function_definitions({
+int64_t create_builtin_function(const char* name,
+    const vector<Variable>& arg_types, const Variable& return_type,
+    const void* compiled, bool register_globally) {
+  vector<FragDef> defs({{arg_types, return_type, compiled}});
+  return create_builtin_function(name, defs, register_globally);
+}
+
+int64_t create_builtin_function(const char* name,
+    const vector<FragDef>& fragments, bool register_globally) {
+  // all builtin functions have negative function IDs
+  static int64_t next_function_id = -1;
+  int64_t function_id = next_function_id--;
+
+  builtin_function_definitions.emplace(function_id, FunctionContext(NULL,
+      function_id, name, fragments));
+  if (register_globally) {
+    create_builtin_name(name, Variable(ValueType::Function, function_id));
+  }
+
+  return function_id;
+}
+
+void create_builtin_name(const char* name, const Variable& value) {
+  builtin_names.emplace(name, value);
+}
+
+
+
+void create_default_builtin_functions() {
   // None print(Unicode)
-  {builtin_function_to_id.at("print"),
-    FunctionContext(NULL, builtin_function_to_id.at("print"), "print",
-        {Variable(ValueType::Unicode)}, Variable(ValueType::None),
-        reinterpret_cast<const void*>(&builtin_print))},
+  create_builtin_function("print", {Variable(ValueType::Unicode)},
+      Variable(ValueType::None), reinterpret_cast<const void*>(&builtin_print),
+      true);
+
   // Unicode input(Unicode='')
-  {builtin_function_to_id.at("input"),
-    FunctionContext(NULL, builtin_function_to_id.at("input"), "input",
-        {Variable(ValueType::Unicode, L"")}, Variable(ValueType::Unicode),
-        reinterpret_cast<const void*>(&builtin_input))},
+  create_builtin_function("input", {Variable(ValueType::Unicode, L"")},
+      Variable(ValueType::Unicode), reinterpret_cast<const void*>(&builtin_input),
+      true);
+
   // Int int(Bytes, Int=0)
   // Int int(Unicode, Int=0)
-  {builtin_function_to_id.at("int"),
-    FunctionContext(NULL, builtin_function_to_id.at("int"), "int", {
+  create_builtin_function("int", {
       FragDef({Variable(ValueType::Bytes), Variable(ValueType::Int, 0LL)},
         Variable(ValueType::Int), reinterpret_cast<const void*>(&builtin_int_bytes)),
       FragDef({Variable(ValueType::Unicode), Variable(ValueType::Int, 0LL)},
         Variable(ValueType::Int), reinterpret_cast<const void*>(&builtin_int_unicode)),
-    })},
+  }, true);
+
   // Unicode repr(None)
   // Unicode repr(Bool)
   // Unicode repr(Int)
   // Unicode repr(Float)
   // Unicode repr(Bytes)
   // Unicode repr(Unicode)
-  {builtin_function_to_id.at("repr"),
-    FunctionContext(NULL, builtin_function_to_id.at("int"), "int", {
+  create_builtin_function("repr", {
       FragDef({Variable(ValueType::None)}, Variable(ValueType::Unicode),
         reinterpret_cast<const void*>(&builtin_repr_none)),
       FragDef({Variable(ValueType::Bool)}, Variable(ValueType::Unicode),
@@ -214,12 +237,12 @@ unordered_map<int64_t, FunctionContext> builtin_function_definitions({
         reinterpret_cast<const void*>(&builtin_repr_bytes)),
       FragDef({Variable(ValueType::Unicode)}, Variable(ValueType::Unicode),
         reinterpret_cast<const void*>(&builtin_repr_unicode)),
-    })},
+  }, true);
+
   // Int len(Bytes)
   // Int len(Unicode)
   // Int len(List[Any])
-  {builtin_function_to_id.at("len"),
-    FunctionContext(NULL, builtin_function_to_id.at("len"), "len", {
+  create_builtin_function("len", {
       FragDef({Variable(ValueType::Bytes)}, Variable(ValueType::Int),
         reinterpret_cast<const void*>(&builtin_len_bytes)),
       FragDef({Variable(ValueType::Unicode)}, Variable(ValueType::Int),
@@ -227,171 +250,176 @@ unordered_map<int64_t, FunctionContext> builtin_function_definitions({
       FragDef({Variable(ValueType::List, vector<Variable>({Variable()}))},
         Variable(ValueType::Int),
         reinterpret_cast<const void*>(&builtin_len_list)),
-    })},
-});
+  }, true);
+}
 
+void create_default_builtin_names() {
+  static const unordered_map<Variable, shared_ptr<Variable>> empty_dict_contents;
+  static const Variable empty_dict(ValueType::Dict, empty_dict_contents);
 
+  create_builtin_name("__annotations__",           empty_dict);
+  create_builtin_name("__build_class__",           Variable(ValueType::Function));
+  create_builtin_name("__debug__",                 Variable(ValueType::Bool, true));
+  create_builtin_name("__doc__",                   Variable(ValueType::None));
+  create_builtin_name("__import__",                Variable(ValueType::Function));
+  create_builtin_name("__loader__",                Variable(ValueType::None));
+  create_builtin_name("__name__",                  Variable(ValueType::Unicode));
+  create_builtin_name("__package__",               Variable(ValueType::None));
+  create_builtin_name("__spec__",                  Variable(ValueType::None));
+  create_builtin_name("ArithmeticError",           Variable(ValueType::Function));
+  create_builtin_name("AssertionError",            Variable(ValueType::Function));
+  create_builtin_name("AttributeError",            Variable(ValueType::Function));
+  create_builtin_name("BaseException",             Variable(ValueType::Function));
+  create_builtin_name("BlockingIOError",           Variable(ValueType::Function));
+  create_builtin_name("BrokenPipeError",           Variable(ValueType::Function));
+  create_builtin_name("BufferError",               Variable(ValueType::Function));
+  create_builtin_name("BytesWarning",              Variable(ValueType::Function));
+  create_builtin_name("ChildProcessError",         Variable(ValueType::Function));
+  create_builtin_name("ConnectionAbortedError",    Variable(ValueType::Function));
+  create_builtin_name("ConnectionError",           Variable(ValueType::Function));
+  create_builtin_name("ConnectionRefusedError",    Variable(ValueType::Function));
+  create_builtin_name("ConnectionResetError",      Variable(ValueType::Function));
+  create_builtin_name("DeprecationWarning",        Variable(ValueType::Function));
+  create_builtin_name("EOFError",                  Variable(ValueType::Function));
+  create_builtin_name("Ellipsis",                  Variable());
+  create_builtin_name("EnvironmentError",          Variable(ValueType::Function));
+  create_builtin_name("Exception",                 Variable(ValueType::Function));
+  create_builtin_name("FileExistsError",           Variable(ValueType::Function));
+  create_builtin_name("FileNotFoundError",         Variable(ValueType::Function));
+  create_builtin_name("FloatingPointError",        Variable(ValueType::Function));
+  create_builtin_name("FutureWarning",             Variable(ValueType::Function));
+  create_builtin_name("GeneratorExit",             Variable(ValueType::Function));
+  create_builtin_name("IOError",                   Variable(ValueType::Function));
+  create_builtin_name("ImportError",               Variable(ValueType::Function));
+  create_builtin_name("ImportWarning",             Variable(ValueType::Function));
+  create_builtin_name("IndentationError",          Variable(ValueType::Function));
+  create_builtin_name("IndexError",                Variable(ValueType::Function));
+  create_builtin_name("InterruptedError",          Variable(ValueType::Function));
+  create_builtin_name("IsADirectoryError",         Variable(ValueType::Function));
+  create_builtin_name("KeyError",                  Variable(ValueType::Function));
+  create_builtin_name("KeyboardInterrupt",         Variable(ValueType::Function));
+  create_builtin_name("LookupError",               Variable(ValueType::Function));
+  create_builtin_name("MemoryError",               Variable(ValueType::Function));
+  create_builtin_name("ModuleNotFoundError",       Variable(ValueType::Function));
+  create_builtin_name("NameError",                 Variable(ValueType::Function));
+  create_builtin_name("NotADirectoryError",        Variable(ValueType::Function));
+  create_builtin_name("NotImplemented",            Variable());
+  create_builtin_name("NotImplementedError",       Variable(ValueType::Function));
+  create_builtin_name("OSError",                   Variable(ValueType::Function));
+  create_builtin_name("OverflowError",             Variable(ValueType::Function));
+  create_builtin_name("PendingDeprecationWarning", Variable(ValueType::Function));
+  create_builtin_name("PermissionError",           Variable(ValueType::Function));
+  create_builtin_name("ProcessLookupError",        Variable(ValueType::Function));
+  create_builtin_name("RecursionError",            Variable(ValueType::Function));
+  create_builtin_name("ReferenceError",            Variable(ValueType::Function));
+  create_builtin_name("ResourceWarning",           Variable(ValueType::Function));
+  create_builtin_name("RuntimeError",              Variable(ValueType::Function));
+  create_builtin_name("RuntimeWarning",            Variable(ValueType::Function));
+  create_builtin_name("StopAsyncIteration",        Variable(ValueType::Function));
+  create_builtin_name("StopIteration",             Variable(ValueType::Function));
+  create_builtin_name("SyntaxError",               Variable(ValueType::Function));
+  create_builtin_name("SyntaxWarning",             Variable(ValueType::Function));
+  create_builtin_name("SystemError",               Variable(ValueType::Function));
+  create_builtin_name("SystemExit",                Variable(ValueType::Function));
+  create_builtin_name("TabError",                  Variable(ValueType::Function));
+  create_builtin_name("TimeoutError",              Variable(ValueType::Function));
+  create_builtin_name("TypeError",                 Variable(ValueType::Function));
+  create_builtin_name("UnboundLocalError",         Variable(ValueType::Function));
+  create_builtin_name("UnicodeEncodeError",        Variable(ValueType::Function));
+  create_builtin_name("UnicodeTranslateError",     Variable(ValueType::Function));
+  create_builtin_name("UserWarning",               Variable(ValueType::Function));
+  create_builtin_name("UnicodeDecodeError",        Variable(ValueType::Function));
+  create_builtin_name("UnicodeError",              Variable(ValueType::Function));
+  create_builtin_name("UnicodeWarning",            Variable(ValueType::Function));
+  create_builtin_name("ValueError",                Variable(ValueType::Function));
+  create_builtin_name("Warning",                   Variable(ValueType::Function));
+  create_builtin_name("ZeroDivisionError",         Variable(ValueType::Function));
+  create_builtin_name("abs",                       Variable(ValueType::Function));
+  create_builtin_name("all",                       Variable(ValueType::Function));
+  create_builtin_name("any",                       Variable(ValueType::Function));
+  create_builtin_name("ascii",                     Variable(ValueType::Function));
+  create_builtin_name("bin",                       Variable(ValueType::Function));
+  create_builtin_name("bool",                      Variable(ValueType::Function));
+  create_builtin_name("bytearray",                 Variable(ValueType::Function));
+  create_builtin_name("bytes",                     Variable(ValueType::Function));
+  create_builtin_name("callable",                  Variable(ValueType::Function));
+  create_builtin_name("chr",                       Variable(ValueType::Function));
+  create_builtin_name("classmethod",               Variable(ValueType::Function));
+  create_builtin_name("compile",                   Variable(ValueType::Function));
+  create_builtin_name("complex",                   Variable(ValueType::Function));
+  create_builtin_name("copyright",                 Variable(ValueType::Function));
+  create_builtin_name("credits",                   Variable(ValueType::Function));
+  create_builtin_name("delattr",                   Variable(ValueType::Function));
+  create_builtin_name("dict",                      Variable(ValueType::Function));
+  create_builtin_name("dir",                       Variable(ValueType::Function));
+  create_builtin_name("divmod",                    Variable(ValueType::Function));
+  create_builtin_name("enumerate",                 Variable(ValueType::Function));
+  create_builtin_name("eval",                      Variable(ValueType::Function));
+  create_builtin_name("exec",                      Variable(ValueType::Function));
+  create_builtin_name("exit",                      Variable(ValueType::Function));
+  create_builtin_name("filter",                    Variable(ValueType::Function));
+  create_builtin_name("float",                     Variable(ValueType::Function));
+  create_builtin_name("format",                    Variable(ValueType::Function));
+  create_builtin_name("frozenset",                 Variable(ValueType::Function));
+  create_builtin_name("getattr",                   Variable(ValueType::Function));
+  create_builtin_name("globals",                   Variable(ValueType::Function));
+  create_builtin_name("hasattr",                   Variable(ValueType::Function));
+  create_builtin_name("hash",                      Variable(ValueType::Function));
+  create_builtin_name("help",                      Variable(ValueType::Function));
+  create_builtin_name("hex",                       Variable(ValueType::Function));
+  create_builtin_name("id",                        Variable(ValueType::Function));
+  create_builtin_name("isinstance",                Variable(ValueType::Function));
+  create_builtin_name("issubclass",                Variable(ValueType::Function));
+  create_builtin_name("iter",                      Variable(ValueType::Function));
+  create_builtin_name("license",                   Variable(ValueType::Function));
+  create_builtin_name("list",                      Variable(ValueType::Function));
+  create_builtin_name("locals",                    Variable(ValueType::Function));
+  create_builtin_name("map",                       Variable(ValueType::Function));
+  create_builtin_name("max",                       Variable(ValueType::Function));
+  create_builtin_name("memoryview",                Variable(ValueType::Function));
+  create_builtin_name("min",                       Variable(ValueType::Function));
+  create_builtin_name("next",                      Variable(ValueType::Function));
+  create_builtin_name("object",                    Variable(ValueType::Function));
+  create_builtin_name("oct",                       Variable(ValueType::Function));
+  create_builtin_name("open",                      Variable(ValueType::Function));
+  create_builtin_name("ord",                       Variable(ValueType::Function));
+  create_builtin_name("pow",                       Variable(ValueType::Function));
+  create_builtin_name("property",                  Variable(ValueType::Function));
+  create_builtin_name("quit",                      Variable(ValueType::Function));
+  create_builtin_name("range",                     Variable(ValueType::Function));
+  create_builtin_name("reversed",                  Variable(ValueType::Function));
+  create_builtin_name("round",                     Variable(ValueType::Function));
+  create_builtin_name("set",                       Variable(ValueType::Function));
+  create_builtin_name("setattr",                   Variable(ValueType::Function));
+  create_builtin_name("slice",                     Variable(ValueType::Function));
+  create_builtin_name("sorted",                    Variable(ValueType::Function));
+  create_builtin_name("staticmethod",              Variable(ValueType::Function));
+  create_builtin_name("str",                       Variable(ValueType::Function));
+  create_builtin_name("sum",                       Variable(ValueType::Function));
+  create_builtin_name("super",                     Variable(ValueType::Function));
+  create_builtin_name("tuple",                     Variable(ValueType::Function));
+  create_builtin_name("type",                      Variable(ValueType::Function));
+  create_builtin_name("vars",                      Variable(ValueType::Function));
+  create_builtin_name("zip",                       Variable(ValueType::Function));
 
-unordered_map<Variable, shared_ptr<Variable>> empty_dict_contents;
-static const Variable empty_dict(ValueType::Dict, empty_dict_contents);
+  create_default_builtin_functions();
+}
 
-
-
-// TODO: we'll have to do more than this in the future for builtins
-const unordered_map<string, Variable> builtin_names({
-  {"__annotations__",           empty_dict},
-  {"__build_class__",           Variable(ValueType::Function)},
-  {"__debug__",                 Variable(ValueType::Bool, true)},
-  {"__doc__",                   Variable(ValueType::None)},
-  {"__import__",                Variable(ValueType::Function)},
-  {"__loader__",                Variable(ValueType::None)},
-  {"__name__",                  Variable(ValueType::Unicode)},
-  {"__package__",               Variable(ValueType::None)},
-  {"__spec__",                  Variable(ValueType::None)},
-  {"ArithmeticError",           Variable(ValueType::Function)},
-  {"AssertionError",            Variable(ValueType::Function)},
-  {"AttributeError",            Variable(ValueType::Function)},
-  {"BaseException",             Variable(ValueType::Function)},
-  {"BlockingIOError",           Variable(ValueType::Function)},
-  {"BrokenPipeError",           Variable(ValueType::Function)},
-  {"BufferError",               Variable(ValueType::Function)},
-  {"BytesWarning",              Variable(ValueType::Function)},
-  {"ChildProcessError",         Variable(ValueType::Function)},
-  {"ConnectionAbortedError",    Variable(ValueType::Function)},
-  {"ConnectionError",           Variable(ValueType::Function)},
-  {"ConnectionRefusedError",    Variable(ValueType::Function)},
-  {"ConnectionResetError",      Variable(ValueType::Function)},
-  {"DeprecationWarning",        Variable(ValueType::Function)},
-  {"EOFError",                  Variable(ValueType::Function)},
-  {"Ellipsis",                  Variable()},
-  {"EnvironmentError",          Variable(ValueType::Function)},
-  {"Exception",                 Variable(ValueType::Function)},
-  {"FileExistsError",           Variable(ValueType::Function)},
-  {"FileNotFoundError",         Variable(ValueType::Function)},
-  {"FloatingPointError",        Variable(ValueType::Function)},
-  {"FutureWarning",             Variable(ValueType::Function)},
-  {"GeneratorExit",             Variable(ValueType::Function)},
-  {"IOError",                   Variable(ValueType::Function)},
-  {"ImportError",               Variable(ValueType::Function)},
-  {"ImportWarning",             Variable(ValueType::Function)},
-  {"IndentationError",          Variable(ValueType::Function)},
-  {"IndexError",                Variable(ValueType::Function)},
-  {"InterruptedError",          Variable(ValueType::Function)},
-  {"IsADirectoryError",         Variable(ValueType::Function)},
-  {"KeyError",                  Variable(ValueType::Function)},
-  {"KeyboardInterrupt",         Variable(ValueType::Function)},
-  {"LookupError",               Variable(ValueType::Function)},
-  {"MemoryError",               Variable(ValueType::Function)},
-  {"ModuleNotFoundError",       Variable(ValueType::Function)},
-  {"NameError",                 Variable(ValueType::Function)},
-  {"NotADirectoryError",        Variable(ValueType::Function)},
-  {"NotImplemented",            Variable()},
-  {"NotImplementedError",       Variable(ValueType::Function)},
-  {"OSError",                   Variable(ValueType::Function)},
-  {"OverflowError",             Variable(ValueType::Function)},
-  {"PendingDeprecationWarning", Variable(ValueType::Function)},
-  {"PermissionError",           Variable(ValueType::Function)},
-  {"ProcessLookupError",        Variable(ValueType::Function)},
-  {"RecursionError",            Variable(ValueType::Function)},
-  {"ReferenceError",            Variable(ValueType::Function)},
-  {"ResourceWarning",           Variable(ValueType::Function)},
-  {"RuntimeError",              Variable(ValueType::Function)},
-  {"RuntimeWarning",            Variable(ValueType::Function)},
-  {"StopAsyncIteration",        Variable(ValueType::Function)},
-  {"StopIteration",             Variable(ValueType::Function)},
-  {"SyntaxError",               Variable(ValueType::Function)},
-  {"SyntaxWarning",             Variable(ValueType::Function)},
-  {"SystemError",               Variable(ValueType::Function)},
-  {"SystemExit",                Variable(ValueType::Function)},
-  {"TabError",                  Variable(ValueType::Function)},
-  {"TimeoutError",              Variable(ValueType::Function)},
-  {"TypeError",                 Variable(ValueType::Function)},
-  {"UnboundLocalError",         Variable(ValueType::Function)},
-  {"UnicodeEncodeError",        Variable(ValueType::Function)},
-  {"UnicodeTranslateError",     Variable(ValueType::Function)},
-  {"UserWarning",               Variable(ValueType::Function)},
-  {"UnicodeDecodeError",        Variable(ValueType::Function)},
-  {"UnicodeError",              Variable(ValueType::Function)},
-  {"UnicodeWarning",            Variable(ValueType::Function)},
-  {"ValueError",                Variable(ValueType::Function)},
-  {"Warning",                   Variable(ValueType::Function)},
-  {"ZeroDivisionError",         Variable(ValueType::Function)},
-  {"abs",                       Variable(ValueType::Function)},
-  {"all",                       Variable(ValueType::Function)},
-  {"any",                       Variable(ValueType::Function)},
-  {"ascii",                     Variable(ValueType::Function)},
-  {"bin",                       Variable(ValueType::Function)},
-  {"bool",                      Variable(ValueType::Function)},
-  {"bytearray",                 Variable(ValueType::Function)},
-  {"bytes",                     Variable(ValueType::Function)},
-  {"callable",                  Variable(ValueType::Function)},
-  {"chr",                       Variable(ValueType::Function)},
-  {"classmethod",               Variable(ValueType::Function)},
-  {"compile",                   Variable(ValueType::Function)},
-  {"complex",                   Variable(ValueType::Function)},
-  {"copyright",                 Variable(ValueType::Function)},
-  {"credits",                   Variable(ValueType::Function)},
-  {"delattr",                   Variable(ValueType::Function)},
-  {"dict",                      Variable(ValueType::Function)},
-  {"dir",                       Variable(ValueType::Function)},
-  {"divmod",                    Variable(ValueType::Function)},
-  {"enumerate",                 Variable(ValueType::Function)},
-  {"eval",                      Variable(ValueType::Function)},
-  {"exec",                      Variable(ValueType::Function)},
-  {"exit",                      Variable(ValueType::Function)},
-  {"filter",                    Variable(ValueType::Function)},
-  {"float",                     Variable(ValueType::Function)},
-  {"format",                    Variable(ValueType::Function)},
-  {"frozenset",                 Variable(ValueType::Function)},
-  {"getattr",                   Variable(ValueType::Function)},
-  {"globals",                   Variable(ValueType::Function)},
-  {"hasattr",                   Variable(ValueType::Function)},
-  {"hash",                      Variable(ValueType::Function)},
-  {"help",                      Variable(ValueType::Function)},
-  {"hex",                       Variable(ValueType::Function)},
-  {"id",                        Variable(ValueType::Function)},
-  {"input",                     Variable(ValueType::Function, builtin_function_to_id.at("input"))},
-  {"int",                       Variable(ValueType::Function, builtin_function_to_id.at("int"))},
-  {"isinstance",                Variable(ValueType::Function)},
-  {"issubclass",                Variable(ValueType::Function)},
-  {"iter",                      Variable(ValueType::Function)},
-  {"len",                       Variable(ValueType::Function, builtin_function_to_id.at("len"))},
-  {"license",                   Variable(ValueType::Function)},
-  {"list",                      Variable(ValueType::Function)},
-  {"locals",                    Variable(ValueType::Function)},
-  {"map",                       Variable(ValueType::Function)},
-  {"max",                       Variable(ValueType::Function)},
-  {"memoryview",                Variable(ValueType::Function)},
-  {"min",                       Variable(ValueType::Function)},
-  {"next",                      Variable(ValueType::Function)},
-  {"object",                    Variable(ValueType::Function)},
-  {"oct",                       Variable(ValueType::Function)},
-  {"open",                      Variable(ValueType::Function)},
-  {"ord",                       Variable(ValueType::Function)},
-  {"pow",                       Variable(ValueType::Function)},
-  {"print",                     Variable(ValueType::Function, builtin_function_to_id.at("print"))},
-  {"property",                  Variable(ValueType::Function)},
-  {"quit",                      Variable(ValueType::Function)},
-  {"range",                     Variable(ValueType::Function)},
-  {"repr",                      Variable(ValueType::Function, builtin_function_to_id.at("repr"))},
-  {"reversed",                  Variable(ValueType::Function)},
-  {"round",                     Variable(ValueType::Function)},
-  {"set",                       Variable(ValueType::Function)},
-  {"setattr",                   Variable(ValueType::Function)},
-  {"slice",                     Variable(ValueType::Function)},
-  {"sorted",                    Variable(ValueType::Function)},
-  {"staticmethod",              Variable(ValueType::Function)},
-  {"str",                       Variable(ValueType::Function)},
-  {"sum",                       Variable(ValueType::Function)},
-  {"super",                     Variable(ValueType::Function)},
-  {"tuple",                     Variable(ValueType::Function)},
-  {"type",                      Variable(ValueType::Function)},
-  {"vars",                      Variable(ValueType::Function)},
-  {"zip",                       Variable(ValueType::Function)},
-});
-
-std::shared_ptr<ModuleAnalysis> get_builtin_module(const std::string& module_name) {
+shared_ptr<ModuleAnalysis> get_builtin_module(const string& module_name) {
+  if (module_name == "__nemesys__") {
+    static bool initialized = false;
+    if (!initialized) {
+      __nemesys___initialize();
+      initialized = true;
+    }
+    return __nemesys___module;
+  }
   if (module_name == "sys") {
+    static bool initialized = false;
+    if (!initialized) {
+      sys_initialize();
+      initialized = true;
+    }
     return sys_module;
   }
   return NULL;

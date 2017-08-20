@@ -10,6 +10,8 @@
 #include "PythonParser.hh"
 #include "Environment.hh"
 #include "Analysis.hh"
+#include "BuiltinFunctions.hh"
+#include "Modules/__nemesys__.hh"
 
 using namespace std;
 
@@ -27,7 +29,7 @@ int main(int argc, char* argv[]) {
     return (-1);
   }
 
-  GlobalAnalysis global;
+  shared_ptr<GlobalAnalysis> global(new GlobalAnalysis());
   ModuleAnalysis::Phase target_phase = ModuleAnalysis::Phase::Imported;
   vector<ModuleLoadCommand> modules;
   for (size_t x = 1; x < argc; x++) {
@@ -49,7 +51,7 @@ int main(int argc, char* argv[]) {
     } else if (!strncmp(argv[x], "-X", 2)) {
       vector<string> debug_flags = split(&argv[x][2], ',');
       for (const auto& flag : debug_flags) {
-        global.debug_flags |= debug_flag_for_name(flag.c_str());
+        global->debug_flags |= debug_flag_for_name(flag.c_str());
       }
 
     } else if (!strncmp(argv[x], "-c", 2)) {
@@ -64,13 +66,17 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  __nemesys___set_global(global);
+
+  create_default_builtin_names();
+
   for (const auto& module : modules) {
     if (module.is_code) {
-      global.get_or_create_module("__imm__", &module.name);
-      global.get_module_at_phase("__imm__", target_phase);
+      global->get_or_create_module("__imm__", &module.name);
+      global->get_module_at_phase("__imm__", target_phase);
     } else {
-      global.get_or_create_module(module.name);
-      global.get_module_at_phase(module.name, target_phase);
+      global->get_or_create_module(module.name);
+      global->get_module_at_phase(module.name, target_phase);
     }
   }
 

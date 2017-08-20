@@ -143,6 +143,7 @@ public:
 
   std::multimap<size_t, std::string> compiled_labels;
   void (*compiled)(int64_t* global_space);
+  int64_t compiled_size;
 
   // constructor for imported modules
   ModuleAnalysis(const std::string& name, const std::string& filename_or_code,
