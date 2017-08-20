@@ -155,7 +155,9 @@ FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
   for (const auto& fragment_def : fragments) {
     this->return_types.emplace(fragment_def.return_type);
 
-    string signature = type_signature_for_variables(fragment_def.arg_types);
+    // built-in functions are allowed to have Indeterminate argument types; this
+    // means they accept any type (have to be careful with this, of course)
+    string signature = type_signature_for_variables(fragment_def.arg_types, true);
     int64_t fragment_id = this->arg_signature_to_fragment_id.size() + 1;
     this->arg_signature_to_fragment_id.emplace(signature, fragment_id);
     this->fragments.emplace(piecewise_construct, forward_as_tuple(fragment_id),

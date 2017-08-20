@@ -109,7 +109,8 @@ namespace std {
 
 bool type_has_refcount(ValueType type);
 
-std::string type_signature_for_variables(const std::vector<Variable>& vars);
+std::string type_signature_for_variables(const std::vector<Variable>& vars,
+    bool allow_indeterminate = false);
 
 Variable execute_unary_operator(UnaryOperator oper, const Variable& var);
 Variable execute_binary_operator(BinaryOperator oper, const Variable& left,

@@ -14,10 +14,11 @@
 
 #include "Analysis.hh"
 #include "Types/Strings.hh"
+#include "Types/List.hh"
 #include "PythonLexer.hh" // for escape()
 
 // builtin module implementations
-#include "modules/sys.hh"
+#include "Modules/sys.hh"
 
 using namespace std;
 
@@ -152,6 +153,12 @@ static int64_t builtin_len_unicode(UnicodeObject* s) {
   return ret;
 }
 
+static int64_t builtin_len_list(ListObject* l) {
+  int64_t ret = l->count;
+  delete_reference(l);
+  return ret;
+}
+
 
 
 // all builtin functions have negative function IDs
@@ -210,12 +217,16 @@ unordered_map<int64_t, FunctionContext> builtin_function_definitions({
     })},
   // Int len(Bytes)
   // Int len(Unicode)
+  // Int len(List[Any])
   {builtin_function_to_id.at("len"),
     FunctionContext(NULL, builtin_function_to_id.at("len"), "len", {
       FragDef({Variable(ValueType::Bytes)}, Variable(ValueType::Int),
         reinterpret_cast<const void*>(&builtin_len_bytes)),
       FragDef({Variable(ValueType::Unicode)}, Variable(ValueType::Int),
         reinterpret_cast<const void*>(&builtin_len_unicode)),
+      FragDef({Variable(ValueType::List, vector<Variable>({Variable()}))},
+        Variable(ValueType::Int),
+        reinterpret_cast<const void*>(&builtin_len_list)),
     })},
 });
 

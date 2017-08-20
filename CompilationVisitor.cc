@@ -999,27 +999,48 @@ void CompilationVisitor::visit(FunctionCall* a) {
     throw compile_error("can\'t generate argument signature for function call", this->file_offset);
   }
 
-  // generate a fragment id if necessary
+  // get the fragment id
   int64_t fragment_id;
   try {
     fragment_id = callee_context->arg_signature_to_fragment_id.at(arg_signature);
-  } catch (const std::out_of_range& e) {
-    // built-in functions can't be recompiled
-    if (!callee_context->module) {
-      throw compile_error(string_printf("built-in fragment %" PRId64 "+%s does not exist",
-          a->callee_function_id, arg_signature.c_str()), this->file_offset);
-    }
 
-    fragment_id = callee_context->arg_signature_to_fragment_id.emplace(
-        arg_signature, callee_context->fragments.size()).first->second;
+  // if there's no existing fragment with the right types, check if there's a
+  // fragment with Indeterminate extension types.
+  } catch (const std::out_of_range& e) {
+    // TODO: for now, just clear all the extension types and see if there's a
+    // match. this is an ugly hack that works for e.g. len() but won't work for
+    // more complex generic functions
+    for (auto& arg : arg_types) {
+      for (auto& ext_type : arg.extension_types) {
+        ext_type = Variable();
+      }
+    }
+    try {
+      arg_signature = type_signature_for_variables(arg_types, true);
+    } catch (const invalid_argument&) {
+      throw compile_error("can\'t generate argument signature for function call", this->file_offset);
+    }
+    try {
+      fragment_id = callee_context->arg_signature_to_fragment_id.at(arg_signature);
+    } catch (const std::out_of_range& e) {
+
+      // still no match. built-in functions can't be recompiled, so fail
+      if (!callee_context->module) {
+        throw compile_error(string_printf("built-in fragment %" PRId64 "+%s does not exist",
+            a->callee_function_id, arg_signature.c_str()), this->file_offset);
+      }
+
+      // this isn't a built-in function, so create a new fragment and compile it
+      fragment_id = callee_context->arg_signature_to_fragment_id.emplace(
+          arg_signature, callee_context->fragments.size()).first->second;
+    }
   }
 
-  // generate the fragment if necessary
+  // get or generate the Fragment object
   const FunctionContext::Fragment* fragment;
   try {
     fragment = &callee_context->fragments.at(fragment_id);
   } catch (const std::out_of_range& e) {
-    // o noez - it doesn't exist! try to compile it
     auto new_fragment = this->global->compile_scope(callee_context->module,
         callee_context, &callee_local_overrides);
     fragment = &callee_context->fragments.emplace(fragment_id, move(new_fragment)).first->second;

@@ -614,11 +614,16 @@ bool type_has_refcount(ValueType type) {
 
 
 
-std::string type_signature_for_variables(const vector<Variable>& vars) {
+std::string type_signature_for_variables(const vector<Variable>& vars,
+    bool allow_indeterminate) {
   string ret;
   for (const Variable& var : vars) {
     switch (var.type) {
       case ValueType::Indeterminate:
+        if (allow_indeterminate) {
+          ret += '?';
+          break;
+        }
         throw invalid_argument("cannot generate type signature for Indeterminate value");
 
       case ValueType::None:
@@ -650,8 +655,12 @@ std::string type_signature_for_variables(const vector<Variable>& vars) {
         break;
 
       case ValueType::List:
-        // TODO
-        throw invalid_argument("type signatures for Lists not implemented");
+        ret += 'L';
+        if (var.extension_types.size() != 1) {
+          throw invalid_argument("list does not have exactly one extension type");
+        }
+        ret += type_signature_for_variables(var.extension_types, allow_indeterminate);
+        break;
 
       case ValueType::Tuple:
         // TODO
