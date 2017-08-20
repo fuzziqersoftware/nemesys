@@ -22,6 +22,7 @@
 #include "Modules/sys.hh"
 
 using namespace std;
+using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
 
 
 
@@ -167,8 +168,6 @@ unordered_map<int64_t, FunctionContext> builtin_function_definitions;
 unordered_map<string, Variable> builtin_names;
 
 
-
-using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
 
 int64_t create_builtin_function(const char* name,
     const vector<Variable>& arg_types, const Variable& return_type,

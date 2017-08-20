@@ -17,6 +17,7 @@
 #include "../Types/Strings.hh"
 
 using namespace std;
+using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
 
 
 
@@ -57,8 +58,12 @@ static int64_t debug_flags() {
   return global->debug_flags;
 }
 
-static std::shared_ptr<ModuleAnalysis> get_module(BytesObject* module_name) {
-  string module_name_str = bytes_to_cxx_string(module_name);
+static std::shared_ptr<ModuleAnalysis> get_module(UnicodeObject* module_name) {
+  string module_name_str;
+  module_name_str.reserve(module_name->count);
+  for (size_t x = 0; x < module_name->count; x++) {
+    module_name_str += static_cast<char>(module_name->data[x]);
+  }
   try {
     return global->modules.at(module_name_str);
   } catch (const out_of_range&) {
@@ -66,14 +71,37 @@ static std::shared_ptr<ModuleAnalysis> get_module(BytesObject* module_name) {
   }
 }
 
-static int64_t module_phase(BytesObject* module_name) {
+static int64_t module_phase(UnicodeObject* module_name) {
   auto module = get_module(module_name);
   return module.get() ? module->phase : -1;
 }
 
-static int64_t module_compiled_size(BytesObject* module_name) {
+static int64_t module_compiled_size(UnicodeObject* module_name) {
   auto module = get_module(module_name);
   return module.get() ? module->compiled_size : -1;
+}
+
+static int64_t module_global_base(UnicodeObject* module_name) {
+  auto module = get_module(module_name);
+  return module.get() ? module->global_base_offset : -1;
+}
+
+static int64_t module_global_count(UnicodeObject* module_name) {
+  auto module = get_module(module_name);
+  return module.get() ? module->globals.size() : -1;
+}
+
+static BytesObject* module_source(UnicodeObject* module_name) {
+  auto module = get_module(module_name);
+  if (!module.get()) {
+    return bytes_new(NULL, NULL, 0);
+  }
+  if (!module->source.get()) {
+    return bytes_new(NULL, NULL, 0);
+  }
+  const string& data = module->source->data();
+  return bytes_new(NULL, reinterpret_cast<const uint8_t*>(data.data()),
+      data.size());
 }
 
 
@@ -83,45 +111,47 @@ void __nemesys___set_global(shared_ptr<GlobalAnalysis> new_global) {
 }
 
 void __nemesys___initialize() {
-  // TODO: make it so we don't have to modify two maps for each global, perhaps
-  // by converting globals_mutable to an unordered_set
-  __nemesys___module->globals.emplace("module_phase", Variable(ValueType::Function,
-      create_builtin_function("module_phase", {Variable(ValueType::Bytes)},
-        Variable(ValueType::Int), reinterpret_cast<const void*>(module_phase), false)));
-  __nemesys___module->globals_mutable.emplace("module_phase", false);
+  __nemesys___module->create_builtin_function("module_phase",
+      {Variable(ValueType::Unicode)}, Variable(ValueType::Int),
+      reinterpret_cast<const void*>(module_phase));
 
-  __nemesys___module->globals.emplace("module_compiled_size", Variable(ValueType::Function,
-      create_builtin_function("module_compiled_size", {Variable(ValueType::Bytes)},
-        Variable(ValueType::Int), reinterpret_cast<const void*>(module_compiled_size), false)));
-  __nemesys___module->globals_mutable.emplace("module_compiled_size", false);
+  __nemesys___module->create_builtin_function("module_compiled_size",
+      {Variable(ValueType::Unicode)}, Variable(ValueType::Int),
+      reinterpret_cast<const void*>(module_compiled_size));
 
-  __nemesys___module->globals.emplace("code_buffer_size", Variable(ValueType::Function,
-      create_builtin_function("code_buffer_size", {}, Variable(ValueType::Int),
-        reinterpret_cast<const void*>(code_buffer_size), false)));
-  __nemesys___module->globals_mutable.emplace("code_buffer_size", false);
+  __nemesys___module->create_builtin_function("module_global_base",
+      {Variable(ValueType::Unicode)}, Variable(ValueType::Int),
+      reinterpret_cast<const void*>(module_global_base));
 
-  __nemesys___module->globals.emplace("code_buffer_used_size", Variable(ValueType::Function,
-      create_builtin_function("code_buffer_used_size", {}, Variable(ValueType::Int),
-        reinterpret_cast<const void*>(code_buffer_used_size), false)));
-  __nemesys___module->globals_mutable.emplace("code_buffer_used_size", false);
+  __nemesys___module->create_builtin_function("module_global_count",
+      {Variable(ValueType::Unicode)}, Variable(ValueType::Int),
+      reinterpret_cast<const void*>(module_global_count));
 
-  __nemesys___module->globals.emplace("global_space", Variable(ValueType::Function,
-      create_builtin_function("global_space", {}, Variable(ValueType::Int),
-        reinterpret_cast<const void*>(global_space), false)));
-  __nemesys___module->globals_mutable.emplace("global_space", false);
+  __nemesys___module->create_builtin_function("module_source",
+      {Variable(ValueType::Unicode)}, Variable(ValueType::Bytes),
+      reinterpret_cast<const void*>(module_source));
 
-  __nemesys___module->globals.emplace("bytes_constant_count", Variable(ValueType::Function,
-      create_builtin_function("bytes_constant_count", {}, Variable(ValueType::Int),
-        reinterpret_cast<const void*>(bytes_constant_count), false)));
-  __nemesys___module->globals_mutable.emplace("bytes_constant_count", false);
+  __nemesys___module->create_builtin_function("code_buffer_size",
+      {}, Variable(ValueType::Int),
+      reinterpret_cast<const void*>(code_buffer_size));
 
-  __nemesys___module->globals.emplace("unicode_constant_count", Variable(ValueType::Function,
-      create_builtin_function("unicode_constant_count", {}, Variable(ValueType::Int),
-        reinterpret_cast<const void*>(unicode_constant_count), false)));
-  __nemesys___module->globals_mutable.emplace("unicode_constant_count", false);
+  __nemesys___module->create_builtin_function("code_buffer_used_size",
+      {}, Variable(ValueType::Int),
+      reinterpret_cast<const void*>(code_buffer_used_size));
 
-  __nemesys___module->globals.emplace("debug_flags", Variable(ValueType::Function,
-      create_builtin_function("debug_flags", {}, Variable(ValueType::Int),
-        reinterpret_cast<const void*>(debug_flags), false)));
-  __nemesys___module->globals_mutable.emplace("debug_flags", false);
+  __nemesys___module->create_builtin_function("global_space",
+      {}, Variable(ValueType::Int),
+      reinterpret_cast<const void*>(global_space));
+
+  __nemesys___module->create_builtin_function("bytes_constant_count",
+      {}, Variable(ValueType::Int),
+      reinterpret_cast<const void*>(bytes_constant_count));
+
+  __nemesys___module->create_builtin_function("unicode_constant_count",
+      {}, Variable(ValueType::Int),
+      reinterpret_cast<const void*>(unicode_constant_count));
+
+  __nemesys___module->create_builtin_function("debug_flags",
+      {}, Variable(ValueType::Int),
+      reinterpret_cast<const void*>(debug_flags));
 }

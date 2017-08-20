@@ -55,6 +55,8 @@ private:
   GlobalAnalysis* global;
   ModuleAnalysis* module;
 
+  std::unordered_map<std::string, int64_t> global_write_count;
+
   // temporary state
   int64_t in_function_id;
 

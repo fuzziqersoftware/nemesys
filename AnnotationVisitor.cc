@@ -41,10 +41,7 @@ void AnnotationVisitor::visit(ImportStatement* a) {
       if (!scope->emplace(it.first, ValueType::Indeterminate).second) {
         throw compile_error("name overwritten by import", a->file_offset);
       }
-      if (!context) {
-        // please don't modify names that you import
-        this->module->globals_mutable[it.first] = false;
-      }
+      this->global_write_count[it.first]++;
     }
 
     return;
@@ -59,10 +56,7 @@ void AnnotationVisitor::visit(ImportStatement* a) {
       if (!scope->emplace(it.second, Variable(ValueType::Module, it.first)).second) {
         throw compile_error("name overwritten by import", a->file_offset);
       }
-      if (!context) {
-        // please don't modify names that you import
-        this->module->globals_mutable[it.second] = false;
-      }
+      this->global_write_count[it.second]++;
     }
 
     return;
@@ -79,10 +73,7 @@ void AnnotationVisitor::visit(ImportStatement* a) {
     if (!scope->emplace(it.second, ValueType::Indeterminate).second) {
       throw compile_error("name overwritten by import", a->file_offset);
     }
-    if (!context) {
-      // please don't modify names that you import
-      this->module->globals_mutable[it.second] = false;
-    }
+    this->global_write_count[it.second]++;
   }
 
   this->RecursiveASTVisitor::visit(a);
@@ -101,7 +92,7 @@ void AnnotationVisitor::visit(GlobalStatement* a) {
           a->file_offset);
     }
     // assume mutable if referenced explicitly in a global statement
-    this->module->globals_mutable[name] = true;
+    this->module->globals_mutable.emplace(name);
     context->explicit_globals.emplace(name);
   }
 
@@ -235,11 +226,20 @@ void AnnotationVisitor::visit(FunctionCall* a) {
 void AnnotationVisitor::visit(ModuleStatement* a) {
   this->RecursiveASTVisitor::visit(a);
 
-  // almost done; now update the global analysis with what we learned
-
-  // reserve space for this module's globals
-  if (this->module->globals_mutable.size() != this->module->globals.size()) {
-    throw compile_error("global registration is incomplete", a->file_offset);
+  // sanity check: everything that appears in global_write_count must also
+  // appear in module->globals, and any global written more than once must also
+  // appear in globals_mutable
+  for (const auto& it : this->global_write_count) {
+    if (!this->module->globals.count(it.first)) {
+      throw compile_error(string_printf(
+          "global registration is incomplete (%s missing)", it.first.c_str()),
+          a->file_offset);
+    }
+    if ((it.second > 1) && !this->module->globals_mutable.count(it.first)) {
+      throw compile_error(string_printf(
+          "global registration is incomplete (%s overwritten but not mutable)",
+          it.first.c_str()), a->file_offset);
+    }
   }
 }
 
@@ -264,7 +264,7 @@ void AnnotationVisitor::record_write(const string& name, size_t file_offset) {
   auto* context = this->current_function();
   if (context) {
     if (context->explicit_globals.count(name)) {
-      this->module->globals_mutable[name] = true;
+      this->module->globals_mutable.emplace(name);
     } else {
       context->locals.emplace(piecewise_construct, forward_as_tuple(name),
           forward_as_tuple());
@@ -273,9 +273,9 @@ void AnnotationVisitor::record_write(const string& name, size_t file_offset) {
     // global write at module level. set it to mutable if this is not the
     // first write to this variable
     this->module->globals.emplace(name, ValueType::Indeterminate);
-    auto emplace_ret = this->module->globals_mutable.emplace(name, false);
-    if (!emplace_ret.second) {
-      emplace_ret.first->second = true;
+    size_t write_count = ++this->global_write_count[name];
+    if (write_count > 1) {
+      this->module->globals_mutable.emplace(name);
     }
   }
 }

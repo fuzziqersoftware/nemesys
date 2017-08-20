@@ -135,7 +135,7 @@ public:
 
   // the following are valid in the Annotated phase and later:
   // TODO: de-derpify this by merging these two maps into one
-  std::unordered_map<std::string, bool> globals_mutable;
+  std::unordered_set<std::string> globals_mutable;
   std::map<std::string, Variable> globals; // values invalid until Analyzed
   int64_t global_base_offset;
 
@@ -154,6 +154,12 @@ public:
       const std::map<std::string, Variable>& globals);
 
   ~ModuleAnalysis() = default;
+
+  int64_t create_builtin_function(const char* name,
+      const std::vector<Variable>& arg_types, const Variable& return_type,
+      const void* compiled);
+  int64_t create_builtin_function(const char* name,
+      const std::vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments);
 };
 
 

@@ -175,26 +175,34 @@ ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename,
   // contain backslashes anyway (right? ...right?)
   this->globals.emplace(piecewise_construct, forward_as_tuple("__name__"),
       forward_as_tuple(ValueType::Unicode, unescape_unicode(name)));
-  this->globals_mutable.emplace("__name__", false);
   if (is_code) {
     this->globals.emplace(piecewise_construct, forward_as_tuple("__file__"),
         forward_as_tuple(ValueType::Unicode, L"__imm__"));
-    this->globals_mutable.emplace("__file__", false);
   } else {
     this->globals.emplace(piecewise_construct, forward_as_tuple("__file__"),
         forward_as_tuple(ValueType::Unicode, unescape_unicode(filename)));
-    this->globals_mutable.emplace("__file__", false);
   }
 }
 
 ModuleAnalysis::ModuleAnalysis(const std::string& name,
     const std::map<std::string, Variable>& globals) : phase(Phase::Initial),
     name(name), source(NULL), ast_root(NULL), globals(globals),
-    global_base_offset(-1), num_splits(0), compiled(NULL) {
-  // for built-in modules, all globals are immutable
-  for (const auto& it : this->globals) {
-    this->globals_mutable.emplace(it.first, false);
-  }
+    global_base_offset(-1), num_splits(0), compiled(NULL) { }
+
+int64_t ModuleAnalysis::create_builtin_function(const char* name,
+    const std::vector<Variable>& arg_types, const Variable& return_type,
+    const void* compiled) {
+  int64_t function_id = ::create_builtin_function(name, arg_types, return_type,
+      compiled, false);
+  this->globals.emplace(name, Variable(ValueType::Function, function_id));
+  return function_id;
+}
+
+int64_t ModuleAnalysis::create_builtin_function(const char* name,
+    const std::vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments) {
+  int64_t function_id = ::create_builtin_function(name, fragments, false);
+  this->globals.emplace(name, Variable(ValueType::Function, function_id));
+  return function_id;
 }
 
 
@@ -309,11 +317,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
 
           for (const auto& it : module->globals) {
             const char* mutable_str;
-            try {
-              mutable_str = module->globals_mutable.at(it.first) ? "mutable" : "immutable";
-            } catch (const out_of_range& e) {
-              mutable_str = "MISSING";
-            }
+            mutable_str = module->globals_mutable.count(it.first) ? "mutable" : "immutable";
             fprintf(stderr, "# global: %s (%s)\n", it.first.c_str(), mutable_str);
           }
           fprintf(stderr, "# global space is now %p (%" PRId64 " bytes)\n",
@@ -343,7 +347,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
 
           int64_t offset = module->global_base_offset;
           for (const auto& it : module->globals) {
-            bool is_mutable = module->globals_mutable.at(it.first);
+            bool is_mutable = module->globals_mutable.count(it.first);
             string value_str = it.second.str();
             fprintf(stderr, "# global at r13+%" PRIX64 ": %s = %s (%s)\n",
                 offset, it.first.c_str(), value_str.c_str(),
@@ -610,7 +614,7 @@ void GlobalAnalysis::initialize_global_space_for_module(
   for (const auto& it : module->globals) {
     // if the global is mutable or we don't know it's value, we can't populate
     // it statically
-    if (module->globals_mutable.at(it.first) || !it.second.value_known) {
+    if (module->globals_mutable.count(it.first) || !it.second.value_known) {
       this->global_space[slot] = 0;
 
     } else {
