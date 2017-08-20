@@ -1076,10 +1076,39 @@ void CompilationVisitor::visit(VariableLookup* a) {
   }
 
   this->current_type = loc.type;
+  if (this->current_type.type == ValueType::Indeterminate) {
+    throw compile_error("variable has Indeterminate type", this->file_offset);
+  }
 }
 
 void CompilationVisitor::visit(AttributeLookup* a) {
   this->file_offset = a->file_offset;
+
+  // since modules are static, lookups are short-circuited (AnalysisVisitor
+  // stores the module name in the AST)
+  if (!a->base_module_name.empty()) {
+    // technically this only needs to be at Annotated phase, since we only need
+    // the global space to be updated with the module's variables. but we don't
+    // have a way of specifying import dependencies and we need to make sure the
+    // module's globals are written before the code we're generating executes,
+    // so we require Imported phase to enforce that.
+    auto module = this->global->get_module_at_phase(a->base_module_name,
+        ModuleAnalysis::Phase::Imported);
+    VariableLocation loc = this->location_for_global(module.get(), a->name);
+
+    // if this is an object, add a reference to it; otherwise just load it
+    this->as.write_mov(MemoryReference(this->target_register), loc.mem);
+    if (type_has_refcount(loc.type.type)) {
+      this->write_add_reference(MemoryReference(this->target_register, 0));
+    }
+
+    this->current_type = loc.type;
+    if (this->current_type.type == ValueType::Indeterminate) {
+      throw compile_error("attribute has Indeterminate type", this->file_offset);
+    }
+
+    return;
+  }
 
   // TODO
   throw compile_error("AttributeLookup not yet implemented", this->file_offset);
@@ -1772,40 +1801,51 @@ void CompilationVisitor::adjust_stack(ssize_t bytes) {
   this->stack_bytes_used -= bytes;
 }
 
-CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
-    const string& name) {
+CompilationVisitor::VariableLocation CompilationVisitor::location_for_global(
+    ModuleAnalysis* module, const string& name) {
   VariableLocation loc;
   loc.name = name;
 
   // if we're writing a global, use its global slot offset (from R13)
+  auto it = module->globals.find(name);
+  if (it == module->globals.end()) {
+    throw compile_error("nonexistent global: " + name, this->file_offset);
+  }
+  ssize_t offset = distance(module->globals.begin(), it);
+  loc.offset = offset * sizeof(int64_t);
+  loc.is_global = true;
+  loc.type = it->second;
+  loc.mem = MemoryReference(Register::R13,
+      loc.offset + module->global_base_offset);
+
+  return loc;
+}
+
+CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
+    const string& name) {
+
+  // if we're writing a global, use its global slot offset (from R13)
   if (!this->target_function || !this->target_function->locals.count(name)) {
-    auto it = this->module->globals.find(name);
-    if (it == this->module->globals.end()) {
-      throw compile_error("nonexistent global: " + name, this->file_offset);
-    }
-    ssize_t offset = distance(this->module->globals.begin(), it);
-    loc.offset = offset * sizeof(int64_t);
-    loc.is_global = true;
-    loc.type = it->second;
-    loc.mem = MemoryReference(Register::R13,
-        loc.offset + this->module->global_base_offset);
+    return this->location_for_global(this->module, name);
+  }
 
   // if we're writing a local, use its local slot offset (from RBP)
-  } else {
-    auto it = this->target_function->locals.find(name);
-    if (it == this->target_function->locals.end()) {
-      throw compile_error("nonexistent local: " + name, this->file_offset);
-    }
-    loc.offset = sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->target_function->locals.begin(), it)));
-    loc.is_global = false;
-    loc.mem = MemoryReference(Register::RBP, loc.offset);
+  auto it = this->target_function->locals.find(name);
+  if (it == this->target_function->locals.end()) {
+    throw compile_error("nonexistent local: " + name, this->file_offset);
+  }
 
-    // use the argument type if given
-    try {
-      loc.type = this->local_overrides.at(name);
-    } catch (const out_of_range&) {
-      loc.type = it->second;
-    }
+  VariableLocation loc;
+  loc.name = name;
+  loc.offset = sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->target_function->locals.begin(), it)));
+  loc.is_global = false;
+  loc.mem = MemoryReference(Register::RBP, loc.offset);
+
+  // use the argument type if given
+  try {
+    loc.type = this->local_overrides.at(name);
+  } catch (const out_of_range&) {
+    loc.type = it->second;
   }
 
   return loc;

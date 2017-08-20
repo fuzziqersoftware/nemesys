@@ -241,9 +241,6 @@ void AnnotationVisitor::visit(ModuleStatement* a) {
   if (this->module->globals_mutable.size() != this->module->globals.size()) {
     throw compile_error("global registration is incomplete", a->file_offset);
   }
-  size_t module_global_space = sizeof(int64_t) * this->module->globals.size();
-  this->module->global_base_offset = this->global->global_space_used;
-  this->global->global_space_used += module_global_space;
 }
 
 

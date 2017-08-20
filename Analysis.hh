@@ -128,10 +128,10 @@ public:
   // the following are always valid:
   Phase phase;
   std::string name;
-  std::shared_ptr<SourceFile> source;
+  std::shared_ptr<SourceFile> source; // NULL for built-in modules
 
   // the following are valid in the Parsed phase and later:
-  std::shared_ptr<ModuleStatement> ast_root;
+  std::shared_ptr<ModuleStatement> ast_root; // NULL for built-in modules
 
   // the following are valid in the Annotated phase and later:
   // TODO: de-derpify this by merging these two maps into one
@@ -144,8 +144,14 @@ public:
   std::multimap<size_t, std::string> compiled_labels;
   void (*compiled)(int64_t* global_space);
 
+  // constructor for imported modules
   ModuleAnalysis(const std::string& name, const std::string& filename_or_code,
       bool is_code = false);
+
+  // constructor for built-in modules
+  ModuleAnalysis(const std::string& name,
+      const std::map<std::string, Variable>& globals);
+
   ~ModuleAnalysis() = default;
 };
 
@@ -178,8 +184,8 @@ public:
       FunctionContext* context = NULL,
       const std::unordered_map<std::string, Variable>* local_overrides = NULL);
 
-  std::shared_ptr<ModuleAnalysis> create_module(const std::string& module_name,
-      const std::string* module_code = NULL);
+  std::shared_ptr<ModuleAnalysis> get_or_create_module(
+      const std::string& module_name, const std::string* module_code = NULL);
   std::shared_ptr<ModuleAnalysis> get_module_at_phase(
       const std::string& module_name, ModuleAnalysis::Phase phase);
   std::string find_source_file(const std::string& module_name);
@@ -191,7 +197,7 @@ public:
   const UnicodeObject* get_or_create_constant(const std::wstring& s);
 
 private:
-  void update_global_space();
+  size_t reserve_global_space(size_t extra_space);
   void initialize_global_space_for_module(
       std::shared_ptr<ModuleAnalysis> module);
 

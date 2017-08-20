@@ -167,7 +167,8 @@ FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
 
 ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename,
     bool is_code) : phase(Phase::Initial), name(name),
-    source(new SourceFile(filename, is_code)), num_splits(0), compiled(NULL) {
+    source(new SourceFile(filename, is_code)), global_base_offset(-1),
+    num_splits(0), compiled(NULL) {
   // TODO: using unescape_unicode is a stupid hack, but these strings can't
   // contain backslashes anyway (right? ...right?)
   this->globals.emplace("__name__", unescape_unicode(name));
@@ -178,6 +179,16 @@ ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename,
   } else {
     this->globals.emplace("__file__", unescape_unicode(filename));
     this->globals_mutable.emplace("__file__", false);
+  }
+}
+
+ModuleAnalysis::ModuleAnalysis(const std::string& name,
+    const std::map<std::string, Variable>& globals) : phase(Phase::Initial),
+    name(name), source(NULL), ast_root(NULL), globals(globals),
+    global_base_offset(-1), num_splits(0), compiled(NULL) {
+  // for built-in modules, all globals are immutable
+  for (const auto& it : this->globals) {
+    this->globals_mutable.emplace(it.first, false);
   }
 }
 
@@ -239,45 +250,57 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
   while (module->phase < phase) {
     switch (module->phase) {
       case ModuleAnalysis::Phase::Initial: {
-        shared_ptr<PythonLexer> lexer(new PythonLexer(module->source));
-        if (this->debug_flags & DebugFlag::Lexing) {
-          fprintf(stderr, "[%s] ======== module lexed\n", module->name.c_str());
-          const auto& tokens = lexer->get_tokens();
-          for (size_t y = 0; y < tokens.size(); y++) {
-            const auto& token = tokens[y];
-            fprintf(stderr, "      n:%5lu type:%16s s:%s f:%lf i:%lld off:%lu len:%lu\n",
-                y, PythonLexer::Token::name_for_token_type(token.type),
-                token.string_data.c_str(), token.float_data, token.int_data,
-                token.text_offset, token.text_length);
+        if (module->source.get()) {
+          shared_ptr<PythonLexer> lexer(new PythonLexer(module->source));
+          if (this->debug_flags & DebugFlag::Lexing) {
+            fprintf(stderr, "[%s] ======== module lexed\n", module->name.c_str());
+            const auto& tokens = lexer->get_tokens();
+            for (size_t y = 0; y < tokens.size(); y++) {
+              const auto& token = tokens[y];
+              fprintf(stderr, "      n:%5lu type:%16s s:%s f:%lf i:%lld off:%lu len:%lu\n",
+                  y, PythonLexer::Token::name_for_token_type(token.type),
+                  token.string_data.c_str(), token.float_data, token.int_data,
+                  token.text_offset, token.text_length);
+            }
+            fputc('\n', stderr);
           }
-          fputc('\n', stderr);
+          PythonParser parser(lexer);
+          module->ast_root = parser.get_root();
+          if (this->debug_flags & DebugFlag::Parsing) {
+            fprintf(stderr, "[%s] ======== module parsed\n", module->name.c_str());
+            module->ast_root->print(stderr);
+            fputc('\n', stderr);
+          }
+        } else if (this->debug_flags & (DebugFlag::Lexing | DebugFlag::Parsing)) {
+          fprintf(stderr, "[%s] ======== no lexing/parsing for built-in module\n", module->name.c_str());
         }
-        PythonParser parser(lexer);
-        module->ast_root = parser.get_root();
-        if (this->debug_flags & DebugFlag::Parsing) {
-          fprintf(stderr, "[%s] ======== module parsed\n", module->name.c_str());
-          module->ast_root->print(stderr);
-          fputc('\n', stderr);
-        }
+
         module->phase = ModuleAnalysis::Phase::Parsed;
         break;
       }
 
       case ModuleAnalysis::Phase::Parsed: {
-        AnnotationVisitor v(this, module.get());
-        try {
-          module->ast_root->accept(&v);
-        } catch (const compile_error& e) {
-          this->print_compile_error(stderr, module.get(), e);
-          throw;
+        if (module->ast_root.get()) {
+          AnnotationVisitor v(this, module.get());
+          try {
+            module->ast_root->accept(&v);
+          } catch (const compile_error& e) {
+            this->print_compile_error(stderr, module.get(), e);
+            throw;
+          }
         }
-        this->update_global_space();
+
+        // reserve space for this module's globals
+        module->global_base_offset = this->reserve_global_space(
+            sizeof(int64_t) * module->globals.size());
 
         if (this->debug_flags & DebugFlag::Annotation) {
           fprintf(stderr, "[%s] ======== module annotated\n", module->name.c_str());
-          module->ast_root->print(stderr);
+          if (module->ast_root.get()) {
+            module->ast_root->print(stderr);
 
-          fprintf(stderr, "# split count: %" PRIu64 "\n", module->num_splits);
+            fprintf(stderr, "# split count: %" PRIu64 "\n", module->num_splits);
+          }
 
           for (const auto& it : module->globals) {
             const char* mutable_str;
@@ -297,17 +320,21 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
       }
 
       case ModuleAnalysis::Phase::Annotated: {
-        AnalysisVisitor v(this, module.get());
-        try {
-          module->ast_root->accept(&v);
-        } catch (const compile_error& e) {
-          this->print_compile_error(stderr, module.get(), e);
-          throw;
+        if (module->ast_root.get()) {
+          AnalysisVisitor v(this, module.get());
+          try {
+            module->ast_root->accept(&v);
+          } catch (const compile_error& e) {
+            this->print_compile_error(stderr, module.get(), e);
+            throw;
+          }
         }
 
         if (this->debug_flags & DebugFlag::Analysis) {
           fprintf(stderr, "[%s] ======== module analyzed\n", module->name.c_str());
-          module->ast_root->print(stderr);
+          if (module->ast_root.get()) {
+            module->ast_root->print(stderr);
+          }
 
           int64_t offset = module->global_base_offset;
           for (const auto& it : module->globals) {
@@ -336,16 +363,18 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
       }
 
       case ModuleAnalysis::Phase::Analyzed: {
-        auto fragment = this->compile_scope(module.get());
-        module->compiled = reinterpret_cast<void(*)(int64_t*)>(const_cast<void*>(fragment.compiled));
-        module->compiled_labels = move(fragment.compiled_labels);
+        if (module->ast_root.get()) {
+          auto fragment = this->compile_scope(module.get());
+          module->compiled = reinterpret_cast<void(*)(int64_t*)>(const_cast<void*>(fragment.compiled));
+          module->compiled_labels = move(fragment.compiled_labels);
 
-        if (this->debug_flags & DebugFlag::Execution) {
-          fprintf(stderr, "[%s] ======== executing root scope\n",
-              module->name.c_str());
+          if (this->debug_flags & DebugFlag::Execution) {
+            fprintf(stderr, "[%s] ======== executing root scope\n",
+                module->name.c_str());
+          }
+
+          module->compiled(this->global_space);
         }
-
-        module->compiled(this->global_space);
 
         if (this->debug_flags & DebugFlag::Execution) {
           fprintf(stderr, "\n[%s] ======== import complete\n\n",
@@ -442,39 +471,52 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
   return FunctionContext::Fragment(return_type, executable, move(compiled_labels));
 }
 
-shared_ptr<ModuleAnalysis> GlobalAnalysis::create_module(
+shared_ptr<ModuleAnalysis> GlobalAnalysis::get_or_create_module(
     const string& module_name, const string* module_code) {
-  shared_ptr<ModuleAnalysis> module;
+
+  // if it already exists, return it
   try {
-    module = this->modules.at(module_name);
-  } catch (const out_of_range& e) {
-    if (module_code) {
-      module = this->modules.emplace(piecewise_construct,
-          forward_as_tuple(module_name),
-          forward_as_tuple(new ModuleAnalysis(module_name, *module_code, true))).first->second;
-      if (this->debug_flags & DebugFlag::Source) {
-        fprintf(stdout, "[%s] added code from memory (%zu lines, %zu bytes)\n\n",
-            module_name.c_str(), module->source->line_count(),
-            module->source->file_size());
-      }
-    } else {
-      string filename = this->find_source_file(module_name);
-      module = this->modules.emplace(piecewise_construct,
-          forward_as_tuple(module_name),
-          forward_as_tuple(new ModuleAnalysis(module_name, filename, false))).first->second;
-      if (this->debug_flags & DebugFlag::Source) {
-        fprintf(stdout, "[%s] loaded %s (%zu lines, %zu bytes)\n\n",
-            module_name.c_str(), filename.c_str(), module->source->line_count(),
-            module->source->file_size());
-      }
+    return this->modules.at(module_name);
+  } catch (const out_of_range& e) { }
+
+  // if it doesn't exist but is a built-in module, return that
+  {
+    auto module = get_builtin_module(module_name);
+    if (module.get()) {
+      this->modules.emplace(module_name, module);
+      return module;
     }
+  }
+
+  // if code is given, create a module directly from that code
+  if (module_code) {
+    auto module = this->modules.emplace(piecewise_construct,
+        forward_as_tuple(module_name),
+        forward_as_tuple(new ModuleAnalysis(module_name, *module_code, true))).first->second;
+    if (this->debug_flags & DebugFlag::Source) {
+      fprintf(stderr, "[%s] added code from memory (%zu lines, %zu bytes)\n\n",
+          module_name.c_str(), module->source->line_count(),
+          module->source->file_size());
+    }
+    return module;
+  }
+
+    // else, create a module by loading a file
+  string filename = this->find_source_file(module_name);
+  auto module = this->modules.emplace(piecewise_construct,
+      forward_as_tuple(module_name),
+      forward_as_tuple(new ModuleAnalysis(module_name, filename, false))).first->second;
+  if (this->debug_flags & DebugFlag::Source) {
+    fprintf(stderr, "[%s] loaded %s (%zu lines, %zu bytes)\n\n",
+        module_name.c_str(), filename.c_str(), module->source->line_count(),
+        module->source->file_size());
   }
   return module;
 }
 
 shared_ptr<ModuleAnalysis> GlobalAnalysis::get_module_at_phase(
     const string& module_name, ModuleAnalysis::Phase phase) {
-  auto module = this->create_module(module_name);
+  auto module = this->get_or_create_module(module_name);
   this->advance_module_phase(module, phase);
   return module;
 }
@@ -544,9 +586,12 @@ const UnicodeObject* GlobalAnalysis::get_or_create_constant(const wstring& s) {
   return o;
 }
 
-void GlobalAnalysis::update_global_space() {
+size_t GlobalAnalysis::reserve_global_space(size_t extra_space) {
+  size_t ret = this->global_space_used;
+  this->global_space_used += extra_space;
   this->global_space = reinterpret_cast<int64_t*>(realloc(this->global_space,
       this->global_space_used));
+  return ret;
   // TODO: if global_space moves, we'll need to update r13 everywhere, sigh...
   // in a way-distant-future multithreaded world, this probably will mean
   // blocking all threads somehow, and updating r13 in their contexts if they're

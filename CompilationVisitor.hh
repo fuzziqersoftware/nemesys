@@ -156,6 +156,8 @@ private:
   void write_pop(Register reg);
   void adjust_stack(ssize_t bytes);
 
+  VariableLocation location_for_global(ModuleAnalysis* module,
+      const std::string& name);
   VariableLocation location_for_variable(const std::string& name);
 
   FunctionContext* current_function();

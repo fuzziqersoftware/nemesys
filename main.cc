@@ -66,10 +66,10 @@ int main(int argc, char* argv[]) {
 
   for (const auto& module : modules) {
     if (module.is_code) {
-      global.create_module("__imm__", &module.name);
+      global.get_or_create_module("__imm__", &module.name);
       global.get_module_at_phase("__imm__", target_phase);
     } else {
-      global.create_module(module.name);
+      global.get_or_create_module(module.name);
       global.get_module_at_phase(module.name, target_phase);
     }
   }

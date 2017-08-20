@@ -1,6 +1,6 @@
 CXX=g++
 CXXLD=g++
-OBJECTS=Main.o CodeBuffer.o AMD64Assembler.o SourceFile.o PythonLexer.o PythonParser.o PythonASTNodes.o PythonASTVisitor.o Environment.o Analysis.o BuiltinFunctions.o Types/Reference.o Types/Strings.o Types/Dictionary.o AnnotationVisitor.o AnalysisVisitor.o CompilationVisitor.o
+OBJECTS=Main.o CodeBuffer.o AMD64Assembler.o SourceFile.o PythonLexer.o PythonParser.o PythonASTNodes.o PythonASTVisitor.o Environment.o Analysis.o BuiltinFunctions.o Types/Reference.o Types/Strings.o Types/Dictionary.o AnnotationVisitor.o AnalysisVisitor.o CompilationVisitor.o modules/sys.o
 CXXFLAGS=-g -Wall -Werror -std=c++14 -I/opt/local/include
 LDFLAGS=-L/opt/local/lib -lphosg
 
@@ -21,6 +21,6 @@ Types/DictionaryTest: Types/DictionaryTest.o Types/Dictionary.o Types/Strings.o 
 	$(CXXLD) $(LDFLAGS) -o Types/DictionaryTest $^
 
 clean:
-	rm -rf *.o nemesys AMD64AssemblerTest nemesys.dSYM Types/*.o Types/*Test
+	rm -rf *.o nemesys AMD64AssemblerTest nemesys.dSYM modules/*.o Types/*.o Types/*Test
 
 .PHONY: clean test

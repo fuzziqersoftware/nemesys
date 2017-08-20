@@ -465,8 +465,27 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
       throw compile_error("attribute lookup on Dict value", a->file_offset);
     case ValueType::Class:
       throw compile_error("attribute lookup on Class value", a->file_offset);
-    case ValueType::Module:
-      throw compile_error("attribute lookup on Module value", a->file_offset);
+
+    // we'll need to have the module at Analyzed phase or later
+    case ValueType::Module: {
+      const string& module_name = *this->current_value.bytes_value;
+      a->base_module_name = module_name;
+
+      auto module = this->global->get_module_at_phase(module_name,
+          ModuleAnalysis::Phase::Analyzed);
+      if (!module.get()) {
+        throw compile_error("attribute lookup refers to missing module",
+            a->file_offset);
+      }
+
+      // just get the value out of the module's globals
+      try {
+        this->current_value = module->globals.at(a->name);
+      } catch (const out_of_range&) {
+        throw compile_error("attribute lookup refers to missing attribute",
+            a->file_offset);
+      }
+    }
   }
 }
 

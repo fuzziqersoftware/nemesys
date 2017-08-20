@@ -447,6 +447,9 @@ struct AttributeLookup : Expression {
   std::shared_ptr<Expression> base;
   std::string name;
 
+  // annotations
+  std::string base_module_name;
+
   AttributeLookup(std::shared_ptr<Expression> base, const std::string& name,
       size_t file_offset);
 

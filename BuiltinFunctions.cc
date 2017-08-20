@@ -16,6 +16,9 @@
 #include "Types/Strings.hh"
 #include "PythonLexer.hh" // for escape()
 
+// builtin module implementations
+#include "modules/sys.hh"
+
 using namespace std;
 
 
@@ -375,3 +378,10 @@ const unordered_map<string, Variable> builtin_names({
   {"vars",                      Variable(ValueType::Function)},
   {"zip",                       Variable(ValueType::Function)},
 });
+
+std::shared_ptr<ModuleAnalysis> get_builtin_module(const std::string& module_name) {
+  if (module_name == "sys") {
+    return sys_module;
+  }
+  return NULL;
+}
