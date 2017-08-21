@@ -241,6 +241,37 @@ bool MemoryReference::operator!=(const MemoryReference& other) const {
   return !this->operator==(other);
 }
 
+string MemoryReference::str(OperandSize operand_size) const {
+  if (!this->field_size) {
+    return name_for_register(this->base_register, operand_size);
+  }
+
+  string ret = "[";
+  if (this->base_register != Register::None) {
+    ret += name_for_register(this->base_register, OperandSize::QuadWord);
+  }
+  if (this->index_register != Register::None) {
+    if (ret.size() > 1) {
+      ret += " + ";
+    }
+    if (this->field_size > 1) {
+      ret += string_printf("%hhd * ", this->field_size);
+    }
+    ret += name_for_register(this->index_register, OperandSize::QuadWord);
+  }
+  if (this->offset) {
+    if (ret.size() > 1) {
+      if (offset < 0) {
+        ret += " - ";
+      } else {
+        ret += " + ";
+      }
+    }
+    ret += string_printf("%s0x%" PRIX64, (this->offset < 0) ? "-" : "", this->offset);
+  }
+  return ret + "]";
+}
+
 static inline bool is_extension_register(Register r) {
   return (static_cast<int8_t>(r) >= 8) && (static_cast<int8_t>(r) < 16);
 }

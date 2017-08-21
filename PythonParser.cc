@@ -703,9 +703,9 @@ shared_ptr<Expression> PythonParser::parse_expression(ssize_t end_offset,
       string name = this->head_token().string_data;
       this->advance_token();
 
-      // if there's a : then it has a type annotation
+      // if there's : and this is an lvalue reference, there's a type annotation
       shared_ptr<TypeAnnotation> type_annotation;
-      if (this->head_token().type == TokenType::_Colon) {
+      if (lvalue_reference && (this->head_token().type == TokenType::_Colon)) {
         this->advance_token();
         type_annotation = this->parse_type_annotation();
       }

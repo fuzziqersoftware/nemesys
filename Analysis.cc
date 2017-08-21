@@ -16,6 +16,7 @@
 #include "CompilationVisitor.hh"
 #include "Environment.hh"
 #include "BuiltinFunctions.hh"
+#include "Types/List.hh"
 
 using namespace std;
 
@@ -579,10 +580,16 @@ FunctionContext* GlobalAnalysis::context_for_function(
   }
 }
 
-const BytesObject* GlobalAnalysis::get_or_create_constant(const string& s) {
+const BytesObject* GlobalAnalysis::get_or_create_constant(const string& s,
+    bool use_shared_constants) {
+  if (!use_shared_constants) {
+    return bytes_new(NULL, reinterpret_cast<const uint8_t*>(s.data()), s.size());
+  }
+
   BytesObject* o = NULL;
   try {
     o = this->bytes_constants.at(s);
+    add_reference(o);
   } catch (const out_of_range& e) {
     o = bytes_new(NULL, reinterpret_cast<const uint8_t*>(s.data()), s.size());
     this->bytes_constants.emplace(s, o);
@@ -590,10 +597,16 @@ const BytesObject* GlobalAnalysis::get_or_create_constant(const string& s) {
   return o;
 }
 
-const UnicodeObject* GlobalAnalysis::get_or_create_constant(const wstring& s) {
+const UnicodeObject* GlobalAnalysis::get_or_create_constant(const wstring& s,
+    bool use_shared_constants) {
+  if (!use_shared_constants) {
+    return unicode_new(NULL, s.data(), s.size());
+  }
+
   UnicodeObject* o = NULL;
   try {
     o = this->unicode_constants.at(s);
+    add_reference(o);
   } catch (const out_of_range& e) {
     o = unicode_new(NULL, s.data(), s.size());
     this->unicode_constants.emplace(s, o);
@@ -615,54 +628,80 @@ size_t GlobalAnalysis::reserve_global_space(size_t extra_space) {
 
 void GlobalAnalysis::initialize_global_space_for_module(
     shared_ptr<ModuleAnalysis> module) {
+
+  // clear everything first
+  memset(&this->global_space[module->global_base_offset / 8], 0,
+      sizeof(int64_t) * module->globals.size());
+
+  // don't do any static initialization for dynamic modules: the root scope will
+  // construct all the variables
+  if (module->ast_root.get()) {
+    return;
+  }
+
   size_t slot = module->global_base_offset / 8;
   for (const auto& it : module->globals) {
-    // if the global is mutable or we don't know it's value, we can't populate
-    // it statically
-    if (module->globals_mutable.count(it.first) || !it.second.value_known) {
-      this->global_space[slot] = 0;
-
-    } else {
-      switch (it.second.type) {
-        case ValueType::None:
-          this->global_space[slot] = 0;
-          break;
-
-        case ValueType::Bool:
-        case ValueType::Int:
-          this->global_space[slot] = it.second.int_value;
-          break;
-
-        case ValueType::Float:
-          *reinterpret_cast<double*>(&this->global_space[slot]) =
-              it.second.float_value;
-          break;
-
-        case ValueType::Bytes:
-          this->global_space[slot] = reinterpret_cast<int64_t>(
-              this->get_or_create_constant(*it.second.bytes_value));
-          break;
-
-        case ValueType::Unicode:
-          this->global_space[slot] = reinterpret_cast<int64_t>(
-              this->get_or_create_constant(*it.second.unicode_value));
-          break;
-
-        case ValueType::List:
-        case ValueType::Tuple:
-        case ValueType::Set:
-        case ValueType::Dict:
-        case ValueType::Function:
-        case ValueType::Class:
-        case ValueType::Module:
-        default:
-          // do nothing; these types will be constructed by the module root scope
-          // instead
-          // TODO: implement static constructors for collections
-          break;
-      }
+    // for builtin modules, we should always know the value and it should always
+    // be immutable
+    if (module->globals_mutable.count(it.first)) {
+      throw compile_error(string_printf("built-in global %s is mutable",
+          it.first.c_str()));
+    }
+    if (!it.second.value_known) {
+      throw compile_error(string_printf("built-in global %s has unknown value",
+          it.first.c_str()));
     }
 
+    this->global_space[slot] = this->construct_value(it.second);
     slot++;
+  }
+}
+
+int64_t GlobalAnalysis::construct_value(const Variable& value,
+    bool use_shared_constants) {
+  switch (value.type) {
+    case ValueType::None:
+      return 0;
+
+    case ValueType::Bool:
+    case ValueType::Int:
+    case ValueType::Float:
+      // returning int_value for Float here is not an error. this function
+      // returns the raw (binary) contents of the cell that this value would
+      // occupy, and int_value is unioned with float_value so it accurately
+      // represents the value too
+      return value.int_value;
+
+    case ValueType::Bytes:
+      return reinterpret_cast<int64_t>(this->get_or_create_constant(
+          *value.bytes_value, use_shared_constants));
+
+    case ValueType::Unicode:
+      return reinterpret_cast<int64_t>(this->get_or_create_constant(
+          *value.unicode_value, use_shared_constants));
+
+    case ValueType::Function:
+    case ValueType::Module:
+      return 0;
+
+    case ValueType::List: {
+      ListObject* l = list_new(NULL, value.list_value->size(),
+          type_has_refcount(value.extension_types[0].type));
+      for (size_t x = 0; x < value.list_value->size(); x++) {
+        l->items[x] = reinterpret_cast<void*>(
+            this->construct_value(*(*value.list_value)[x], false));
+      }
+      return reinterpret_cast<int64_t>(l);
+    }
+
+    case ValueType::Tuple:
+    case ValueType::Set:
+    case ValueType::Dict:
+    case ValueType::Class:
+    default: {
+      string value_str = value.str();
+      throw compile_error("static construction unimplemented for " + value_str);
+      // TODO: implement static constructors for collections
+    }
   }
 }

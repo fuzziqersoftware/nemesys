@@ -18,5 +18,7 @@ echo "-- tests.lists"
 ./nemesys tests/lists.py | diff -U3 tests/lists.expected_output -
 echo "-- tests.loops"
 ./nemesys tests/loops.py | diff -U3 tests/loops.expected_output -
+echo "-- tests.argv"
+./nemesys tests/argv.py arg1 --arg2 "arg3 has spaces" | diff -U3 tests/argv.expected_output -
 
 echo "-- all tests passed"

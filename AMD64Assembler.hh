@@ -307,6 +307,8 @@ struct MemoryReference {
 
   bool operator==(const MemoryReference& other) const;
   bool operator!=(const MemoryReference& other) const;
+
+  std::string str(OperandSize operand_size) const;
 };
 
 class AMD64Assembler {

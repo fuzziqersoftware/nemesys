@@ -1253,6 +1253,7 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   this->as.write_mov(MemoryReference(Register::R15), 0);
 
   // generate the function's code
+  this->target_register = Register::RAX;
   this->RecursiveASTVisitor::visit(a);
 
   // hooray we're done
@@ -1328,9 +1329,41 @@ void CompilationVisitor::visit(DeleteStatement* a) {
 void CompilationVisitor::visit(ImportStatement* a) {
   this->file_offset = a->file_offset;
 
-  // we actually don't have to do anything here! all imports are done
-  // statically, so the names already exist in the current scope and are linked
-  // to the right objects
+  // case 3
+  if (a->import_star) {
+    throw compile_error("import * is not supported", a->file_offset);
+  }
+
+  // case 1: import entire modules, not specific names
+  if (a->names.empty()) {
+    // we actually don't need to do anything here; module lookups are always
+    // done statically
+    return;
+  }
+
+  // case 2: import some names from a module (from x import y)
+  const string& module_name = a->modules.begin()->first;
+  auto module = this->global->get_module_at_phase(module_name,
+      ModuleAnalysis::Phase::Imported);
+  MemoryReference target_mem(this->target_register);
+  for (const auto& it : a->names) {
+    VariableLocation src_loc = this->location_for_global(module.get(), it.first);
+    VariableLocation dest_loc = this->location_for_variable(it.second);
+
+    this->as.write_label(string_printf("__ImportStatement_%p_copy_%s_%s",
+        a, it.first.c_str(), it.second.c_str()));
+
+    // get the value from the other module
+    this->as.write_mov(target_mem, src_loc.mem);
+
+    // if it's an object, add a reference to it
+    if (type_has_refcount(module->globals.at(it.first).type)) {
+      this->write_add_reference(target_mem);
+    }
+
+    // store the value in this module
+    this->as.write_mov(dest_loc.mem, target_mem);
+  }
 }
 
 void CompilationVisitor::visit(GlobalStatement* a) {
@@ -1615,6 +1648,7 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
 
   string base_label = string_printf("FunctionDefinition_%p_%s", a, a->name.c_str());
   this->write_function_setup(base_label);
+  this->target_register = Register::RAX;
   this->RecursiveASTVisitor::visit(a);
   this->write_function_cleanup(base_label);
 }

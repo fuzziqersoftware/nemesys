@@ -201,8 +201,13 @@ public:
   FunctionContext* context_for_function(int64_t function_id,
       ModuleAnalysis* module_for_create = NULL);
 
-  const BytesObject* get_or_create_constant(const std::string& s);
-  const UnicodeObject* get_or_create_constant(const std::wstring& s);
+  const BytesObject* get_or_create_constant(const std::string& s,
+      bool use_shared_constants = true);
+  const UnicodeObject* get_or_create_constant(const std::wstring& s,
+      bool use_shared_constants = true);
+
+  int64_t construct_value(const Variable& value,
+      bool use_shared_constants = true);
 
 private:
   size_t reserve_global_space(size_t extra_space);
