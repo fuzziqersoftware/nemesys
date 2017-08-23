@@ -19,23 +19,44 @@ using namespace std;
 
 shared_ptr<GlobalAnalysis> global;
 
+void print_usage(const char* argv0) {
+  printf("\
+Usage:\n\
+  %s [options] filename\n\
+  %s [options] -c\"code\"\n\
+\n\
+Options:\n\
+  -h, -?, --help: print this text and exit.\n\
+  -X<debug>: print debugging information for the given steps.\n\
+      Steps are FindFile, Source, Lexing, Parsing, Annotation, Analysis,\n\
+                Compilation, Assembly and Execution.\n\
+      Multiple steps can be given; separate them with commas or use -X multiple\n\
+      times. -Xall enables debug output for all steps.\n\
+", argv0, argv0);
+}
+
 int main(int argc, char* argv[]) {
 
   if (argc < 2) {
-    printf("Usage: %s --phase=PHASE module_name [module_name ...]\n", argv[0]);
-    return (-1);
+    print_usage(argv[0]);
+    return 1;
   }
 
   global.reset(new GlobalAnalysis());
 
   vector<const char*> sys_argv;
   bool module_is_code = false;
-  for (size_t x = 1; x < argc; x++) {
+  size_t x;
+  for (x = 1; x < argc; x++) {
     if (!strncmp(argv[x], "-X", 2)) {
       vector<string> debug_flags = split(&argv[x][2], ',');
       for (const auto& flag : debug_flags) {
         global->debug_flags |= debug_flag_for_name(flag.c_str());
       }
+
+    } else if (!strcmp(argv[x], "-h") || !strcmp(argv[x], "-?") || !strcmp(argv[x], "--help")) {
+      print_usage(argv[0]);
+      return 0;
 
     } else if (!strncmp(argv[x], "-c", 2)) {
       if (!sys_argv.empty()) {
@@ -43,10 +64,19 @@ int main(int argc, char* argv[]) {
       }
       sys_argv.emplace_back(&argv[x][2]);
       module_is_code = true;
-
+      break;
     } else {
-      sys_argv.emplace_back(argv[x]);
+      break;
     }
+  }
+
+  for (; x < argc; x++) {
+    sys_argv.emplace_back(argv[x]);
+  }
+
+  if (sys_argv.empty()) {
+    fprintf(stderr, "nemesys does not yet implement an interactive shell\n");
+    return 1;
   }
 
   sys_set_argv(sys_argv);
