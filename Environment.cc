@@ -12,6 +12,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "Types/Reference.hh"
+
 using namespace std;
 
 
@@ -88,23 +90,24 @@ static vector<Variable> compute_dict_extension_type(
 
 
 // Indeterminate
-Variable::Variable() : type(ValueType::Indeterminate), value_known(false) { }
+Variable::Variable() : type(ValueType::Indeterminate), value_known(false),
+    int_value(0), instance(NULL) { }
 
 // any type, unknown value (except None, whose value is always known)
 Variable::Variable(ValueType type) : type(type),
-    value_known(type == ValueType::None) { }
+    value_known(type == ValueType::None), int_value(0), instance(NULL) { }
 
 // any extended type, unknown value (except None, whose value is always known)
 Variable::Variable(ValueType type, const vector<Variable>& extension_types) :
-    type(type), value_known(type == ValueType::None),
-    extension_types(extension_types) { }
+    type(type), value_known(type == ValueType::None), int_value(0),
+    instance(NULL), extension_types(extension_types) { }
 Variable::Variable(ValueType type, vector<Variable>&& extension_types) :
-    type(type), value_known(type == ValueType::None),
-    extension_types(move(extension_types)) { }
+    type(type), value_known(type == ValueType::None), int_value(0),
+    instance(NULL), extension_types(move(extension_types)) { }
 
 // Bool
 Variable::Variable(ValueType type, bool bool_value) : type(type),
-    value_known(true), int_value(bool_value) {
+    value_known(true), int_value(bool_value), instance(NULL) {
   if (this->type != ValueType::Bool) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
@@ -112,7 +115,7 @@ Variable::Variable(ValueType type, bool bool_value) : type(type),
 
 // Int/Function/Class
 Variable::Variable(ValueType type, int64_t int_value) : type(type),
-    value_known(true), int_value(int_value) {
+    value_known(true), int_value(int_value), instance(NULL) {
   if ((this->type != ValueType::Int) &&
       (this->type != ValueType::Function) &&
       (this->type != ValueType::Class)) {
@@ -122,7 +125,7 @@ Variable::Variable(ValueType type, int64_t int_value) : type(type),
 
 // Float
 Variable::Variable(ValueType type, double float_value) : type(type),
-    value_known(true), float_value(float_value) {
+    value_known(true), float_value(float_value), instance(NULL) {
   if (this->type != ValueType::Float) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
@@ -131,7 +134,8 @@ Variable::Variable(ValueType type, double float_value) : type(type),
 // Bytes/Module
 Variable::Variable(ValueType type, const uint8_t* bytes_value, size_t size) :
     type(type), value_known(true),
-    bytes_value(new string(reinterpret_cast<const char*>(bytes_value), size)) {
+    bytes_value(new string(reinterpret_cast<const char*>(bytes_value), size)),
+    instance(NULL) {
   if ((this->type != ValueType::Bytes) &&
       (this->type != ValueType::Module)) {
     throw invalid_argument("incorrect Variable constructor type called");
@@ -140,14 +144,15 @@ Variable::Variable(ValueType type, const uint8_t* bytes_value, size_t size) :
 Variable::Variable(ValueType type, const uint8_t* bytes_value) :
     Variable(type, bytes_value, strlen(reinterpret_cast<const char*>(bytes_value))) { }
 Variable::Variable(ValueType type, const string& bytes_value) : type(type),
-    value_known(true), bytes_value(new string(bytes_value)) {
+    value_known(true), bytes_value(new string(bytes_value)), instance(NULL) {
   if ((this->type != ValueType::Bytes) &&
       (this->type != ValueType::Module)) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
 }
 Variable::Variable(ValueType type, string&& bytes_value) : type(type),
-    value_known(true), bytes_value(new string(move(bytes_value))) {
+    value_known(true), bytes_value(new string(move(bytes_value))),
+    instance(NULL) {
   if ((this->type != ValueType::Bytes) &&
       (this->type != ValueType::Module)) {
     throw invalid_argument("incorrect Variable constructor type called");
@@ -157,7 +162,7 @@ Variable::Variable(ValueType type, string&& bytes_value) : type(type),
 // Unicode
 Variable::Variable(ValueType type, const wchar_t* unicode_value, size_t size) :
     type(type), value_known(true),
-    unicode_value(new wstring(unicode_value, size)) {
+    unicode_value(new wstring(unicode_value, size)), instance(NULL) {
   if (this->type != ValueType::Unicode) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
@@ -165,13 +170,15 @@ Variable::Variable(ValueType type, const wchar_t* unicode_value, size_t size) :
 Variable::Variable(ValueType type, const wchar_t* unicode_value) :
     Variable(type, unicode_value, wcslen(unicode_value)) { }
 Variable::Variable(ValueType type, const wstring& unicode_value) : type(type),
-    value_known(true), unicode_value(new wstring(unicode_value)) {
+    value_known(true), unicode_value(new wstring(unicode_value)),
+    instance(NULL) {
   if (this->type != ValueType::Unicode) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
 }
 Variable::Variable(ValueType type, wstring&& unicode_value) : type(type),
-    value_known(true), unicode_value(new wstring(move(unicode_value))) {
+    value_known(true), unicode_value(new wstring(move(unicode_value))),
+    instance(NULL) {
   if (this->type != ValueType::Unicode) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
@@ -181,7 +188,8 @@ Variable::Variable(ValueType type, wstring&& unicode_value) : type(type),
 Variable::Variable(ValueType type,
     const vector<shared_ptr<Variable>>& list_value) : type(type),
     value_known(true),
-    list_value(new vector<shared_ptr<Variable>>(list_value)) {
+    list_value(new vector<shared_ptr<Variable>>(list_value)),
+    instance(NULL) {
   if ((this->type != ValueType::List) && (this->type != ValueType::Tuple)) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
@@ -193,7 +201,8 @@ Variable::Variable(ValueType type,
 }
 Variable::Variable(ValueType type, vector<shared_ptr<Variable>>&& list_value) :
     type(type), value_known(true),
-    list_value(new vector<shared_ptr<Variable>>(move(list_value))) {
+    list_value(new vector<shared_ptr<Variable>>(move(list_value))),
+    instance(NULL) {
   if ((this->type != ValueType::List) && (this->type != ValueType::Tuple)) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
@@ -207,7 +216,8 @@ Variable::Variable(ValueType type, vector<shared_ptr<Variable>>&& list_value) :
 // Set
 Variable::Variable(ValueType type, const unordered_set<Variable>& set_value) :
     type(type), value_known(true),
-    set_value(new unordered_set<Variable>(set_value)) {
+    set_value(new unordered_set<Variable>(set_value)),
+    instance(NULL) {
   if (this->type != ValueType::Set) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
@@ -215,7 +225,8 @@ Variable::Variable(ValueType type, const unordered_set<Variable>& set_value) :
 }
 Variable::Variable(ValueType type, unordered_set<Variable>&& set_value) :
     type(type), value_known(true),
-    set_value(new unordered_set<Variable>(move(set_value))) {
+    set_value(new unordered_set<Variable>(move(set_value))),
+    instance(NULL) {
   if (this->type != ValueType::Set) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
@@ -226,7 +237,8 @@ Variable::Variable(ValueType type, unordered_set<Variable>&& set_value) :
 Variable::Variable(ValueType type,
     const unordered_map<Variable, shared_ptr<Variable>>& dict_value) :
     type(type), value_known(true),
-    dict_value(new unordered_map<Variable, shared_ptr<Variable>>(dict_value)) {
+    dict_value(new unordered_map<Variable, shared_ptr<Variable>>(dict_value)),
+    instance(NULL) {
   if (this->type != ValueType::Dict) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
@@ -234,11 +246,24 @@ Variable::Variable(ValueType type,
 }
 Variable::Variable(ValueType type, unordered_map<Variable, shared_ptr<Variable>>&& dict_value) :
     type(type), value_known(true),
-    dict_value(new unordered_map<Variable, shared_ptr<Variable>>(move(dict_value))) {
+    dict_value(new unordered_map<Variable, shared_ptr<Variable>>(move(dict_value))),
+    instance(NULL) {
   if (this->type != ValueType::Dict) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
   this->extension_types = compute_dict_extension_type(*this->dict_value);
+}
+
+// Instance
+Variable::Variable(ValueType type, int64_t class_id, void* instance) :
+    type(type), value_known(instance ? true : false), class_id(class_id),
+    instance(instance) {
+  if (!class_id) {
+    throw invalid_argument("Instance objects must have a nonzero class_id");
+  }
+  if (this->type != ValueType::Instance) {
+    throw invalid_argument("incorrect Variable constructor type called");
+  }
 }
 
 // copy/move constructors
@@ -291,9 +316,19 @@ Variable& Variable::operator=(const Variable& other) {
       case ValueType::Function:
         this->function_id = other.function_id;
         break;
+      case ValueType::Instance:
+        this->instance = other.instance;
+        if (this->instance) {
+          add_reference(this->instance);
+        }
       case ValueType::Class:
         this->class_id = other.class_id;
         break;
+    }
+  } else {
+    if (this->type == ValueType::Instance) {
+      this->class_id = other.class_id;
+      this->instance = NULL;
     }
   }
 
@@ -341,9 +376,17 @@ Variable& Variable::operator=(Variable&& other) {
       case ValueType::Function:
         this->function_id = other.function_id;
         break;
+      case ValueType::Instance:
+        this->instance = other.instance;
+        other.instance = NULL;
       case ValueType::Class:
         this->class_id = other.class_id;
         break;
+    }
+  } else {
+    if (this->type == ValueType::Instance) {
+      this->class_id = other.class_id;
+      this->instance = NULL;
     }
   }
 
@@ -391,6 +434,9 @@ void Variable::clear_value() {
     case ValueType::Dict:
       delete this->dict_value;
       break;
+    case ValueType::Instance:
+      delete_reference(this->instance);
+      this->instance = NULL;
   }
 }
 
@@ -511,12 +557,27 @@ string Variable::str() const {
       return "Dict";
 
     case ValueType::Function:
-      return string_printf("Function:%" PRIu64, this->function_id);
+      if (!value_known) {
+        return "Function";
+      }
+      return string_printf("Function:%" PRId64, this->function_id);
 
     case ValueType::Class:
-      return string_printf("Class:%" PRIu64, this->class_id);
+      if (!value_known) {
+        return "Class";
+      }
+      return string_printf("Class:%" PRId64, this->class_id);
+
+    case ValueType::Instance:
+      if (!value_known) {
+        return string_printf("Instance:%" PRId64, this->class_id);
+      }
+      return string_printf("Instance:%" PRId64 "@%p", this->class_id, this->instance);
 
     case ValueType::Module:
+      if (!value_known) {
+        return "Module";
+      }
       return string_printf("Module:%s", this->bytes_value->c_str());
 
     default:
@@ -549,6 +610,7 @@ bool Variable::truth_value() const {
       return !this->dict_value->empty();
     case ValueType::Function:
     case ValueType::Class:
+    case ValueType::Instance:
     case ValueType::Module:
       return true;
     default:
@@ -558,6 +620,11 @@ bool Variable::truth_value() const {
 }
 
 
+
+bool Variable::types_equal(const Variable& other) const {
+  return (this->type == other.type) &&
+         (this->extension_types == other.extension_types);
+}
 
 bool Variable::operator==(const Variable& other) const {
   if ((this->type != other.type) || (this->value_known != other.value_known)) {
@@ -590,6 +657,9 @@ bool Variable::operator==(const Variable& other) const {
       return this->function_id == other.function_id;
     case ValueType::Class:
       return this->class_id == other.class_id;
+    case ValueType::Instance:
+      return (this->class_id == other.class_id) &&
+             (this->instance == other.instance);
     default:
       throw logic_error(string_printf("variable has invalid type for equality check: 0x%" PRIX64,
           static_cast<int64_t>(this->type)));
@@ -609,6 +679,7 @@ bool type_has_refcount(ValueType type) {
          (type != ValueType::Int) &&
          (type != ValueType::Float) &&
          (type != ValueType::Function) &&
+         (type != ValueType::Class) &&
          (type != ValueType::Module);
 }
 
@@ -676,6 +747,10 @@ std::string type_signature_for_variables(const vector<Variable>& vars,
 
       case ValueType::Function:
         ret += 'F';
+        break;
+
+      case ValueType::Instance:
+        ret += string_printf("I%" PRId64, var.class_id);
         break;
 
       case ValueType::Class:

@@ -41,20 +41,26 @@ public:
 
 
 
-struct ClassAnalysis {
-  std::string name;
-  std::map<std::string, ValueType> attr_to_type;
-  std::map<std::string, std::string> method_to_name;
-};
-
-
-
 class ModuleAnalysis;
+
+struct ClassContext {
+  ModuleAnalysis* module; // Annotated; NULL for built-in functions
+  int64_t id; // Annotated. note that __init__ has the same ID
+  void* destructor; // Compiled; generated when class def is visited
+
+  std::string name; // Annotated
+  ASTNode* ast_root; // Annotated
+
+  std::map<std::string, Variable> attributes; // Annotated; values Analyzed
+
+  // constructor for dynamic classes (defined in .py files)
+  ClassContext(ModuleAnalysis* module, int64_t id);
+};
 
 struct FunctionContext {
   ModuleAnalysis* module; // Annotated; NULL for built-in functions
   int64_t id; // Annotated
-  bool is_class; // Annotated
+  int64_t class_id; // Annotated; 0 for non-member functions
 
   std::string name; // Annotated
   ASTNode* ast_root; // Annotated; NULL for built-in functions
@@ -90,7 +96,7 @@ struct FunctionContext {
 
   std::unordered_map<int64_t, Fragment> fragments; // Compiled
 
-  // constructor for dynamic modules (defined in .py files)
+  // constructor for dynamic functions (defined in .py files)
   FunctionContext(ModuleAnalysis* module, int64_t id);
 
   // constructors for built-in functions. note that they don't take a type
@@ -104,13 +110,15 @@ struct FunctionContext {
     BuiltinFunctionFragmentDefinition(const std::vector<Variable>& arg_types,
         Variable return_type, const void* compiled);
   };
-  // single-fragment constructor
+  // built-in single-fragment constructor
   FunctionContext(ModuleAnalysis* module, int64_t id, const char* name,
       const std::vector<Variable>& arg_types, Variable return_type,
       const void* compiled);
-  // multiple-fragment constructor
+  // built-in multiple-fragment constructor
   FunctionContext(ModuleAnalysis* module, int64_t id, const char* name,
       const std::vector<BuiltinFunctionFragmentDefinition>& fragments);
+
+  bool is_class_init() const;
 };
 
 
@@ -200,6 +208,8 @@ public:
 
   FunctionContext* context_for_function(int64_t function_id,
       ModuleAnalysis* module_for_create = NULL);
+  ClassContext* context_for_class(int64_t class_id,
+      ModuleAnalysis* module_for_create = NULL);
 
   const BytesObject* get_or_create_constant(const std::string& s,
       bool use_shared_constants = true);
@@ -217,4 +227,5 @@ private:
   std::unordered_set<std::shared_ptr<ModuleAnalysis>> in_progress;
 
   std::unordered_map<int64_t, FunctionContext> function_id_to_context;
+  std::unordered_map<int64_t, ClassContext> class_id_to_context;
 };

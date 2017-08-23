@@ -19,7 +19,7 @@ using namespace std;
 
 AnnotationVisitor::AnnotationVisitor(GlobalAnalysis* global,
     ModuleAnalysis* module) : global(global), module(module),
-    in_function_id(0) { }
+    in_function_id(0), in_class_id(0) { }
 
 void AnnotationVisitor::visit(ImportStatement* a) {
   // AnalysisVisitor will fill in the types for these variables. here, we just
@@ -27,8 +27,8 @@ void AnnotationVisitor::visit(ImportStatement* a) {
   // here (e.g. import the values) because we can't depend on other modules
   // having been analyzed yet
 
-  auto* context = this->current_function();
-  auto* scope = context ? &context->locals : &this->module->globals;
+  auto* fn = this->current_function();
+  auto* scope = fn ? &fn->locals : &this->module->globals;
 
   // case 3
   if (a->import_star) {
@@ -41,7 +41,6 @@ void AnnotationVisitor::visit(ImportStatement* a) {
       if (!scope->emplace(it.first, ValueType::Indeterminate).second) {
         throw compile_error("name overwritten by import", a->file_offset);
       }
-      this->global_write_count[it.first]++;
     }
 
     return;
@@ -56,7 +55,6 @@ void AnnotationVisitor::visit(ImportStatement* a) {
       if (!scope->emplace(it.second, Variable(ValueType::Module, it.first)).second) {
         throw compile_error("name overwritten by import", a->file_offset);
       }
-      this->global_write_count[it.second]++;
     }
 
     return;
@@ -73,7 +71,6 @@ void AnnotationVisitor::visit(ImportStatement* a) {
     if (!scope->emplace(it.second, ValueType::Indeterminate).second) {
       throw compile_error("name overwritten by import", a->file_offset);
     }
-    this->global_write_count[it.second]++;
   }
 
   this->RecursiveASTVisitor::visit(a);
@@ -84,16 +81,14 @@ void AnnotationVisitor::visit(GlobalStatement* a) {
     throw compile_error("global statement outside of function", a->file_offset);
   }
 
-  auto* context = this->current_function();
+  auto* fn = this->current_function();
   for (const auto& name : a->names) {
-    if (context->locals.count(name)) {
+    if (fn->locals.count(name)) {
       throw compile_error(string_printf(
           "variable `%s` declared before global statement", name.c_str()),
           a->file_offset);
     }
-    // assume mutable if referenced explicitly in a global statement
-    this->module->globals_mutable.emplace(name);
-    context->explicit_globals.emplace(name);
+    fn->explicit_globals.emplace(name);
   }
 
   this->RecursiveASTVisitor::visit(a);
@@ -116,15 +111,22 @@ void AnnotationVisitor::visit(ExceptStatement* a) {
 void AnnotationVisitor::visit(FunctionDefinition* a) {
   visit_list(a->decorators);
 
-  a->function_id = this->next_function_id++;
+  // __init__ has the same function id as the class id - this makes it easy to
+  // find the constructor function for a class
+  bool is_class_init = (this->in_class_id && !this->in_function_id && (a->name == "__init__"));
+  if (is_class_init) {
+    a->function_id = this->in_class_id;
+  } else {
+    a->function_id = this->next_function_id++;
+  }
 
   int64_t prev_function_id = this->in_function_id;
   this->in_function_id = a->function_id;
 
-  auto* context = this->current_function();
-  context->is_class = false;
-  context->name = a->name;
-  context->ast_root = a;
+  auto* fn = this->current_function();
+  fn->class_id = this->in_class_id;
+  fn->name = a->name;
+  fn->ast_root = a;
 
   for (const auto& arg : a->args.args) {
     this->record_write(arg.name, a->file_offset);
@@ -148,11 +150,11 @@ void AnnotationVisitor::visit(LambdaDefinition* a) {
   int64_t prev_function_id = this->in_function_id;
   this->in_function_id = a->function_id;
 
-  auto* context = this->current_function();
-  context->is_class = false;
-  context->name = string_printf("Lambda@%s$%zu+%" PRIu64,
-      this->module->name.c_str(), a->file_offset, a->function_id);
-  context->ast_root = a;
+  auto* fn = this->current_function();
+  fn->class_id = 0; // even if inside a class, lambdas can't be instance methods
+  fn->name = string_printf("Lambda@%s$%zu+%" PRIu64, this->module->name.c_str(),
+      a->file_offset, a->function_id);
+  fn->ast_root = a;
 
   for (const auto& arg : a->args.args) {
     this->record_write(arg.name, a->file_offset);
@@ -172,16 +174,20 @@ void AnnotationVisitor::visit(LambdaDefinition* a) {
 void AnnotationVisitor::visit(ClassDefinition* a) {
   a->class_id = this->next_function_id++;
 
-  int64_t prev_function_id = this->in_function_id;
-  this->in_function_id = a->class_id;
+  // classes may not be declared within functions (for now)
+  if (this->in_function_id) {
+    throw compile_error("classes may not be declared within functions");
+  }
 
-  auto* context = this->current_function();
-  context->is_class = true;
-  context->name = a->name;
-  context->ast_root = a;
+  int64_t prev_class_id = this->in_class_id;
+  this->in_class_id = a->class_id;
+
+  auto* cls = this->current_class();
+  cls->name = a->name;
+  cls->ast_root = a;
 
   this->RecursiveASTVisitor::visit(a);
-  this->in_function_id = prev_function_id;
+  this->in_class_id = prev_class_id;
 
   this->record_write(a->name, a->file_offset);
 }
@@ -190,57 +196,43 @@ void AnnotationVisitor::visit(UnaryOperation* a) {
   this->RecursiveASTVisitor::visit(a);
 
   if (a->oper == UnaryOperator::Yield) {
-    auto* context = this->current_function();
-    if (!context) {
+    auto* fn = this->current_function();
+    if (!fn) {
       throw compile_error("yield operator outside of function definition",
           a->file_offset);
     }
 
-    a->split_id = ++context->num_splits;
+    a->split_id = ++fn->num_splits;
   }
 }
 
 void AnnotationVisitor::visit(YieldStatement* a) {
-  auto* context = this->current_function();
-  if (!context) {
+  auto* fn = this->current_function();
+  if (!fn) {
     throw compile_error("yield statement outside of function definition",
         a->file_offset);
   }
 
   this->RecursiveASTVisitor::visit(a);
 
-  a->split_id = ++context->num_splits;
+  // note that this doesn't need to be a split since it doesn't return a value
 }
 
 void AnnotationVisitor::visit(FunctionCall* a) {
   this->RecursiveASTVisitor::visit(a);
 
-  auto* context = this->current_function();
-  if (!context) {
+  auto* fn = this->current_function();
+  if (!fn) {
     a->split_id = ++this->module->num_splits;
   } else {
-    a->split_id = ++context->num_splits;
+    a->split_id = ++fn->num_splits;
   }
 }
 
 void AnnotationVisitor::visit(ModuleStatement* a) {
   this->RecursiveASTVisitor::visit(a);
 
-  // sanity check: everything that appears in global_write_count must also
-  // appear in module->globals, and any global written more than once must also
-  // appear in globals_mutable
-  for (const auto& it : this->global_write_count) {
-    if (!this->module->globals.count(it.first)) {
-      throw compile_error(string_printf(
-          "global registration is incomplete (%s missing)", it.first.c_str()),
-          a->file_offset);
-    }
-    if ((it.second > 1) && !this->module->globals_mutable.count(it.first)) {
-      throw compile_error(string_printf(
-          "global registration is incomplete (%s overwritten but not mutable)",
-          it.first.c_str()), a->file_offset);
-    }
-  }
+  // TODO: add sanity checks here
 }
 
 
@@ -249,6 +241,10 @@ atomic<int64_t> AnnotationVisitor::next_function_id(1);
 
 FunctionContext* AnnotationVisitor::current_function() {
   return this->global->context_for_function(this->in_function_id, this->module);
+}
+
+ClassContext* AnnotationVisitor::current_class() {
+  return this->global->context_for_class(this->in_class_id, this->module);
 }
 
 void AnnotationVisitor::record_write(const string& name, size_t file_offset) {
@@ -261,21 +257,24 @@ void AnnotationVisitor::record_write(const string& name, size_t file_offset) {
     throw compile_error("can\'t assign to builtin name", file_offset);
   }
 
-  auto* context = this->current_function();
-  if (context) {
-    if (context->explicit_globals.count(name)) {
-      this->module->globals_mutable.emplace(name);
-    } else {
-      context->locals.emplace(piecewise_construct, forward_as_tuple(name),
+  // if we're in a function, we're writing a local or explicit global
+  auto* fn = this->current_function();
+  if (fn) {
+    if (!fn->explicit_globals.count(name)) {
+      fn->locals.emplace(piecewise_construct, forward_as_tuple(name),
           forward_as_tuple());
     }
-  } else {
-    // global write at module level. set it to mutable if this is not the
-    // first write to this variable
-    this->module->globals.emplace(name, ValueType::Indeterminate);
-    size_t write_count = ++this->global_write_count[name];
-    if (write_count > 1) {
-      this->module->globals_mutable.emplace(name);
-    }
+    return;
   }
+
+  // if we're in a class definition, we're writing a class attribute
+  auto* cls = this->current_class();
+  if (cls) {
+    cls->attributes.emplace(piecewise_construct, forward_as_tuple(name),
+        forward_as_tuple());
+    return;
+  }
+
+  // we're writing a global
+  this->module->globals.emplace(name, ValueType::Indeterminate);
 }

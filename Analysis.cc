@@ -99,6 +99,11 @@ compile_error::compile_error(const std::string& what, ssize_t where) :
 
 
 
+ClassContext::ClassContext(ModuleAnalysis* module, int64_t id) : module(module),
+    id(id), ast_root(NULL) { }
+
+
+
 FunctionContext::Fragment::Fragment(Variable return_type, const void* compiled)
     : return_type(return_type), compiled(compiled) { }
 
@@ -113,7 +118,7 @@ FunctionContext::BuiltinFunctionFragmentDefinition::BuiltinFunctionFragmentDefin
     compiled(compiled) { }
 
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id) :
-    module(module), id(id), is_class(false), ast_root(NULL), num_splits(0) { }
+    module(module), id(id), class_id(0), ast_root(NULL), num_splits(0) { }
 
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
     const char* name, const vector<Variable>& arg_types, Variable return_type,
@@ -123,7 +128,7 @@ FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
     const char* name,
     const std::vector<BuiltinFunctionFragmentDefinition>& fragments) :
-    module(module), id(id), is_class(false), name(name), ast_root(NULL),
+    module(module), id(id), class_id(0), name(name), ast_root(NULL),
     num_splits(0) {
 
   // populate the arguments from the first fragment definition
@@ -164,6 +169,10 @@ FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
     this->fragments.emplace(piecewise_construct, forward_as_tuple(fragment_id),
         forward_as_tuple(fragment_def.return_type, fragment_def.compiled));
   }
+}
+
+bool FunctionContext::is_class_init() const {
+  return this->id == this->class_id;
 }
 
 
@@ -317,9 +326,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           }
 
           for (const auto& it : module->globals) {
-            const char* mutable_str;
-            mutable_str = module->globals_mutable.count(it.first) ? "mutable" : "immutable";
-            fprintf(stderr, "# global: %s (%s)\n", it.first.c_str(), mutable_str);
+            fprintf(stderr, "# global: %s\n", it.first.c_str());
           }
           fprintf(stderr, "# global space is now %p (%" PRId64 " bytes)\n",
               this->global_space, this->global_space_used);
@@ -348,11 +355,9 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
 
           int64_t offset = module->global_base_offset;
           for (const auto& it : module->globals) {
-            bool is_mutable = module->globals_mutable.count(it.first);
             string value_str = it.second.str();
-            fprintf(stderr, "# global at r13+%" PRIX64 ": %s = %s (%s)\n",
-                offset, it.first.c_str(), value_str.c_str(),
-                is_mutable ? "mutable" : "immutable");
+            fprintf(stderr, "# global at r13+%" PRIX64 ": %s = %s\n",
+                offset, it.first.c_str(), value_str.c_str());
             offset += 8;
           }
           fputc('\n', stderr);
@@ -555,8 +560,8 @@ std::string GlobalAnalysis::find_source_file(const string& module_name) {
   throw compile_error("can\'t find file for module " + module_name);
 }
 
-FunctionContext* GlobalAnalysis::context_for_function(
-    int64_t function_id, ModuleAnalysis* module_for_create) {
+FunctionContext* GlobalAnalysis::context_for_function(int64_t function_id,
+    ModuleAnalysis* module_for_create) {
   if (function_id == 0) {
     return NULL;
   }
@@ -574,6 +579,24 @@ FunctionContext* GlobalAnalysis::context_for_function(
   } else {
     try {
       return &this->function_id_to_context.at(function_id);
+    } catch (const out_of_range& e) {
+      return NULL;
+    }
+  }
+}
+
+ClassContext* GlobalAnalysis::context_for_class(int64_t class_id,
+    ModuleAnalysis* module_for_create) {
+  if (class_id <= 0) {
+    return NULL;
+  }
+  if (module_for_create) {
+    return &(*this->class_id_to_context.emplace(piecewise_construct,
+        forward_as_tuple(class_id),
+        forward_as_tuple(module_for_create, class_id)).first).second;
+  } else {
+    try {
+      return &this->class_id_to_context.at(class_id);
     } catch (const out_of_range& e) {
       return NULL;
     }
@@ -641,12 +664,7 @@ void GlobalAnalysis::initialize_global_space_for_module(
 
   size_t slot = module->global_base_offset / 8;
   for (const auto& it : module->globals) {
-    // for builtin modules, we should always know the value and it should always
-    // be immutable
-    if (module->globals_mutable.count(it.first)) {
-      throw compile_error(string_printf("built-in global %s is mutable",
-          it.first.c_str()));
-    }
+    // for builtin modules, we should always know the value
     if (!it.second.value_known) {
       throw compile_error(string_printf("built-in global %s has unknown value",
           it.first.c_str()));

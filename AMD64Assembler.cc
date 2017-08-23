@@ -685,11 +685,11 @@ void AMD64Assembler::write_call(const MemoryReference& mem) {
   this->write_rm(Operation::CALL_JMP_ABS, mem, 2, OperandSize::DoubleWord);
 }
 
-void AMD64Assembler::write_call(int64_t offset) {
-  string data;
-  data += Operation::CALL32;
-  data.append(reinterpret_cast<const char*>(&offset), 4);
-  this->write(data);
+void AMD64Assembler::write_jmp(void* addr) {
+  // TODO: we can use a real jmp opcode if addr is within 2GB of this opcode;
+  // too lazy to do it right now since this will usually be used for far jumps
+  this->write_push(reinterpret_cast<int64_t>(addr));
+  this->write_ret();
 }
 
 void AMD64Assembler::write_ret(uint16_t stack_bytes) {
@@ -1467,6 +1467,16 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
         opcode_text = string_printf("push     %s", name_for_register(reg));
       }
 
+    } else if (opcode == 0x68) {
+      if (offset >= size - 3) {
+        opcode_text += ", <<incomplete>>";
+      } else {
+        int64_t value = *reinterpret_cast<const int32_t*>(&data[offset]);
+        opcode_text = string_printf("push     %s0x%02X",
+            (value < 0) ? "-" : "", (value < 0) ? -value : value);
+        offset += 4;
+      }
+
     } else if (opcode == 0x6A) {
       if (offset >= size) {
         opcode_text += ", <<incomplete>>";
@@ -1684,17 +1694,7 @@ string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
     // this special case uses RIP instead of RBP
     if ((behavior == 0) && (base_reg == Register::RBP)) {
       behavior = 2; // also has a 32-bit offset
-      if (operand_size == OperandSize::Byte) {
-        mem_str = "[<<IP8>>";
-      } else if (operand_size == OperandSize::Word) {
-        mem_str = "[ip";
-      } else if (operand_size == OperandSize::DoubleWord) {
-        mem_str = "[eip";
-      } else if (operand_size == OperandSize::QuadWord) {
-        mem_str = "[rip";
-      } else {
-        mem_str = "[<<ESIZE>>";
-      }
+      mem_str = "[rip";
     } else if (base_reg == Register::RSP) {
       if (offset >= size) {
         return "<<incomplete>>";
@@ -1709,18 +1709,18 @@ string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
         // for behavior=0, there's no base reg
         mem_str = "[";
       } else {
-        mem_str = string_printf("[%s", name_for_register(base_reg, operand_size));
+        mem_str = string_printf("[%s", name_for_register(base_reg, OperandSize::QuadWord));
       }
 
       if (index_reg != Register::RSP) {
-        mem_str += string_printf(" + %s", name_for_register(index_reg, operand_size));
+        mem_str += string_printf(" + %s", name_for_register(index_reg, OperandSize::QuadWord));
         if (scale != 1) {
           mem_str += string_printf(" * %" PRIu8, scale);
         }
       }
 
     } else {
-      mem_str = string_printf("[%s", name_for_register(base_reg, operand_size));
+      mem_str = string_printf("[%s", name_for_register(base_reg, OperandSize::QuadWord));
     }
 
     // add the offset, if given

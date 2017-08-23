@@ -355,9 +355,9 @@ public:
   void write_nop();
   void write_jmp(const std::string& label_name);
   void write_jmp(const MemoryReference& mem);
+  void write_jmp(void* addr);
   void write_call(const std::string& label_name);
   void write_call(const MemoryReference& mem);
-  void write_call(int64_t offset);
   void write_ret(uint16_t stack_bytes = 0);
   void write_jo(const std::string& label_name);
   void write_jno(const std::string& label_name);

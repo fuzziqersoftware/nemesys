@@ -1,6 +1,7 @@
 #include "CompilationVisitor.hh"
 
 #include <inttypes.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 #include <phosg/Filesystem.hh>
@@ -334,6 +335,7 @@ void CompilationVisitor::write_truth_value_test(Register reg,
     case ValueType::None:
     case ValueType::Function:
     case ValueType::Class:
+    case ValueType::Instance:
     case ValueType::Module: {
       string type_str = type.str();
       throw compile_error(string_printf(
@@ -837,7 +839,8 @@ void CompilationVisitor::visit(FunctionCall* a) {
     throw compile_error("can\'t resolve function reference", this->file_offset);
   }
 
-  auto* callee_context = this->global->context_for_function(a->callee_function_id);
+  // get the function context
+  auto* fn = this->global->context_for_function(a->callee_function_id);
   if (a->callee_function_id == 0) {
     throw compile_error(string_printf("function %" PRId64 " has no context object", a->callee_function_id),
         this->file_offset);
@@ -853,7 +856,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
   if (a->varargs.get() || a->varkwargs.get()) {
     throw compile_error("variadic function calls not supported", this->file_offset);
   }
-  if (!callee_context->varargs_name.empty() || !callee_context->varkwargs_name.empty()) {
+  if (!fn->varargs_name.empty() || !fn->varkwargs_name.empty()) {
     throw compile_error("variadic function definitions not supported", this->file_offset);
   }
 
@@ -872,15 +875,36 @@ void CompilationVisitor::visit(FunctionCall* a) {
   };
   vector<ArgumentValue> arg_values;
 
+  // for class member functions, the first argument is automatically populated
+  // and is the instance object
+  if (fn->class_id) {
+    // if the function being called is __init__, allocate a class object first and
+    // push it as the first argument
+    if (fn->is_class_init()) {
+      arg_values.emplace_back();
+      auto& arg = arg_values.back();
+      arg.name = fn->args[0].name;
+      arg.passed_value = NULL;
+      arg.default_value = Variable(ValueType::Instance, fn->id, nullptr);
+
+    // if it's not __init__, we'll have to know what the instance is
+    } else {
+      this->as.write_label(string_printf("__FunctionCall_%p_get_instance_pointer", a));
+      throw compile_error("getting the instance pointer for a method call is unimplemented");
+    }
+  }
+
   // push positional args first
-  size_t arg_index = 0;
-  for (; arg_index < positional_call_args.size(); arg_index++) {
-    if (arg_index >= callee_context->args.size()) {
+  size_t call_arg_index = 0;
+  size_t callee_arg_index = fn->is_class_init();
+  for (; call_arg_index < positional_call_args.size();
+       call_arg_index++, callee_arg_index++) {
+    if (callee_arg_index >= fn->args.size()) {
       throw compile_error("too many arguments in function call", this->file_offset);
     }
 
-    const auto& callee_arg = callee_context->args[arg_index];
-    const auto& call_arg = positional_call_args[arg_index];
+    const auto& callee_arg = fn->args[callee_arg_index];
+    const auto& call_arg = positional_call_args[call_arg_index];
 
     // if the callee arg is a kwarg and the call also includes that kwarg, fail
     if ((callee_arg.default_value.type != ValueType::Indeterminate) &&
@@ -896,8 +920,8 @@ void CompilationVisitor::visit(FunctionCall* a) {
   }
 
   // now push keyword args, in the order the function defines them
-  for (; arg_index < callee_context->args.size(); arg_index++) {
-    const auto& callee_arg = callee_context->args[arg_index];
+  for (; callee_arg_index < fn->args.size(); callee_arg_index++) {
+    const auto& callee_arg = fn->args[callee_arg_index];
 
     arg_values.emplace_back();
     try {
@@ -913,7 +937,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
   // at this point we should have the same number of args overall as the
   // function wants
-  if (arg_values.size() != callee_context->args.size()) {
+  if (arg_values.size() != fn->args.size()) {
     throw compile_error("incorrect argument count in function call", this->file_offset);
   }
 
@@ -927,7 +951,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
   // now generate code for the arguments
   Register original_target_register = this->target_register;
-  for (arg_index = 0; arg_index < arg_values.size(); arg_index++) {
+  for (size_t arg_index = 0; arg_index < arg_values.size(); arg_index++) {
     auto& arg = arg_values[arg_index];
 
     // figure out where to construct it into
@@ -950,6 +974,38 @@ void CompilationVisitor::visit(FunctionCall* a) {
           a, arg_index));
       arg.passed_value->accept(this);
       arg.type = move(this->current_type);
+
+    } else if (fn->is_class_init() && (arg_index == 0)) {
+      if (arg.default_value.type != ValueType::Instance) {
+        throw compile_error("first argument to class constructor is not an instance", this->file_offset);
+      }
+
+      auto* cls = this->global->context_for_class(fn->id);
+      if (!cls) {
+        throw compile_error("__init__ call does not have an associated class");
+      }
+
+      // call malloc to create the class object
+      // note: this is a semi-ugly hack, but we ignore reserved registers here
+      // because this can only be the first argument - no registers can be
+      // reserved at this point
+      this->as.write_mov(MemoryReference(Register::RDI),
+          sizeof(int64_t) * (cls->attributes.size() + 2));
+      this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(&malloc));
+      this->as.write_call(MemoryReference(Register::RAX));
+
+      // fill in the refcount and destructor function
+      this->as.write_mov(MemoryReference(Register::RAX, 0), 1);
+      this->as.write_mov(MemoryReference(Register::RAX, 8),
+          reinterpret_cast<int64_t>(cls->destructor));
+
+      // note: we don't zero the class contents. this is ok because all of the
+      // attributes must be written in __init__ (since that's the only place
+      // they can be created).
+      this->as.write_mov(this->target_register, MemoryReference(Register::RAX));
+
+      arg.type = arg.default_value;
+
     } else {
       this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_default_value",
           a, arg_index));
@@ -1002,7 +1058,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
   // get the fragment id
   int64_t fragment_id;
   try {
-    fragment_id = callee_context->arg_signature_to_fragment_id.at(arg_signature);
+    fragment_id = fn->arg_signature_to_fragment_id.at(arg_signature);
 
   // if there's no existing fragment with the right types, check if there's a
   // fragment with Indeterminate extension types.
@@ -1021,29 +1077,29 @@ void CompilationVisitor::visit(FunctionCall* a) {
       throw compile_error("can\'t generate argument signature for function call", this->file_offset);
     }
     try {
-      fragment_id = callee_context->arg_signature_to_fragment_id.at(arg_signature);
+      fragment_id = fn->arg_signature_to_fragment_id.at(arg_signature);
     } catch (const std::out_of_range& e) {
 
       // still no match. built-in functions can't be recompiled, so fail
-      if (!callee_context->module) {
+      if (!fn->module) {
         throw compile_error(string_printf("built-in fragment %" PRId64 "+%s does not exist",
             a->callee_function_id, arg_signature.c_str()), this->file_offset);
       }
 
       // this isn't a built-in function, so create a new fragment and compile it
-      fragment_id = callee_context->arg_signature_to_fragment_id.emplace(
-          arg_signature, callee_context->fragments.size()).first->second;
+      fragment_id = fn->arg_signature_to_fragment_id.emplace(
+          arg_signature, fn->fragments.size()).first->second;
     }
   }
 
   // get or generate the Fragment object
   const FunctionContext::Fragment* fragment;
   try {
-    fragment = &callee_context->fragments.at(fragment_id);
+    fragment = &fn->fragments.at(fragment_id);
   } catch (const std::out_of_range& e) {
-    auto new_fragment = this->global->compile_scope(callee_context->module,
-        callee_context, &callee_local_overrides);
-    fragment = &callee_context->fragments.emplace(fragment_id, move(new_fragment)).first->second;
+    auto new_fragment = this->global->compile_scope(fn->module, fn,
+        &callee_local_overrides);
+    fragment = &fn->fragments.emplace(fragment_id, move(new_fragment)).first->second;
   }
 
   this->as.write_label(string_printf("__FunctionCall_%p_call_fragment_%" PRId64 "_%" PRId64 "_%s",
@@ -1219,11 +1275,81 @@ void CompilationVisitor::visit(ArraySliceLValueReference* a) {
 void CompilationVisitor::visit(AttributeLValueReference* a) {
   this->file_offset = a->file_offset;
 
+  // if it's an object attribute, store the value and evaluate the object
   if (a->base.get()) {
-    throw compile_error("AttributeLValueReference with nontrivial base not yet implemented", this->file_offset);
-  }
 
-  this->lvalue_target = this->location_for_variable(a->name);
+    // don't touch my value plz
+    Register value_register = this->target_register;
+    this->reserve_register(this->target_register);
+    this->target_register = this->available_register();
+
+    // evaluate the base object
+    a->base->accept(this);
+
+    // typecheck the result: it should be an Instance object, the class should
+    // have the attribute that we're setting (location_for_attribute will check
+    // this) and the attr should be the same type as the value being written
+    if (this->current_type.type != ValueType::Instance) {
+      throw compile_error("cannot dynamically set attributes on non-instance objects",
+          this->file_offset);
+    }
+    auto* cls = this->global->context_for_class(this->current_type.class_id);
+    if (!cls) {
+      throw compile_error("object class does not exist", this->file_offset);
+    }
+    VariableLocation loc = this->location_for_attribute(cls, a->name,
+        this->target_register);
+    {
+      const auto& attr = cls->attributes.at(a->name);
+      if (attr.types_equal(this->current_type)) {
+        string attr_type = attr.str();
+        string new_type = this->current_type.str();
+        throw compile_error(string_printf("attribute %s changes type from %s to %s",
+            a->name.c_str(), attr_type.c_str(), new_type.c_str()),
+            this->file_offset);
+      }
+    }
+
+    // write the value into the right attribute
+    this->as.write_mov(loc.mem, MemoryReference(value_register));
+
+    // clean up
+    this->target_register = value_register;
+    this->release_register(this->target_register);
+
+  // if a->base is missing, then it's a simple local variable write
+  } else {
+    VariableLocation loc = this->location_for_variable(a->name);
+
+    // typecheck the result. the type of a variable can only be changed if it's
+    // Indeterminate; otherwise it's an error
+    // TODO: deduplicate some of this with location_for_variable
+    Variable* target_variable = NULL;
+    if (loc.is_global) {
+      target_variable = &this->module->globals.at(loc.name);
+    } else {
+      try {
+        target_variable = &this->local_overrides.at(loc.name);
+      } catch (const out_of_range&) {
+        target_variable = &this->target_function->locals.at(loc.name);
+      }
+    }
+    if (!target_variable) {
+      throw compile_error("target variable not found");
+    }
+    if (target_variable->type == ValueType::Indeterminate) {
+      *target_variable = current_type;
+    } else if (*target_variable != loc.type) {
+      string target_type_str = target_variable->str();
+      string value_type_str = current_type.str();
+      throw compile_error(string_printf("variable %s changes type from %s to %s\n",
+          loc.name.c_str(), target_type_str.c_str(),
+          value_type_str.c_str()), this->file_offset);
+    }
+
+    // now save the value to the appropriate slot
+    this->as.write_mov(loc.mem, MemoryReference(target_register));
+  }
 }
 
 // statement visitation
@@ -1300,16 +1426,13 @@ void CompilationVisitor::visit(AssignmentStatement* a) {
   // TODO: currently we don't support unpacking at all; we only support simple
   // assignments
 
-  // this generates assignment_target
-  a->target->accept(this);
-
   // generate code to load the value into any available register
   this->target_register = available_register();
   a->value->accept(this);
 
+  // now write the value into the appropriate slot
   this->as.write_label(string_printf("__AssignmentStatement_%p_write_value", a));
-  this->write_write_variable_slot(this->target_register, this->lvalue_target,
-      this->current_type);
+  a->target->accept(this);
 }
 
 void CompilationVisitor::visit(AugmentStatement* a) {
@@ -1532,8 +1655,6 @@ void CompilationVisitor::visit(ForStatement* a) {
     this->as.write_label(string_printf("__ForStatement_%p_write_value", a));
     this->current_type = collection_type.extension_types[0];
     a->variable->accept(this);
-    this->write_write_variable_slot(this->target_register, this->lvalue_target,
-        this->current_type);
 
     // now do the loop body
     this->as.write_label(string_printf("__ForStatement_%p_body", a));
@@ -1656,8 +1777,95 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
 void CompilationVisitor::visit(ClassDefinition* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("ClassDefinition not yet implemented", this->file_offset);
+  // write the class' context to the variable
+  auto* cls = this->global->context_for_class(a->class_id);
+  auto loc = this->location_for_variable(a->name);
+  this->as.write_label(string_printf("__ClassDefinition_%p_assign", a));
+  this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(cls));
+  this->as.write_mov(loc.mem, MemoryReference(this->target_register));
+
+  // create the class destructor function
+  if (!cls->destructor) {
+    // if none of the class attributes have destructors, then the overall class
+    // destructor trivializes to free()
+    bool has_subdestructors = false;
+    for (const auto& it : cls->attributes) {
+      if (type_has_refcount(it.second.type)) {
+        has_subdestructors = true;
+        break;
+      }
+    }
+
+    // no subdestructors; just use free()
+    if (!has_subdestructors) {
+      cls->destructor = reinterpret_cast<void*>(&free);
+      if (this->global->debug_flags & DebugFlag::Assembly) {
+        fprintf(stderr, "[%s:%" PRId64 "] class has trivial destructor\n",
+            a->name.c_str(), a->class_id);
+      }
+
+    // there are subdestructors; have to write a destructor function
+    } else {
+      string base_label = string_printf("__ClassDefinition_%p_destructor", a);
+      AMD64Assembler dtor_as;
+      dtor_as.write_label(base_label);
+
+      // lead-in (stack frame setup)
+      dtor_as.write_push(Register::RBP);
+      dtor_as.write_mov(MemoryReference(Register::RBP),
+          MemoryReference(Register::RSP));
+
+      // we'll keep the object ptr in rbx since it's callee-save
+      dtor_as.write_push(Register::RBX);
+      dtor_as.write_mov(MemoryReference(Register::RBX),
+          MemoryReference(Register::RDI));
+
+      // make sure the stack is aligned at call time for any subfunctions
+      dtor_as.write_sub(MemoryReference(Register::RSP), 8);
+
+      // the first 2 fields are the refcount and destructor pointer
+      // the rest are the attributes, in the same order as in the attributes map
+      size_t offset = 16;
+      for (const auto& it : cls->attributes) {
+        if (type_has_refcount(it.second.type)) {
+          // write a destructor call
+          dtor_as.write_label(string_printf("%s_destroy_%s", base_label.c_str(),
+              it.first.c_str()));
+          dtor_as.write_mov(MemoryReference(Register::RDI),
+              MemoryReference(Register::RBX, offset));
+          dtor_as.write_mov(MemoryReference(Register::RAX),
+              MemoryReference(RDI, 8));
+          dtor_as.write_call(MemoryReference(Register::RAX));
+        }
+        offset += 8;
+      }
+
+      // cheating time: "return" by jumping directly to free() so it will return
+      // to the caller
+      dtor_as.write_label(base_label + "_return");
+      dtor_as.write_add(MemoryReference(Register::RSP), 8);
+      dtor_as.write_pop(Register::RBX);
+      dtor_as.write_mov(Register::RBP, reinterpret_cast<int64_t>(&free));
+      dtor_as.write_xchg(Register::RBP, MemoryReference(Register::RSP));
+      dtor_as.write_ret();
+
+      // assemble it
+      multimap<size_t, string> compiled_labels;
+      string compiled = dtor_as.assemble(&compiled_labels);
+      cls->destructor = this->global->code.append(compiled);
+      this->module->compiled_size += compiled.size();
+
+      if (this->global->debug_flags & DebugFlag::Assembly) {
+        fprintf(stderr, "[%s:%" PRId64 "] class destructor assembled\n",
+            a->name.c_str(), a->class_id);
+        uint64_t addr = reinterpret_cast<uint64_t>(cls->destructor);
+        print_data(stderr, compiled.data(), compiled.size(), addr);
+        string disassembly = AMD64Assembler::disassemble(compiled.data(),
+            compiled.size(), addr, &compiled_labels);
+        fprintf(stderr, "\n%s\n", disassembly.c_str());
+      }
+    }
+  }
 }
 
 void CompilationVisitor::write_code_for_value(const Variable& value) {
@@ -1979,11 +2187,10 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_global(
     throw compile_error("nonexistent global: " + name, this->file_offset);
   }
   ssize_t offset = distance(module->globals.begin(), it);
-  loc.offset = offset * sizeof(int64_t);
   loc.is_global = true;
   loc.type = it->second;
   loc.mem = MemoryReference(Register::R13,
-      loc.offset + module->global_base_offset);
+      offset * sizeof(int64_t) + module->global_base_offset);
 
   return loc;
 }
@@ -2004,9 +2211,8 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
 
   VariableLocation loc;
   loc.name = name;
-  loc.offset = sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->target_function->locals.begin(), it)));
   loc.is_global = false;
-  loc.mem = MemoryReference(Register::RBP, loc.offset);
+  loc.mem = MemoryReference(Register::RBP, sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->target_function->locals.begin(), it))));
 
   // use the argument type if given
   try {
@@ -2018,43 +2224,20 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
   return loc;
 }
 
-void CompilationVisitor::write_write_variable_slot(Register value_register,
-    const VariableLocation& lvalue_target, const Variable& current_type) {
-  // typecheck the result. the type of a variable can only be changed if it's
-  // Indeterminate; otherwise it's an error
-  // TODO: deduplicate some of this with location_for_variable
-  Variable* target_variable = NULL;
-  if (lvalue_target.is_global) {
-    target_variable = &this->module->globals.at(lvalue_target.name);
-  } else {
-    try {
-      target_variable = &this->local_overrides.at(lvalue_target.name);
-    } catch (const out_of_range&) {
-      target_variable = &this->target_function->locals.at(lvalue_target.name);
-    }
-  }
-  if (!target_variable) {
-    throw compile_error("target variable not found");
-  }
-  if (target_variable->type == ValueType::Indeterminate) {
-    *target_variable = current_type;
-  } else if (*target_variable != lvalue_target.type) {
-    string target_type_str = target_variable->str();
-    string value_type_str = current_type.str();
-    throw compile_error(string_printf("variable %s changes type from %s to %s\n",
-        lvalue_target.name.c_str(), target_type_str.c_str(),
-        value_type_str.c_str()), this->file_offset);
+CompilationVisitor::VariableLocation CompilationVisitor::location_for_attribute(
+    ClassContext* cls, const string& name, Register instance_reg) {
+
+  auto it = cls->attributes.find(name);
+  if (it == cls->attributes.end()) {
+    throw compile_error("nonexistent attribute: " + name, this->file_offset);
   }
 
-  // now save the value to the appropriate slot. global slots are offsets from
-  // R13; local slots are offsets from RSP
-  if (lvalue_target.is_global) {
-    this->as.write_mov(
-        MemoryReference(Register::R13, this->module->global_base_offset + lvalue_target.offset),
-        MemoryReference(target_register));
-  } else {
-    this->as.write_mov(
-        MemoryReference(Register::RBP, lvalue_target.offset),
-        MemoryReference(target_register));
-  }
+  // attributes are stored at [instance_reg + 8 * which + 16]
+  VariableLocation loc;
+  loc.name = name;
+  loc.is_global = false;
+  loc.mem = MemoryReference(instance_reg,
+      sizeof(int64_t) * (2 + distance(cls->attributes.begin(), it)));
+  loc.type = it->second;
+  return loc;
 }

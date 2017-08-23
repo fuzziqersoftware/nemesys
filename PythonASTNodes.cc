@@ -1226,11 +1226,11 @@ ClassDefinition::ClassDefinition(vector<shared_ptr<Expression>>&& decorators,
 
 string ClassDefinition::str() const {
   if (this->parent_types.size() == 0) {
-    return string_printf("class %s is %" PRIu64 ":", this->name.c_str(),
+    return string_printf("class %s /*id=%" PRIu64 "*/:", this->name.c_str(),
         this->class_id);
   }
   string base_str = comma_str_list(this->parent_types);
-  return string_printf("class %s(%s) is %" PRIu64 ":", this->name.c_str(),
+  return string_printf("class %s(%s) /*id=%" PRIu64 "*/:", this->name.c_str(),
       base_str.c_str(), this->class_id);
 }
 

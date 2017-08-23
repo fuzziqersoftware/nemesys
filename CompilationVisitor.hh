@@ -115,12 +115,10 @@ private:
 
   struct VariableLocation {
     std::string name;
-    int64_t offset;
     bool is_global;
     Variable type;
     MemoryReference mem;
   };
-  VariableLocation lvalue_target;
   Variable current_type;
 
   // output manager
@@ -159,9 +157,8 @@ private:
   VariableLocation location_for_global(ModuleAnalysis* module,
       const std::string& name);
   VariableLocation location_for_variable(const std::string& name);
-
-  void write_write_variable_slot(Register value_register,
-      const VariableLocation& lvalue_target, const Variable& current_type);
+  VariableLocation location_for_attribute(ClassContext* cls,
+      const std::string& name, Register instance_reg);
 
   FunctionContext* current_function();
 };

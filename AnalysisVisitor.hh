@@ -90,9 +90,19 @@ private:
   // temporary state
   Variable current_value;
   int64_t in_function_id;
+  int64_t in_class_id;
 
   FunctionContext* current_function();
+  ClassContext* current_class();
 
+  void record_assignment_generic(std::map<std::string, Variable>& vars,
+      const std::string& name, const Variable& value, size_t file_offset);
+  void record_assignment_global(const std::string& name, const Variable& value,
+      size_t file_offset);
+  void record_assignment_local(FunctionContext* fn, const std::string& name,
+      const Variable& value, size_t file_offset);
+  void record_assignment_attribute(ClassContext* cls, const std::string& name,
+      const Variable& value, bool allow_create, size_t file_offset);
   void record_assignment(const std::string& name, const Variable& var,
       size_t file_offset);
 };

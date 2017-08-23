@@ -18,7 +18,7 @@ using namespace std;
 
 
 AnalysisVisitor::AnalysisVisitor(GlobalAnalysis* global, ModuleAnalysis* module)
-    : global(global), module(module), in_function_id(0) { }
+    : global(global), module(module), in_function_id(0), in_class_id(0) { }
 
 void AnalysisVisitor::visit(UnaryOperation* a) {
   a->expr->accept(this);
@@ -125,12 +125,12 @@ void AnalysisVisitor::visit(LambdaDefinition* a) {
 
   int64_t prev_function_id = this->in_function_id;
   this->in_function_id = a->function_id;
-  auto* context = this->current_function();
+  auto* fn = this->current_function();
 
   for (auto& arg : a->args.args) {
     // copy the argument definition into the function context
-    context->args.emplace_back();
-    auto& new_arg = context->args.back();
+    fn->args.emplace_back();
+    auto& new_arg = fn->args.back();
     new_arg.name = arg.name;
     if (arg.default_value.get()) {
       arg.default_value->accept(this);
@@ -143,11 +143,11 @@ void AnalysisVisitor::visit(LambdaDefinition* a) {
       }
     }
   }
-  context->varargs_name = a->args.varargs_name;
-  context->varkwargs_name = a->args.varkwargs_name;
+  fn->varargs_name = a->args.varargs_name;
+  fn->varkwargs_name = a->args.varkwargs_name;
 
   a->result->accept(this);
-  context->return_types.emplace(move(this->current_value));
+  fn->return_types.emplace(move(this->current_value));
 
   this->in_function_id = prev_function_id;
 
@@ -157,8 +157,9 @@ void AnalysisVisitor::visit(LambdaDefinition* a) {
 void AnalysisVisitor::visit(FunctionCall* a) {
   // the function reference had better be a function
   a->function->accept(this);
-  if (this->current_value.type != ValueType::Function) {
-    throw compile_error("cannot call a non-function object: " + this->current_value.str(), a->file_offset);
+  if ((this->current_value.type != ValueType::Function) &&
+      (this->current_value.type != ValueType::Class)) {
+    throw compile_error("cannot call a non-function/class object: " + this->current_value.str(), a->file_offset);
   }
   Variable function = move(this->current_value);
 
@@ -181,15 +182,15 @@ void AnalysisVisitor::visit(FunctionCall* a) {
     a->callee_function_id = function.function_id;
 
     // if the callee is built-in (has no module) or is in a module in the
-    // Analyzed phase or later, then we should know its possible return types
-    // TODO: this doesn't work for functions defined in the same module; ideally
-    // this would happen in a separate pass
-    auto* callee_context = this->global->context_for_function(a->callee_function_id);
-    if (!callee_context->module || (callee_context->module->phase >= ModuleAnalysis::Phase::Analyzed)) {
-      if (callee_context->return_types.empty()) {
+    // Analyzed phase or later or is in the current module, then we should know
+    // its possible return types
+    auto* callee_fn = this->global->context_for_function(a->callee_function_id);
+    if (!callee_fn->module || (callee_fn->module == this->module) ||
+        (callee_fn->module->phase >= ModuleAnalysis::Phase::Analyzed)) {
+      if (callee_fn->return_types.empty()) {
         this->current_value = Variable(ValueType::None);
-      } else if (callee_context->return_types.size() == 1) {
-        this->current_value = *callee_context->return_types.begin();
+      } else if (callee_fn->return_types.size() == 1) {
+        this->current_value = *callee_fn->return_types.begin();
       }
     }
   }
@@ -403,7 +404,8 @@ void AnalysisVisitor::visit(NoneConstant* a) {
 }
 
 void AnalysisVisitor::visit(VariableLookup* a) {
-  // if the name is built-in, use that instead
+  // if the name is built-in, use that instead - we already prevented assignment
+  // to built-in names in AnnotationVisitor, so there's no risk of conflict here
   try {
     this->current_value = builtin_names.at(a->name);
     return;
@@ -411,9 +413,9 @@ void AnalysisVisitor::visit(VariableLookup* a) {
 
   try {
     if (this->in_function_id) {
-      auto* context = this->current_function();
+      auto* fn = this->current_function();
       try {
-        this->current_value = context->locals.at(a->name);
+        this->current_value = fn->locals.at(a->name);
       } catch (const out_of_range& e) {
         this->current_value = this->module->globals.at(a->name);
       }
@@ -421,7 +423,7 @@ void AnalysisVisitor::visit(VariableLookup* a) {
       // all lookups outside of a function are globals
       try {
         this->current_value = this->module->globals.at(a->name);
-      } catch (const std::out_of_range& e) {
+      } catch (const out_of_range& e) {
         throw compile_error("global " + a->name + " does not exist", a->file_offset);
       }
     }
@@ -468,6 +470,29 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
     case ValueType::Class:
       throw compile_error("attribute lookup on Class value", a->file_offset);
 
+    // look up the class attribute
+    case ValueType::Instance: {
+      auto* cls = this->global->context_for_class(this->current_value.class_id);
+      if (!cls) {
+        throw compile_error(string_printf(
+            "attribute lookup refers to missing class: %" PRId64,
+            this->current_value.class_id), a->file_offset);
+      }
+
+      try {
+        this->current_value = cls->attributes.at(a->name);
+      } catch (const out_of_range& e) {
+        throw compile_error("class attribute lookup refers to missing attribute",
+            a->file_offset);
+      }
+
+      // if it isn't a function, it may be mutable - return its type only
+      if (this->current_value.type != ValueType::Function) {
+        this->current_value.clear_value();
+      }
+      break;
+    }
+
     // we'll need to have the module at Analyzed phase or later
     case ValueType::Module: {
       const string& module_name = *this->current_value.bytes_value;
@@ -484,7 +509,7 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
       try {
         this->current_value = module->globals.at(a->name);
       } catch (const out_of_range&) {
-        throw compile_error("attribute lookup refers to missing attribute",
+        throw compile_error("module attribute lookup refers to missing attribute",
             a->file_offset);
       }
     }
@@ -527,9 +552,32 @@ void AnalysisVisitor::visit(AttributeLValueReference* a) {
 
   // TODO: typecheck the value if a type annotation is present
 
-  // TODO: for now disregard attribute writes
+  // if base is missing, then it's just a simple variable (local/global) write
   if (!a->base.get()) {
     this->record_assignment(a->name, this->current_value, a->file_offset);
+
+  // if base is present, evaluate it and figure out what it's doing
+  } else {
+    Variable value = move(this->current_value);
+
+    // evaluate the base. if it's not a class instance, fail - we don't support
+    // adding/overwriting arbitrary attributes on arbitrary objects
+    a->base->accept(this);
+    if (this->current_value.type != ValueType::Instance) {
+      throw compile_error("cannot write attribute on " + this->current_value.str(),
+          a->file_offset);
+    }
+
+    // get the class definition and create/overwrite the attribute if possible
+    auto* target_cls = this->global->context_for_class(this->current_value.class_id);
+    if (!target_cls) {
+      throw compile_error(string_printf(
+          "class %" PRId64 " does not have a context", this->current_value.class_id),
+          a->file_offset);
+    }
+    auto* current_fn = this->current_function();
+    this->record_assignment_attribute(target_cls, a->name, value,
+        current_fn && current_fn->is_class_init(), a->file_offset);
   }
 }
 
@@ -565,8 +613,8 @@ void AnalysisVisitor::visit(AugmentStatement* a) {
 }
 
 void AnalysisVisitor::visit(DeleteStatement* a) {
-  auto* context = this->current_function();
-  if (context) {
+  auto* fn = this->current_function();
+  if (fn) {
     // TODO
     throw compile_error("DeleteStatement not yet implemented", a->file_offset);
   } else {
@@ -579,23 +627,12 @@ void AnalysisVisitor::visit(ImportStatement* a) {
   // this is similar to AnnotationVisitor, except we copy values too, and we
   // expect all the names to already exist in the target scope
 
-  auto* context = this->current_function();
-  auto* scope = context ? &context->locals : &this->module->globals;
+  auto* fn = this->current_function();
+  auto* scope = fn ? &fn->locals : &this->module->globals;
 
   // case 3
   if (a->import_star) {
     throw compile_error("import * is not supported", a->file_offset);
-
-    // TODO: this isn't supported because we only allow importing immutable
-    // globals from other modules in the other cases, and this would circumvent
-    // that restriction and break guarantees
-    const string& module_name = a->modules.begin()->first;
-    auto module = this->global->get_module_at_phase(module_name,
-        ModuleAnalysis::Phase::Analyzed);
-    for (const auto& it : this->module->globals) {
-      scope->at(it.first) = it.second;
-    }
-    return;
   }
 
   // case 1: import entire modules, not specific names
@@ -645,18 +682,22 @@ void AnalysisVisitor::visit(ContinueStatement* a) {
 
 void AnalysisVisitor::visit(ReturnStatement* a) {
   // this tells us what the return type of the function is
-  auto* context = this->current_function();
-  if (!context) {
+  auto* fn = this->current_function();
+  if (!fn) {
     throw compile_error("return statement outside function", a->file_offset);
   }
 
   // TODO: typecheck the value if the function has a return type annotation
 
   if (a->value.get()) {
+    if (fn->is_class_init()) {
+      throw compile_error("class __init__ cannot return a value");
+    }
+
     a->value->accept(this);
-    context->return_types.emplace(move(this->current_value));
+    fn->return_types.emplace(move(this->current_value));
   } else {
-    context->return_types.emplace(ValueType::None);
+    fn->return_types.emplace(ValueType::None);
   }
 }
 
@@ -733,6 +774,7 @@ void AnalysisVisitor::visit(ForStatement* a) {
       case ValueType::Float:
       case ValueType::Function:
       case ValueType::Class:
+      case ValueType::Instance: // TODO: these may be iterable in the future
       case ValueType::Module: {
         string target_value = this->current_value.str();
         throw compile_error(string_printf(
@@ -833,6 +875,7 @@ void AnalysisVisitor::visit(ForStatement* a) {
       case ValueType::Float:
       case ValueType::Function:
       case ValueType::Class:
+      case ValueType::Instance: // these may be iterable in the future
       case ValueType::Module: {
         string target_type = this->current_value.str();
         throw compile_error(string_printf(
@@ -915,14 +958,37 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
 
   int64_t prev_function_id = this->in_function_id;
   this->in_function_id = a->function_id;
-  auto* context = this->current_function();
+  auto* fn = this->current_function();
 
-  for (auto& arg : a->args.args) {
+  for (size_t x = 0; x < a->args.args.size(); x++) {
+    auto& arg = a->args.args[x];
+
     // copy the argument definition into the function context
-    context->args.emplace_back();
-    auto& new_arg = context->args.back();
+    fn->args.emplace_back();
+    auto& new_arg = fn->args.back();
     new_arg.name = arg.name;
-    if (arg.default_value.get()) {
+
+    // if in a class definition, the first argument cannot have a default value
+    // and must be named "self"
+    // TODO: when we support warnings, this should be a warning, not an error
+    if (!x && this->in_class_id) {
+      if (arg.default_value.get()) {
+        throw compile_error(
+            "first argument to instance method cannot have a default value",
+            a->file_offset);
+      }
+      if (arg.name != "self") {
+        throw compile_error(
+            "first argument to instance method must be named \'self\'",
+            a->file_offset);
+      }
+
+      // the first argument is the class object - we know its type but not its
+      // value
+      fn->locals.at(arg.name) = Variable(ValueType::Instance, this->in_class_id,
+          NULL);
+
+    } else if (arg.default_value.get()) {
       arg.default_value->accept(this);
       new_arg.default_value = move(this->current_value);
       if (new_arg.default_value.type == ValueType::Indeterminate) {
@@ -933,14 +999,24 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
       }
     }
   }
-  context->varargs_name = a->args.varargs_name;
-  context->varkwargs_name = a->args.varkwargs_name;
+  fn->varargs_name = a->args.varargs_name;
+  fn->varkwargs_name = a->args.varkwargs_name;
 
   this->visit_list(a->items);
 
+  // if this is an __init__ function, it returns a class object
+  if (fn->is_class_init()) {
+    if (!fn->return_types.empty()) {
+      throw compile_error("__init__ cannot return a value");
+    }
+
+    fn->return_types.emplace(ValueType::Instance, fn->id, nullptr);
+
   // if there's only one return type and it's None, delete it
-  if ((context->return_types.size() == 1) && (context->return_types.begin()->type == ValueType::None)) {
-    context->return_types.clear();
+  } else {
+    if ((fn->return_types.size() == 1) && (fn->return_types.begin()->type == ValueType::None)) {
+      fn->return_types.clear();
+    }
   }
 
   this->in_function_id = prev_function_id;
@@ -950,8 +1026,19 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
 }
 
 void AnalysisVisitor::visit(ClassDefinition* a) {
-  // TODO
-  throw compile_error("ClassDefinition not yet implemented", a->file_offset);
+  if (!a->decorators.empty()) {
+    throw compile_error("decorators not yet supported", a->file_offset);
+  }
+  if (!a->parent_types.empty()) {
+    throw compile_error("class inheritance not yet supported", a->file_offset);
+  }
+
+  int64_t prev_class_id = this->in_class_id;
+  this->in_class_id = a->class_id;
+
+  this->visit_list(a->items);
+
+  this->in_class_id = prev_class_id;
 
   this->record_assignment(a->name, Variable(ValueType::Class, a->class_id),
       a->file_offset);
@@ -961,57 +1048,79 @@ FunctionContext* AnalysisVisitor::current_function() {
   return this->global->context_for_function(this->in_function_id);
 }
 
-void AnalysisVisitor::record_assignment(const std::string& name,
-    const Variable& var, size_t file_offset) {
-  auto* context = this->current_function();
-  bool is_global = !context || !context->locals.count(name);
-  bool is_mutable = !is_global || this->module->globals_mutable.count(name);
+ClassContext* AnalysisVisitor::current_class() {
+  return this->global->context_for_class(this->in_class_id);
+}
 
-  if (is_global) {
-    auto& global = this->module->globals.at(name);
 
-    if (global.type == ValueType::Indeterminate) {
-      global = var;
 
-    // for mutable globals, we only keep track of the type and not the value;
-    // for immutable globals, we keep track of both
-    } else if (is_mutable) {
-      if (global.type != var.type) {
-        string global_str = global.str();
-        string var_str = var.str();
-        throw compile_error(string_printf(
-              "global variable %s cannot change type (%s -> %s)",
-              name.c_str(), global_str.c_str(), var_str.c_str()), file_offset);
-      }
-      global.clear_value();
-
-    } else {
-      throw compile_error(string_printf(
-          "immutable global %s was written multiple times", name.c_str()), file_offset);
-    }
-
+void AnalysisVisitor::record_assignment_generic(map<string, Variable>& vars,
+    const string& name, const Variable& value, size_t file_offset) {
+  auto& var = vars.at(name);
+  if (var.type == ValueType::Indeterminate) {
+    var = value; // this is the first write
   } else {
-    // we keep track of the value only for the first write of a variable;
-    // after that we keep track of the type only
-    auto& function_locals = context->locals;
-    try {
-      auto& local_var = function_locals.at(name);
-      if (local_var.type == ValueType::Indeterminate) {
-        local_var = var; // this is the first set
-      } else {
-        if (local_var.type != var.type) {
-          string existing_type = local_var.str();
-          string new_type = var.str();
-          throw compile_error(string_printf("%s changes type within function (from %s to %s)",
-              name.c_str(), existing_type.c_str(), new_type.c_str()), file_offset);
-        }
-
-        // assume the value changed (this is not the first write)
-        local_var.clear_value();
-      }
-    } catch (const out_of_range& e) {
-      throw compile_error(string_printf(
-          "local variable `%s` was not found in annotation phase", name.c_str()), file_offset);
+    if (!var.types_equal(value)) {
+      string existing_type = var.str();
+      string new_type = value.str();
+      throw compile_error(string_printf("%s changes type (from %s to %s)",
+          name.c_str(), existing_type.c_str(), new_type.c_str()), file_offset);
     }
+
+    // assume the value changed (this is not the first write)
+    var.clear_value();
   }
+}
+
+void AnalysisVisitor::record_assignment_global(const string& name,
+    const Variable& value, size_t file_offset) {
+  this->record_assignment_generic(this->module->globals, name, value, file_offset);
+}
+
+void AnalysisVisitor::record_assignment_local(FunctionContext* fn,
+    const string& name, const Variable& value, size_t file_offset) {
+  try {
+    this->record_assignment_generic(fn->locals, name, value, file_offset);
+  } catch (const out_of_range& e) {
+    throw compile_error(string_printf(
+        "local variable %s not found in annotation phase",
+        name.c_str()), file_offset);
+  }
+}
+
+void AnalysisVisitor::record_assignment_attribute(ClassContext* cls,
+    const string& name, const Variable& value, bool allow_create,
+    size_t file_offset) {
+  try {
+    this->record_assignment_generic(cls->attributes, name, value, file_offset);
+  } catch (const out_of_range& e) {
+    if (!allow_create) {
+      throw compile_error("class does not have attribute " + name);
+    }
+    // unlike locals and globals, class attributes aren't found in annotation.
+    // just create it with the given value
+    cls->attributes.emplace(name, value);
+  }
+}
+
+void AnalysisVisitor::record_assignment(const string& name, const Variable& var,
+    size_t file_offset) {
+
+  auto* fn = this->current_function();
+  if (fn) {
+    if (fn->explicit_globals.count(name)) {
+      this->record_assignment_global(name, var, file_offset);
+    } else {
+      this->record_assignment_local(fn, name, var, file_offset);
+    }
+    return;
+  }
+
+  auto* cls = this->current_class();
+  if (cls) {
+    this->record_assignment_attribute(cls, name, var, false, file_offset);
+    return;
+  }
+
+  this->record_assignment_global(name, var, file_offset);
 }

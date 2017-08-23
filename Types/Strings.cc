@@ -23,7 +23,7 @@ BytesObject* bytes_new(BytesObject* s, const uint8_t* data, ssize_t count) {
     }
   }
   s->basic.refcount = 1;
-  s->basic.destructor = delete_reference;
+  s->basic.destructor = free;
   s->count = count;
   if (data) {
     memcpy(s->data, data, sizeof(uint8_t) * count);
@@ -80,7 +80,7 @@ UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count)
     }
   }
   s->basic.refcount = 1;
-  s->basic.destructor = delete_reference;
+  s->basic.destructor = free;
   s->count = count;
   if (data) {
     memcpy(s->data, data, sizeof(wchar_t) * count);

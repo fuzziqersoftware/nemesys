@@ -55,12 +55,12 @@ private:
   GlobalAnalysis* global;
   ModuleAnalysis* module;
 
-  std::unordered_map<std::string, int64_t> global_write_count;
-
   // temporary state
   int64_t in_function_id;
+  int64_t in_class_id;
 
   FunctionContext* current_function();
+  ClassContext* current_class();
 
   void record_write(const std::string& name, size_t file_offset);
 };

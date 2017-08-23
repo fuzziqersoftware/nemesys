@@ -24,6 +24,7 @@ enum class ValueType {
   Dict,
   Function,
   Class,
+  Instance,
   Module,
 };
 
@@ -41,6 +42,7 @@ struct Variable {
     int64_t function_id;
     int64_t class_id;
   };
+  void* instance; // used for Instance only
   std::vector<Variable> extension_types;
 
   // unknown value constructors
@@ -82,6 +84,9 @@ struct Variable {
   Variable(ValueType type, const std::unordered_map<Variable, std::shared_ptr<Variable>>& dict_value);
   Variable(ValueType type, std::unordered_map<Variable, std::shared_ptr<Variable>>&& dict_value);
 
+  // Instance
+  Variable(ValueType type, int64_t class_id, void* instance);
+
   // copy/move constructors
   Variable(const Variable&);
   Variable(Variable&&);
@@ -96,6 +101,7 @@ struct Variable {
   std::string str() const;
 
   bool truth_value() const;
+  bool types_equal(const Variable& other) const;
   bool operator==(const Variable& other) const;
   bool operator!=(const Variable& other) const;
 };
