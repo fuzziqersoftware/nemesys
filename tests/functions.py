@@ -21,7 +21,7 @@ w = g(f())
 print('after all of that, w is ' + repr(w) + ' and z is ' + repr(z))
 
 # this checks if stack-based argument passing works properly
-def sum_all_arguments(a, b, c, d, e, f, g, h, i, j):
+def sum_all_arguments(a, b, c, d, e=0, f=0, g=0, h=0, i=0, j=0):
   print('a is ' + repr(a))
   print('b is ' + repr(b))
   print('c is ' + repr(c))
@@ -37,6 +37,10 @@ def sum_all_arguments(a, b, c, d, e, f, g, h, i, j):
 # this function should work with both integers and strings
 int_sum = sum_all_arguments(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 print('the sum of 10 ints is ' + repr(int_sum))
+int_sum = sum_all_arguments(1, 2, 3, 4)
+print('the sum of 4 ints is ' + repr(int_sum))
+int_sum = sum_all_arguments(1, 2, 3, 4, h=8, j=10)
+print('the sum of 6 ints is ' + repr(int_sum))
 str_sum = sum_all_arguments('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j')
 print('the sum of 10 strs is ' + repr(str_sum))
 
