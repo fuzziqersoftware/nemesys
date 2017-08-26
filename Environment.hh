@@ -61,8 +61,8 @@ struct Variable {
   Variable(ValueType type, double float_value);
 
   // Bytes/Module
-  Variable(ValueType type, const uint8_t* bytes_value, size_t size);
-  Variable(ValueType type, const uint8_t* bytes_value);
+  Variable(ValueType type, const char* bytes_value, size_t size);
+  Variable(ValueType type, const char* bytes_value);
   Variable(ValueType type, const std::string& bytes_value);
   Variable(ValueType type, std::string&& bytes_value);
 

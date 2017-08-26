@@ -19,6 +19,7 @@
 
 // builtin module implementations
 #include "Modules/__nemesys__.hh"
+#include "Modules/posix.hh"
 #include "Modules/sys.hh"
 
 using namespace std;
@@ -117,7 +118,7 @@ static UnicodeObject* builtin_repr_float(double v) {
 }
 
 static UnicodeObject* builtin_repr_bytes(BytesObject* v) {
-  string escape_ret = escape(v->data, v->count);
+  string escape_ret = escape(reinterpret_cast<const char*>(v->data), v->count);
   UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 3);
   ret->data[0] = L'b';
   ret->data[1] = L'\'';
@@ -420,6 +421,14 @@ shared_ptr<ModuleAnalysis> get_builtin_module(const string& module_name) {
       initialized = true;
     }
     return sys_module;
+  }
+  if (module_name == "posix") {
+    static bool initialized = false;
+    if (!initialized) {
+      posix_initialize();
+      initialized = true;
+    }
+    return posix_module;
   }
   return NULL;
 }

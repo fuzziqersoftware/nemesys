@@ -736,8 +736,10 @@ void CompilationVisitor::visit(ListConstructor* a) {
     // merge the type with the known extension type
     if (extension_type.type == ValueType::Indeterminate) {
       extension_type = move(this->current_type);
-    } else if (extension_type != this->current_type) {
-      throw compile_error("list contains different object types");
+      extension_type.clear_value();
+    } else if (!extension_type.types_equal(this->current_type)) {
+      throw compile_error("list contains different object types: " +
+          extension_type.type_only().str() + " and " + this->current_type.type_only().str());
     }
   }
 

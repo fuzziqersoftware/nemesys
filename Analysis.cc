@@ -177,6 +177,12 @@ bool FunctionContext::is_class_init() const {
 
 
 
+// these module attributes are statically populated even for dynamic modules.
+// this should match the attributes that are created automatically in the
+// ModuleAnalysis constructor
+static const unordered_set<string> static_initialize_module_attributes({
+  "__name__", "__file__"});
+
 ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename,
     bool is_code) : phase(Phase::Initial), name(name),
     source(new SourceFile(filename, is_code)), global_base_offset(-1),
@@ -606,7 +612,7 @@ ClassContext* GlobalAnalysis::context_for_class(int64_t class_id,
 const BytesObject* GlobalAnalysis::get_or_create_constant(const string& s,
     bool use_shared_constants) {
   if (!use_shared_constants) {
-    return bytes_new(NULL, reinterpret_cast<const uint8_t*>(s.data()), s.size());
+    return bytes_new(NULL, s.data(), s.size());
   }
 
   BytesObject* o = NULL;
@@ -614,7 +620,7 @@ const BytesObject* GlobalAnalysis::get_or_create_constant(const string& s,
     o = this->bytes_constants.at(s);
     add_reference(o);
   } catch (const out_of_range& e) {
-    o = bytes_new(NULL, reinterpret_cast<const uint8_t*>(s.data()), s.size());
+    o = bytes_new(NULL, s.data(), s.size());
     this->bytes_constants.emplace(s, o);
   }
   return o;
@@ -656,15 +662,16 @@ void GlobalAnalysis::initialize_global_space_for_module(
   memset(&this->global_space[module->global_base_offset / 8], 0,
       sizeof(int64_t) * module->globals.size());
 
-  // don't do any static initialization for dynamic modules: the root scope will
-  // construct all the variables
-  if (module->ast_root.get()) {
-    return;
-  }
-
+  // for built-in modules, construct everything statically
   size_t slot = module->global_base_offset / 8;
   for (const auto& it : module->globals) {
-    // for builtin modules, we should always know the value
+    // if the module is dynamic, only initialize a few globals (which the root
+    // scope doesn't initialize)
+    if (module->ast_root.get() &&
+        !static_initialize_module_attributes.count(it.first)) {
+      continue;
+    }
+
     if (!it.second.value_known) {
       throw compile_error(string_printf("built-in global %s has unknown value",
           it.first.c_str()));

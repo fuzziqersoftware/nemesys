@@ -76,8 +76,7 @@ static void tracked_bytes_delete(void* o) {
   free(o);
 }
 
-BytesObject* tracked_bytes_new(BytesObject* o, const uint8_t* data,
-    size_t count) {
+BytesObject* tracked_bytes_new(BytesObject* o, const char* data, size_t count) {
   num_bytes_objects++;
   BytesObject* b = bytes_new(o, data, count);
   b->basic.destructor = tracked_bytes_delete;
@@ -85,8 +84,7 @@ BytesObject* tracked_bytes_new(BytesObject* o, const uint8_t* data,
 }
 
 BytesObject* tracked_bytes_new(const char* text) {
-  const uint8_t* data = reinterpret_cast<const uint8_t*>(text);
-  return tracked_bytes_new(NULL, data, strlen(text));
+  return tracked_bytes_new(NULL, text, strlen(text));
 }
 
 

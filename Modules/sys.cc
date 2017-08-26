@@ -32,7 +32,7 @@ static map<string, Variable> globals({
   {"__doc__",              Variable(ValueType::Unicode, __doc__)},
   {"__name__",             Variable(ValueType::Unicode, L"sys")},
   {"__package__",          Variable(ValueType::None)},
-  //{"__stderr__",           Variable()},
+  // {"__stderr__",           Variable()},
   // {"__stdin__",            Variable()},
   // {"__stdout__",           Variable()},
   {"abiflags",             Variable(ValueType::Unicode, L"")},
@@ -83,7 +83,7 @@ void sys_set_argv(const vector<const char*>& sys_argv) {
   for (const char* arg : sys_argv) {
     // TODO: these should be Unicode, not Bytes
     argv.emplace_back(new Variable(ValueType::Bytes,
-        reinterpret_cast<const uint8_t*>(arg)));
+        reinterpret_cast<const char*>(arg)));
   }
   sys_module->globals.emplace("argv", Variable(ValueType::List, argv));
 }

@@ -11,12 +11,12 @@ using namespace std;
 
 BytesObject::BytesObject() : basic(free), count(0) { }
 
-BytesObject* bytes_new(BytesObject* s, const uint8_t* data, ssize_t count) {
+BytesObject* bytes_new(BytesObject* s, const char* data, ssize_t count) {
   if (count < 0) {
-    count = strlen(reinterpret_cast<const char*>(data));
+    count = strlen(data);
   }
   if (!s) {
-    size_t size = sizeof(BytesObject) + sizeof(uint8_t) * (count + 1);
+    size_t size = sizeof(BytesObject) + sizeof(char) * (count + 1);
     s = reinterpret_cast<BytesObject*>(malloc(size));
     if (!s) {
       return NULL;
@@ -26,7 +26,7 @@ BytesObject* bytes_new(BytesObject* s, const uint8_t* data, ssize_t count) {
   s->basic.destructor = free;
   s->count = count;
   if (data) {
-    memcpy(s->data, data, sizeof(uint8_t) * count);
+    memcpy(s->data, data, sizeof(char) * count);
     s->data[s->count] = 0;
   }
   return s;
@@ -38,13 +38,13 @@ BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b) {
   if (!s) {
     return NULL;
   }
-  memcpy(s->data, a->data, sizeof(uint8_t) * a->count);
-  memcpy(&s->data[a->count], b->data, sizeof(uint8_t) * b->count);
+  memcpy(s->data, a->data, sizeof(char) * a->count);
+  memcpy(&s->data[a->count], b->data, sizeof(char) * b->count);
   s->data[s->count] = 0;
   return s;
 }
 
-uint8_t bytes_at(const BytesObject* s, size_t which) {
+char bytes_at(const BytesObject* s, size_t which) {
   if (which >= s->count) {
     return 0;
   }
@@ -56,12 +56,12 @@ size_t bytes_length(const BytesObject* s) {
 }
 
 bool bytes_contains(const BytesObject* haystack, const BytesObject* needle) {
-  return memmem(haystack->data, haystack->count * sizeof(uint8_t),
-      needle->data, needle->count * sizeof(uint8_t));
+  return memmem(haystack->data, haystack->count * sizeof(char),
+      needle->data, needle->count * sizeof(char));
 }
 
 string bytes_to_cxx_string(const BytesObject* s) {
-  return string(s->data, s->count);
+  return string(reinterpret_cast<const char*>(s->data), s->count);
 }
 
 
@@ -119,4 +119,38 @@ bool unicode_contains(const UnicodeObject* haystack, const UnicodeObject* needle
 
 wstring unicode_to_cxx_wstring(const UnicodeObject* s) {
   return wstring(s->data, s->count);
+}
+
+
+
+BytesObject* encode_ascii(const UnicodeObject* s) {
+  return encode_ascii(s->data, s->count);
+}
+
+BytesObject* encode_ascii(const wchar_t* s, ssize_t count) {
+  if (count < 0) {
+    count = wcslen(s);
+  }
+  BytesObject* ret = bytes_new(NULL, NULL, count);
+  for (int64_t x = 0; x < count; x++) {
+    ret->data[x] = s[x];
+  }
+  ret->data[count] = 0;
+  return ret;
+}
+
+UnicodeObject* decode_ascii(const BytesObject* s) {
+  return decode_ascii(s->data, s->count);
+}
+
+UnicodeObject* decode_ascii(const char* s, ssize_t count) {
+  if (count < 0) {
+    count = strlen(s);
+  }
+  UnicodeObject* ret = unicode_new(NULL, NULL, count);
+  for (int64_t x = 0; x < count; x++) {
+    ret->data[x] = s[x];
+  }
+  ret->data[count] = 0;
+  return ret;
 }

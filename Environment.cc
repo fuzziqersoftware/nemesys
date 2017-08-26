@@ -132,17 +132,16 @@ Variable::Variable(ValueType type, double float_value) : type(type),
 }
 
 // Bytes/Module
-Variable::Variable(ValueType type, const uint8_t* bytes_value, size_t size) :
-    type(type), value_known(true),
-    bytes_value(new string(reinterpret_cast<const char*>(bytes_value), size)),
+Variable::Variable(ValueType type, const char* bytes_value, size_t size) :
+    type(type), value_known(true), bytes_value(new string(bytes_value, size)),
     instance(NULL) {
   if ((this->type != ValueType::Bytes) &&
       (this->type != ValueType::Module)) {
     throw invalid_argument("incorrect Variable constructor type called");
   }
 }
-Variable::Variable(ValueType type, const uint8_t* bytes_value) :
-    Variable(type, bytes_value, strlen(reinterpret_cast<const char*>(bytes_value))) { }
+Variable::Variable(ValueType type, const char* bytes_value) :
+    Variable(type, bytes_value, strlen(bytes_value)) { }
 Variable::Variable(ValueType type, const string& bytes_value) : type(type),
     value_known(true), bytes_value(new string(bytes_value)), instance(NULL) {
   if ((this->type != ValueType::Bytes) &&
@@ -742,8 +741,12 @@ std::string type_signature_for_variables(const vector<Variable>& vars,
         throw invalid_argument("type signatures for Sets not implemented");
 
       case ValueType::Dict:
-        // TODO
-        throw invalid_argument("type signatures for Dicts not implemented");
+        ret += 'D';
+        if (var.extension_types.size() != 2) {
+          throw invalid_argument("dict does not have exactly two extension types");
+        }
+        ret += type_signature_for_variables(var.extension_types, allow_indeterminate);
+        break;
 
       case ValueType::Function:
         ret += 'F';
