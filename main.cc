@@ -37,21 +37,22 @@ Options:\n\
 
 int main(int argc, char* argv[]) {
 
+  // sanity check
   if (argc < 2) {
     print_usage(argv[0]);
     return 1;
   }
 
-  global.reset(new GlobalAnalysis());
-
+  // parse command line options
+  int64_t debug_flags = 0;
   vector<const char*> sys_argv;
   bool module_is_code = false;
   size_t x;
   for (x = 1; x < argc; x++) {
     if (!strncmp(argv[x], "-X", 2)) {
-      vector<string> debug_flags = split(&argv[x][2], ',');
-      for (const auto& flag : debug_flags) {
-        global->debug_flags |= debug_flag_for_name(flag.c_str());
+      vector<string> debug_flag_strs = split(&argv[x][2], ',');
+      for (const auto& debug_flag_str : debug_flag_strs) {
+        debug_flags |= debug_flag_for_name(debug_flag_str.c_str());
       }
 
     } else if (!strcmp(argv[x], "-h") || !strcmp(argv[x], "-?") || !strcmp(argv[x], "--help")) {
@@ -59,9 +60,6 @@ int main(int argc, char* argv[]) {
       return 0;
 
     } else if (!strncmp(argv[x], "-c", 2)) {
-      if (!sys_argv.empty()) {
-        throw invalid_argument("-c given after other non-nemesys flags");
-      }
       sys_argv.emplace_back(&argv[x][2]);
       module_is_code = true;
       break;
@@ -70,19 +68,24 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  // anything after -c or a filename is passed as sys.argv
   for (; x < argc; x++) {
     sys_argv.emplace_back(argv[x]);
   }
 
+  // need a script or code to run
   if (sys_argv.empty()) {
     fprintf(stderr, "nemesys does not yet implement an interactive shell\n");
     return 1;
   }
 
+  // set up the global environment
+  global.reset(new GlobalAnalysis({"."}));
+  global->debug_flags = debug_flags;
+  create_default_builtin_names();
   sys_set_argv(sys_argv);
 
-  create_default_builtin_names();
-
+  // run the specified script/code
   global->get_or_create_module("__main__", sys_argv[0], module_is_code);
   global->get_module_at_phase("__main__", ModuleAnalysis::Phase::Imported);
 

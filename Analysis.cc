@@ -223,8 +223,8 @@ int64_t ModuleAnalysis::create_builtin_function(const char* name,
 
 
 
-GlobalAnalysis::GlobalAnalysis() : import_paths({"."}), global_space(NULL),
-    global_space_used(0) { }
+GlobalAnalysis::GlobalAnalysis(const std::vector<std::string>& import_paths) :
+    import_paths(import_paths), global_space(NULL), global_space_used(0) { }
 
 GlobalAnalysis::~GlobalAnalysis() {
   if (this->global_space) {

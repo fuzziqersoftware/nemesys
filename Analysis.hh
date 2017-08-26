@@ -187,7 +187,7 @@ public:
 
   int64_t debug_flags;
 
-  GlobalAnalysis();
+  GlobalAnalysis(const std::vector<std::string>& import_paths);
   ~GlobalAnalysis();
 
   void print_compile_error(FILE* stream, const ModuleAnalysis* module,

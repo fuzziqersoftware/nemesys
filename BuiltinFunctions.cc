@@ -405,30 +405,38 @@ void create_default_builtin_names() {
   create_default_builtin_functions();
 }
 
+
+
+struct BuiltinModule {
+  bool initialized;
+  void (*initialize)();
+
+  // note: this has to be a function because the module pointers are statically
+  // initialized, and there's no guarantee that builtin_modules isn't
+  // initialized before they are
+  shared_ptr<ModuleAnalysis> (*get_module)();
+
+  BuiltinModule(void (*initialize)(), shared_ptr<ModuleAnalysis> (*get_module)())
+      : initialized(false), initialize(initialize), get_module(get_module) { }
+};
+
+#define DECLARE_MODULE(name) {#name, {name##_initialize, []() -> shared_ptr<ModuleAnalysis> {return name##_module;}}}
+static unordered_map<string, BuiltinModule> builtin_modules({
+  DECLARE_MODULE(__nemesys__),
+  DECLARE_MODULE(posix),
+  DECLARE_MODULE(sys),
+});
+#undef DECLARE_MODULE
+
 shared_ptr<ModuleAnalysis> get_builtin_module(const string& module_name) {
-  if (module_name == "__nemesys__") {
-    static bool initialized = false;
-    if (!initialized) {
-      __nemesys___initialize();
-      initialized = true;
+  try {
+    auto& it = builtin_modules.at(module_name);
+    if (!it.initialized) {
+      it.initialize();
+      it.initialized = true;
     }
-    return __nemesys___module;
+    return it.get_module();
+  } catch (const out_of_range& e) {
+    return NULL;
   }
-  if (module_name == "sys") {
-    static bool initialized = false;
-    if (!initialized) {
-      sys_initialize();
-      initialized = true;
-    }
-    return sys_module;
-  }
-  if (module_name == "posix") {
-    static bool initialized = false;
-    if (!initialized) {
-      posix_initialize();
-      initialized = true;
-    }
-    return posix_module;
-  }
-  return NULL;
 }
