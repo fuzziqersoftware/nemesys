@@ -24,5 +24,7 @@ echo "-- tests.quine_read"
 ./nemesys tests/quine_read.py | diff -U3 tests/quine_read.py -
 echo "-- tests.quine_exec"
 ./nemesys tests/quine_exec.py | diff -U3 tests/quine_exec.py -
+echo "-- tests.quine_nemesys"
+./nemesys tests/quine_nemesys.py | diff -U3 tests/quine_nemesys.py -
 
 echo "-- all tests passed"
