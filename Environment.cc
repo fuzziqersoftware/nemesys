@@ -523,6 +523,9 @@ string Variable::str() const {
           }
           ret += item->str();
         }
+        if (this->list_value->size() == 1) {
+          ret += ",";
+        }
         return ret + ")";
       }
       return "Tuple";

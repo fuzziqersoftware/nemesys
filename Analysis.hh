@@ -16,21 +16,6 @@
 
 
 
-enum DebugFlag {
-  FindFile    = 0x0000000000000001,
-  Source      = 0x0000000000000002,
-  Lexing      = 0x0000000000000004,
-  Parsing     = 0x0000000000000008,
-  Annotation  = 0x0000000000000010,
-  Analysis    = 0x0000000000000020,
-  Compilation = 0x0000000000000040,
-  Assembly    = 0x0000000000000080,
-  Execution   = 0x0000000000000100,
-  All         = 0xFFFFFFFFFFFFFFFF,
-};
-
-DebugFlag debug_flag_for_name(const char* name);
-
 class compile_error : public std::runtime_error {
 public:
   compile_error(const std::string& what, ssize_t where = -1);
@@ -184,8 +169,6 @@ public:
 
   std::unordered_map<std::string, BytesObject*> bytes_constants;
   std::unordered_map<std::wstring, UnicodeObject*> unicode_constants;
-
-  int64_t debug_flags;
 
   GlobalAnalysis(const std::vector<std::string>& import_paths);
   ~GlobalAnalysis();

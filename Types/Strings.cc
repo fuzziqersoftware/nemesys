@@ -5,6 +5,8 @@
 
 #include <phosg/Strings.hh>
 
+#include "../Debug.hh"
+
 using namespace std;
 
 
@@ -28,6 +30,13 @@ BytesObject* bytes_new(BytesObject* s, const char* data, ssize_t count) {
   if (data) {
     memcpy(s->data, data, sizeof(char) * count);
     s->data[s->count] = 0;
+    if (debug_flags & DebugFlag::ShowRefcountChanges) {
+      fprintf(stderr, "[refcount:create] created Bytes object %p: %s\n",
+          s, data);
+    }
+  } else if (debug_flags & DebugFlag::ShowRefcountChanges) {
+    fprintf(stderr, "[refcount:create] created Bytes object %p with %zd bytes\n",
+        s, count);
   }
   return s;
 }
@@ -85,7 +94,15 @@ UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count)
   if (data) {
     memcpy(s->data, data, sizeof(wchar_t) * count);
     s->data[s->count] = 0;
+    if (debug_flags & DebugFlag::ShowRefcountChanges) {
+      fprintf(stderr, "[refcount:create] created Unicode object %p: %ls\n",
+          s, data);
+    }
+  } else if (debug_flags & DebugFlag::ShowRefcountChanges) {
+    fprintf(stderr, "[refcount:create] created Unicode object %p with %zd chars\n",
+        s, count);
   }
+
   return s;
 }
 

@@ -5,6 +5,7 @@
 
 #include <phosg/Strings.hh>
 
+#include "Debug.hh"
 #include "SourceFile.hh"
 #include "PythonLexer.hh"
 #include "PythonParser.hh"
@@ -44,7 +45,6 @@ int main(int argc, char* argv[]) {
   }
 
   // parse command line options
-  int64_t debug_flags = 0;
   vector<const char*> sys_argv;
   bool module_is_code = false;
   size_t x;
@@ -81,7 +81,6 @@ int main(int argc, char* argv[]) {
 
   // set up the global environment
   global.reset(new GlobalAnalysis({"."}));
-  global->debug_flags = debug_flags;
   create_default_builtin_names();
   sys_set_argv(sys_argv);
 

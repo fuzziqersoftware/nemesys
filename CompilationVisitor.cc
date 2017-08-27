@@ -7,6 +7,7 @@
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
 
+#include "Debug.hh"
 #include "PythonLexer.hh"
 #include "PythonParser.hh"
 #include "PythonASTNodes.hh"
@@ -91,7 +92,8 @@ CompilationVisitor::CompilationVisitor(GlobalAnalysis* global,
     target_function(this->global->context_for_function(target_function_id)),
     target_split_id(target_split_id),
     available_registers(default_available_registers),
-    target_register(Register::None), stack_bytes_used(0) {
+    target_register(Register::None), stack_bytes_used(0),
+    holding_reference(false), evaluating_instance_pointer(false) {
 
   if (target_function_id) {
 
@@ -123,6 +125,16 @@ const unordered_set<Variable>& CompilationVisitor::return_types() {
 
 
 
+string CompilationVisitor::VariableLocation::str() const {
+  string type_str = this->type.str();
+  string mem_str = this->mem.str(OperandSize::QuadWord);
+  return string_printf("%s (%s) = %s @ %s", this->name.c_str(),
+      this->is_global ? "global" : "nonglobal", type_str.c_str(),
+      mem_str.c_str());
+}
+
+
+
 Register CompilationVisitor::reserve_register(Register which) {
   if (which == Register::None) {
     which = this->available_register();
@@ -146,6 +158,25 @@ Register CompilationVisitor::available_register(Register preferred) {
   Register which;
   for (which = Register::RAX; // = 0
        !(this->available_registers & (1 << which)) && (static_cast<int64_t>(which) < Register::Count);
+       which = static_cast<Register>(static_cast<int64_t>(which) + 1));
+  if (static_cast<int64_t>(which) >= Register::Count) {
+    throw compile_error("no registers are available", this->file_offset);
+  }
+  return which;
+}
+
+Register CompilationVisitor::available_register_except(
+    const vector<Register>& prevented) {
+  int64_t prevented_mask = 0;
+  for (Register r : prevented) {
+    prevented_mask |= (1 << r);
+  }
+
+  Register which;
+  for (which = Register::RAX; // = 0
+       ((prevented_mask & (1 << which)) ||
+        !(this->available_registers & (1 << which))) &&
+       (static_cast<int64_t>(which) < Register::Count);
        which = static_cast<Register>(static_cast<int64_t>(which) + 1));
   if (static_cast<int64_t>(which) >= Register::Count) {
     throw compile_error("no registers are available", this->file_offset);
@@ -199,6 +230,7 @@ void CompilationVisitor::write_pop_reserved_registers(int64_t mask) {
 
 void CompilationVisitor::visit(UnaryOperation* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   this->as.write_label(string_printf("__UnaryOperation_%p_evaluate", a));
 
@@ -241,19 +273,26 @@ void CompilationVisitor::visit(UnaryOperation* a) {
                  (this->current_type == ValueType::Set) ||
                  (this->current_type == ValueType::Dict)) {
         // load the size field, check if it's zero
-        this->as.write_mov(MemoryReference(this->target_register),
+        Register size_reg = this->available_register_except(
+            {this->target_register});
+        this->reserve_register(size_reg);
+        this->as.write_mov(MemoryReference(size_reg),
             MemoryReference(this->target_register, 0x08));
-        this->as.write_test(MemoryReference(this->target_register),
+        // if we're holding a reference to the object, release it
+        this->write_delete_held_reference(
             MemoryReference(this->target_register));
+        this->as.write_test(MemoryReference(size_reg),
+            MemoryReference(size_reg));
         this->as.write_mov(this->target_register, 0);
         this->as.write_setz(this->target_register);
+        this->release_register(size_reg);
 
       } else {
         // other types cannot be falsey
         this->as.write_mov(this->target_register, 1);
+        this->write_delete_held_reference(this->target_register);
       }
 
-      this->write_delete_reference(this->target_register, this->current_type);
       this->current_type = Variable(ValueType::Bool);
       break;
 
@@ -278,7 +317,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
     case UnaryOperator::Negative:
       if ((this->current_type.type == ValueType::Bool) ||
           (this->current_type.type == ValueType::Int)) {
-        this->as.write_not(MemoryReference(this->target_register));
+        this->as.write_neg(MemoryReference(this->target_register));
 
       } else if (this->current_type == ValueType::Float) {
         // TODO: some stuff with fmul (there's no fneg)
@@ -326,7 +365,7 @@ void CompilationVisitor::write_truth_value_test(Register reg,
     case ValueType::Set:
     case ValueType::Dict: {
       // we have to use a register for this
-      Register size_reg = this->available_register();
+      Register size_reg = this->available_register_except({reg});
       this->as.write_mov(MemoryReference(size_reg), MemoryReference(reg, 0x10));
       this->as.write_test(MemoryReference(size_reg), MemoryReference(size_reg));
       break;
@@ -347,6 +386,7 @@ void CompilationVisitor::write_truth_value_test(Register reg,
 
 void CompilationVisitor::visit(BinaryOperation* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // LogicalOr and LogicalAnd may not evaluate the right-side operand, so we
   // have to implement those separately (the other operators evaluate both
@@ -361,11 +401,15 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     if ((a->oper == BinaryOperator::LogicalOr) &&
         is_always_truthy(this->current_type)) {
       this->as.write_label(string_printf("__BinaryOperation_%p_trivialized_true", a));
+      this->write_delete_held_reference(MemoryReference(this->target_register));
+      this->as.write_mov(MemoryReference(this->target_register), 1);
       return;
     }
     if ((a->oper == BinaryOperator::LogicalAnd) &&
         is_always_falsey(this->current_type)) {
       this->as.write_label(string_printf("__BinaryOperation_%p_trivialized_false", a));
+      this->write_delete_held_reference(MemoryReference(this->target_register));
+      this->as.write_mov(MemoryReference(this->target_register), 0);
       return;
     }
 
@@ -380,6 +424,10 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     } else { // LogicalAnd
       this->as.write_jz(label_name); // skip right if left falsey
     }
+
+    // if we get here, then the right-side value is the one that will be
+    // returned; delete the reference we may be holding to the left-side value
+    this->write_delete_held_reference(MemoryReference(this->target_register));
 
     // generate code for the right value
     a->right->accept(this);
@@ -410,9 +458,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   MemoryReference target_mem(this->target_register);
 
   // pick a temporary register that isn't the target register
-  this->reserve_register(this->target_register);
-  MemoryReference temp_mem(this->available_register());
-  this->release_register(this->target_register);
+  MemoryReference temp_mem(this->available_register_except({this->target_register}));
 
   this->as.write_label(string_printf("__BinaryOperation_%p_combine", a));
   switch (a->oper) {
@@ -650,6 +696,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
 void CompilationVisitor::visit(TernaryOperation* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   if (a->oper != TernaryOperator::IfElse) {
     throw compile_error("unrecognized ternary operator", this->file_offset);
@@ -663,10 +710,12 @@ void CompilationVisitor::visit(TernaryOperation* a) {
   // if the value is always truthy or always falsey, don't bother generating the
   // unused side
   if (this->is_always_truthy(this->current_type)) {
+    this->write_delete_held_reference(MemoryReference(this->target_register));
     a->left->accept(this);
     return;
   }
   if (this->is_always_falsey(this->current_type)) {
+    this->write_delete_held_reference(MemoryReference(this->target_register));
     a->right->accept(this);
     return;
   }
@@ -678,12 +727,14 @@ void CompilationVisitor::visit(TernaryOperation* a) {
   this->as.write_jz(false_label); // skip left
 
   // generate code for the left (True) value
+  this->write_delete_held_reference(MemoryReference(this->target_register));
   a->left->accept(this);
   this->as.write_jmp(end_label);
   Variable left_type = move(this->current_type);
 
   // generate code for the right (False) value
   this->as.write_label(false_label);
+  this->write_delete_held_reference(MemoryReference(this->target_register));
   a->right->accept(this);
   this->as.write_label(end_label);
 
@@ -695,6 +746,7 @@ void CompilationVisitor::visit(TernaryOperation* a) {
 
 void CompilationVisitor::visit(ListConstructor* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   this->as.write_label(string_printf("__ListConstructor_%p_setup", a));
 
@@ -756,13 +808,15 @@ void CompilationVisitor::visit(ListConstructor* a) {
   this->write_pop_reserved_registers(previously_reserved_registers);
   this->write_pop(Register::RBX);
 
-  // the result type is List[extension_type]
+  // the result type is a new reference to a List[extension_type]
   vector<Variable> extension_types({extension_type});
   this->current_type = Variable(ValueType::List, extension_types);
+  this->holding_reference = true;
 }
 
 void CompilationVisitor::visit(SetConstructor* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO: generate malloc call, item constructor and insert code
   throw compile_error("SetConstructor not yet implemented", this->file_offset);
@@ -770,6 +824,7 @@ void CompilationVisitor::visit(SetConstructor* a) {
 
 void CompilationVisitor::visit(DictConstructor* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO: generate malloc call, item constructor and insert code
   throw compile_error("DictConstructor not yet implemented", this->file_offset);
@@ -777,6 +832,7 @@ void CompilationVisitor::visit(DictConstructor* a) {
 
 void CompilationVisitor::visit(TupleConstructor* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO: generate malloc call, item constructor code
   throw compile_error("TupleConstructor not yet implemented", this->file_offset);
@@ -784,6 +840,7 @@ void CompilationVisitor::visit(TupleConstructor* a) {
 
 void CompilationVisitor::visit(ListComprehension* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO
   throw compile_error("ListComprehension not yet implemented", this->file_offset);
@@ -791,6 +848,7 @@ void CompilationVisitor::visit(ListComprehension* a) {
 
 void CompilationVisitor::visit(SetComprehension* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO
   throw compile_error("SetComprehension not yet implemented", this->file_offset);
@@ -798,6 +856,7 @@ void CompilationVisitor::visit(SetComprehension* a) {
 
 void CompilationVisitor::visit(DictComprehension* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO
   throw compile_error("DictComprehension not yet implemented", this->file_offset);
@@ -805,6 +864,7 @@ void CompilationVisitor::visit(DictComprehension* a) {
 
 void CompilationVisitor::visit(LambdaDefinition* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // if this definition is not the function being compiled, don't recur; instead
   // treat it as an assignment (of the function context to the local/global var)
@@ -874,31 +934,39 @@ void CompilationVisitor::visit(FunctionCall* a) {
     Variable default_value; // Indeterminate for positional args
     Variable type;
     ssize_t stack_offset; // if < 0, this argument isn't stored on the stack
+    bool evaluate_instance_pointer;
+
+    ArgumentValue(const std::string& name) : name(name), passed_value(NULL),
+        default_value(), type(), stack_offset(0),
+        evaluate_instance_pointer(false) { }
   };
   vector<ArgumentValue> arg_values;
 
   // for class member functions, the first argument is automatically populated
   // and is the instance object
   if (fn->class_id) {
-    // if the function being called is __init__, allocate a class object first and
-    // push it as the first argument
+    arg_values.emplace_back(fn->args[0].name);
+    auto& arg = arg_values.back();
+
+    // if the function being called is __init__, allocate a class object first
+    // and push it as the first argument (passing an Instance with a NULL
+    // pointer instructs the later code to allocate an instance)
     if (fn->is_class_init()) {
-      arg_values.emplace_back();
-      auto& arg = arg_values.back();
-      arg.name = fn->args[0].name;
-      arg.passed_value = NULL;
       arg.default_value = Variable(ValueType::Instance, fn->id, nullptr);
 
-    // if it's not __init__, we'll have to know what the instance is
+    // if it's not __init__, we'll have to know what the instance is; instruct
+    // the later code to evaluate the instance pointer instead of the function
+    // object
     } else {
-      this->as.write_label(string_printf("__FunctionCall_%p_get_instance_pointer", a));
-      throw compile_error("getting the instance pointer for a method call is unimplemented");
+      arg.passed_value = a->function;
+      arg.evaluate_instance_pointer = true;
     }
+    arg.type = Variable(ValueType::Instance, fn->class_id, nullptr);
   }
 
   // push positional args first
   size_t call_arg_index = 0;
-  size_t callee_arg_index = fn->is_class_init();
+  size_t callee_arg_index = (fn->class_id != 0);
   for (; call_arg_index < positional_call_args.size();
        call_arg_index++, callee_arg_index++) {
     if (callee_arg_index >= fn->args.size()) {
@@ -915,17 +983,16 @@ void CompilationVisitor::visit(FunctionCall* a) {
           callee_arg.name.c_str()), this->file_offset);
     }
 
-    arg_values.emplace_back();
-    arg_values.back().name = callee_arg.name;
+    arg_values.emplace_back(callee_arg.name);
     arg_values.back().passed_value = call_arg;
     arg_values.back().default_value = Variable(ValueType::Indeterminate);
   }
 
-  // now push keyword args, in the order the function defines them
+  // now push remaining args, in the order the function defines them
   for (; callee_arg_index < fn->args.size(); callee_arg_index++) {
     const auto& callee_arg = fn->args[callee_arg_index];
 
-    arg_values.emplace_back();
+    arg_values.emplace_back(callee_arg.name);
     try {
       const auto& call_arg = keyword_call_args.at(callee_arg.name);
       arg_values.back().passed_value = call_arg;
@@ -940,7 +1007,9 @@ void CompilationVisitor::visit(FunctionCall* a) {
   // at this point we should have the same number of args overall as the
   // function wants
   if (arg_values.size() != fn->args.size()) {
-    throw compile_error("incorrect argument count in function call", this->file_offset);
+    throw compile_error(string_printf(
+        "incorrect argument count in function call (given: %zu, expected: %zu)",
+        arg_values.size(), fn->args.size()), this->file_offset);
   }
 
   // now start writing code
@@ -972,10 +1041,26 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
     // generate code for the argument's value
     if (arg.passed_value.get()) {
-      this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_passed_value",
-          a, arg_index));
-      arg.passed_value->accept(this);
-      arg.type = move(this->current_type);
+
+      // if this argument is `self`, then it actually comes from the function
+      // expression (and we evaluate the instance pointer there instead)
+      if (arg.evaluate_instance_pointer) {
+        this->as.write_label(string_printf("__FunctionCall_%p_get_instance_pointer", a));
+        if (this->evaluating_instance_pointer) {
+          throw compile_error("recursive instance pointer evaluation", this->file_offset);
+        }
+        this->evaluating_instance_pointer = true;
+        a->function->accept(this);
+        if (this->evaluating_instance_pointer) {
+          throw compile_error("instance pointer evaluation failed", this->file_offset);
+        }
+
+      } else {
+        this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_passed_value",
+            a, arg_index));
+        arg.passed_value->accept(this);
+        arg.type = move(this->current_type);
+      }
 
     } else if (fn->is_class_init() && (arg_index == 0)) {
       if (arg.default_value.type != ValueType::Instance) {
@@ -991,26 +1076,39 @@ void CompilationVisitor::visit(FunctionCall* a) {
       // note: this is a semi-ugly hack, but we ignore reserved registers here
       // because this can only be the first argument - no registers can be
       // reserved at this point
+      this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_alloc_instance",
+          a, arg_index));
       this->as.write_mov(MemoryReference(Register::RDI),
           sizeof(int64_t) * (cls->attributes.size() + 2));
       this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(&malloc));
       this->as.write_call(MemoryReference(Register::RAX));
+      this->as.write_mov(this->target_register, MemoryReference(Register::RAX));
 
       // fill in the refcount and destructor function
-      this->as.write_mov(MemoryReference(Register::RAX, 0), 1);
-      this->as.write_mov(MemoryReference(Register::RAX, 8),
+      this->as.write_mov(MemoryReference(this->target_register, 0), 1);
+      this->as.write_mov(Register::RAX,
           reinterpret_cast<int64_t>(cls->destructor));
+      this->as.write_mov(MemoryReference(this->target_register, 8),
+          MemoryReference(Register::RAX));
 
-      // note: we don't zero the class contents. this is ok because all of the
-      // attributes must be written in __init__ (since that's the only place
-      // they can be created).
-      this->as.write_mov(this->target_register, MemoryReference(Register::RAX));
+      // zero everything else in the class
+      this->as.write_xor(MemoryReference(Register::RAX),
+          MemoryReference(Register::RAX));
+      for (size_t x = 16; x < (cls->attributes.size() * 8) + 16; x += 8) {
+        this->as.write_mov(MemoryReference(this->target_register, x),
+            MemoryReference(Register::RAX));
+      }
 
       arg.type = arg.default_value;
 
     } else {
       this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_default_value",
           a, arg_index));
+      if (!arg.default_value.value_known) {
+        throw compile_error(string_printf(
+          "required function argument %zu (%s) does not have a value",
+          arg_index, arg.name.c_str()), this->file_offset);
+      }
       this->write_code_for_value(arg.default_value);
       arg.type = arg.default_value;
     }
@@ -1053,8 +1151,10 @@ void CompilationVisitor::visit(FunctionCall* a) {
   string arg_signature;
   try {
     arg_signature = type_signature_for_variables(arg_types);
-  } catch (const invalid_argument&) {
-    throw compile_error("can\'t generate argument signature for function call", this->file_offset);
+  } catch (const invalid_argument& e) {
+    throw compile_error(string_printf(
+        "can\'t generate argument signature for function call: %s", e.what()),
+        this->file_offset);
   }
 
   // get the fragment id
@@ -1118,7 +1218,9 @@ void CompilationVisitor::visit(FunctionCall* a) {
         MemoryReference(Register::RAX));
   }
 
+  // functions always return new references, unless they return trivial types
   this->current_type = fragment->return_type;
+  this->holding_reference = type_has_refcount(this->current_type.type);
 
   // note: we don't have to destroy the function arguments; we passed the
   // references that we generated directly into the function and it's
@@ -1136,6 +1238,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
 void CompilationVisitor::visit(ArrayIndex* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO
   throw compile_error("ArrayIndex not yet implemented", this->file_offset);
@@ -1143,6 +1246,7 @@ void CompilationVisitor::visit(ArrayIndex* a) {
 
 void CompilationVisitor::visit(ArraySlice* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO
   throw compile_error("ArraySlice not yet implemented", this->file_offset);
@@ -1150,13 +1254,16 @@ void CompilationVisitor::visit(ArraySlice* a) {
 
 void CompilationVisitor::visit(IntegerConstant* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   this->as.write_mov(this->target_register, a->value);
   this->current_type = Variable(ValueType::Int);
+  this->holding_reference = false;
 }
 
 void CompilationVisitor::visit(FloatConstant* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO
   throw compile_error("FloatConstant not yet implemented", this->file_offset);
@@ -1164,60 +1271,73 @@ void CompilationVisitor::visit(FloatConstant* a) {
 
 void CompilationVisitor::visit(BytesConstant* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   const BytesObject* o = this->global->get_or_create_constant(a->value);
   this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(o));
-  this->write_add_reference(MemoryReference(this->target_register, 0));
+  this->write_add_reference(this->target_register);
 
   this->current_type = Variable(ValueType::Bytes);
+  this->holding_reference = true;
 }
 
 void CompilationVisitor::visit(UnicodeConstant* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   const UnicodeObject* o = this->global->get_or_create_constant(a->value);
   this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(o));
-  this->write_add_reference(MemoryReference(this->target_register, 0));
+  this->write_add_reference(this->target_register);
 
   this->current_type = Variable(ValueType::Unicode);
+  this->holding_reference = true;
 }
 
 void CompilationVisitor::visit(TrueConstant* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   this->as.write_mov(this->target_register, 1);
   this->current_type = Variable(ValueType::Bool);
+  this->holding_reference = false;
 }
 
 void CompilationVisitor::visit(FalseConstant* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   this->as.write_mov(this->target_register, 0);
   this->current_type = Variable(ValueType::Bool);
+  this->holding_reference = false;
 }
 
 void CompilationVisitor::visit(NoneConstant* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   this->as.write_mov(this->target_register, 0);
   this->current_type = Variable(ValueType::None);
+  this->holding_reference = false;
 }
 
 void CompilationVisitor::visit(VariableLookup* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   VariableLocation loc = this->location_for_variable(a->name);
+  bool has_refcount = type_has_refcount(loc.type.type);
 
   // if this is an object, add a reference to it; otherwise just load it
   this->as.write_mov(MemoryReference(this->target_register), loc.mem);
-  if (type_has_refcount(loc.type.type)) {
-    this->write_add_reference(MemoryReference(this->target_register, 0));
+  if (has_refcount) {
+    this->write_add_reference(this->target_register);
   }
 
   this->current_type = loc.type;
   if (this->current_type.type == ValueType::Indeterminate) {
-    throw compile_error("variable has Indeterminate type", this->file_offset);
+    throw compile_error("variable has Indeterminate type: " + loc.str(), this->file_offset);
   }
+  this->holding_reference = has_refcount;
 }
 
 void CompilationVisitor::visit(AttributeLookup* a) {
@@ -1230,31 +1350,79 @@ void CompilationVisitor::visit(AttributeLookup* a) {
     // the global space to be updated with the module's variables. but we don't
     // have a way of specifying import dependencies and we need to make sure the
     // module's globals are written before the code we're generating executes,
-    // so we require Imported phase to enforce that.
+    // so we require Imported phase here to enforce this ordering later.
     auto module = this->global->get_module_at_phase(a->base_module_name,
         ModuleAnalysis::Phase::Imported);
     VariableLocation loc = this->location_for_global(module.get(), a->name);
+    bool has_refcount = type_has_refcount(loc.type.type);
 
     // if this is an object, add a reference to it; otherwise just load it
     this->as.write_mov(MemoryReference(this->target_register), loc.mem);
-    if (type_has_refcount(loc.type.type)) {
-      this->write_add_reference(MemoryReference(this->target_register, 0));
+    if (has_refcount) {
+      this->write_add_reference(this->target_register);
     }
 
     this->current_type = loc.type;
     if (this->current_type.type == ValueType::Indeterminate) {
       throw compile_error("attribute has Indeterminate type", this->file_offset);
     }
+    this->holding_reference = has_refcount;
 
     return;
   }
 
+  // there had better be a base
+  if (!a->base.get()) {
+    throw compile_error("attribute lookup has no base", this->file_offset);
+  }
+
+  if (this->evaluating_instance_pointer) {
+    this->as.write_label(string_printf("__AttributeLookup_%p_evaluate_instance", a));
+    this->evaluating_instance_pointer = false;
+    a->base->accept(this);
+    return;
+  }
+
+  // evaluate the base object into another register
+  Register attr_register = this->target_register;
+  Register base_register = this->available_register_except({attr_register});
+  this->target_register = base_register;
+  this->as.write_label(string_printf("__AttributeLookup_%p_evaluate_base", a));
+  a->base->accept(this);
+
+  // if the base object is a class, write code that gets the attribute
+  if (this->current_type.type == ValueType::Instance) {
+    auto* cls = this->global->context_for_class(this->current_type.class_id);
+    VariableLocation loc = this->location_for_attribute(cls, a->name, this->target_register);
+
+    // get the attribute value
+    this->as.write_label(string_printf("__AttributeLookup_%p_get_value", a));
+    this->as.write_mov(MemoryReference(attr_register), loc.mem);
+    if (type_has_refcount(loc.type.type)) {
+      this->write_add_reference(attr_register);
+    }
+
+    // if we're holding a reference to the base, delete that reference now
+    if (this->holding_reference) {
+      this->reserve_register(attr_register);
+      this->write_delete_held_reference(MemoryReference(base_register));
+      this->release_register(attr_register);
+    }
+
+    this->target_register = attr_register;
+    this->current_type = loc.type;
+    this->holding_reference = true;
+    return;
+  }
+
   // TODO
-  throw compile_error("AttributeLookup not yet implemented", this->file_offset);
+  throw compile_error("AttributeLookup not yet implemented on " + this->current_type.str(),
+      this->file_offset);
 }
 
 void CompilationVisitor::visit(TupleLValueReference* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO
   throw compile_error("TupleLValueReference not yet implemented", this->file_offset);
@@ -1262,6 +1430,7 @@ void CompilationVisitor::visit(TupleLValueReference* a) {
 
 void CompilationVisitor::visit(ArrayIndexLValueReference* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO
   throw compile_error("ArrayIndexLValueReference not yet implemented", this->file_offset);
@@ -1269,6 +1438,7 @@ void CompilationVisitor::visit(ArrayIndexLValueReference* a) {
 
 void CompilationVisitor::visit(ArraySliceLValueReference* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // TODO
   throw compile_error("ArraySliceLValueReference not yet implemented", this->file_offset);
@@ -1276,6 +1446,7 @@ void CompilationVisitor::visit(ArraySliceLValueReference* a) {
 
 void CompilationVisitor::visit(AttributeLValueReference* a) {
   this->file_offset = a->file_offset;
+  this->assert_not_evaluating_instance_pointer();
 
   // if it's an object attribute, store the value and evaluate the object
   if (a->base.get()) {
@@ -1301,19 +1472,27 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     }
     VariableLocation loc = this->location_for_attribute(cls, a->name,
         this->target_register);
-    {
-      const auto& attr = cls->attributes.at(a->name);
-      if (attr.types_equal(this->current_type)) {
-        string attr_type = attr.str();
-        string new_type = this->current_type.str();
-        throw compile_error(string_printf("attribute %s changes type from %s to %s",
-            a->name.c_str(), attr_type.c_str(), new_type.c_str()),
-            this->file_offset);
-      }
+    const auto& attr = cls->attributes.at(a->name);
+    if (!attr.types_equal(loc.type)) {
+      string attr_type = attr.str();
+      string new_type = this->current_type.str();
+      throw compile_error(string_printf("attribute %s changes type from %s to %s",
+          a->name.c_str(), attr_type.c_str(), new_type.c_str()),
+          this->file_offset);
     }
+
+    // if the attribute type has a refcount, delete the old value
+    this->reserve_register(this->target_register);
+    if (type_has_refcount(loc.type.type)) {
+      this->write_delete_reference(loc.mem, loc.type);
+    }
+    this->release_register(this->target_register);
 
     // write the value into the right attribute
     this->as.write_mov(loc.mem, MemoryReference(value_register));
+
+    // if we're holding a reference to the base, delete it
+    this->write_delete_held_reference(MemoryReference(this->target_register));
 
     // clean up
     this->target_register = value_register;
@@ -1341,7 +1520,7 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     }
     if (target_variable->type == ValueType::Indeterminate) {
       *target_variable = current_type;
-    } else if (*target_variable != loc.type) {
+    } else if (!target_variable->types_equal(loc.type)) {
       string target_type_str = target_variable->str();
       string value_type_str = current_type.str();
       throw compile_error(string_printf("variable %s changes type from %s to %s\n",
@@ -1349,8 +1528,15 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
           value_type_str.c_str()), this->file_offset);
     }
 
+    // if the variable has a refcount, delete the old value
+    this->reserve_register(this->target_register);
+    if (type_has_refcount(loc.type.type)) {
+      this->write_delete_reference(loc.mem, loc.type);
+    }
+    this->release_register(this->target_register);
+
     // now save the value to the appropriate slot
-    this->as.write_mov(loc.mem, MemoryReference(target_register));
+    this->as.write_mov(loc.mem, MemoryReference(this->target_register));
   }
 }
 
@@ -1361,6 +1547,7 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   this->as.write_label(string_printf("__ModuleStatement_%p", a));
 
   this->stack_bytes_used = 8;
+  this->holding_reference = false;
 
   // this is essentially a function, but it will only be called once. we still
   // have to treat it like a function, but it has no local variables (everything
@@ -1406,15 +1593,10 @@ void CompilationVisitor::visit(ModuleStatement* a) {
 void CompilationVisitor::visit(ExpressionStatement* a) {
   this->file_offset = a->file_offset;
 
-  // just evaluate it into some random register
+  // just evaluate it into some random register and ignore the result
   this->target_register = this->available_register();
   a->expr->accept(this);
-
-  // write a destructor call if necessary
-  if (type_has_refcount(this->current_type.type)) {
-    this->write_delete_reference(MemoryReference(this->target_register),
-        this->current_type);
-  }
+  this->write_delete_held_reference(MemoryReference(this->target_register));
 }
 
 void CompilationVisitor::visit(AssignmentStatement* a) {
@@ -1431,10 +1613,18 @@ void CompilationVisitor::visit(AssignmentStatement* a) {
   // generate code to load the value into any available register
   this->target_register = available_register();
   a->value->accept(this);
+  if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+    throw compile_error("can\'t assign borrowed reference to " + this->current_type.str(),
+        this->file_offset);
+  }
 
   // now write the value into the appropriate slot
   this->as.write_label(string_printf("__AssignmentStatement_%p_write_value", a));
   a->target->accept(this);
+
+  // if we were holding a reference, clear the flag - we wrote that reference to
+  // memory, but it still exists
+  this->holding_reference = false;
 }
 
 void CompilationVisitor::visit(AugmentStatement* a) {
@@ -1483,7 +1673,7 @@ void CompilationVisitor::visit(ImportStatement* a) {
 
     // if it's an object, add a reference to it
     if (type_has_refcount(module->globals.at(it.first).type)) {
-      this->write_add_reference(target_mem);
+      this->write_add_reference(this->target_register);
     }
 
     // store the value in this module
@@ -1498,9 +1688,7 @@ void CompilationVisitor::visit(GlobalStatement* a) {
 
 void CompilationVisitor::visit(ExecStatement* a) {
   this->file_offset = a->file_offset;
-
-  // we don't support this
-  throw compile_error("ExecStatement is not supported", this->file_offset);
+  throw compile_error("exec is not supported", this->file_offset);
 }
 
 void CompilationVisitor::visit(AssertStatement* a) {
@@ -1535,6 +1723,12 @@ void CompilationVisitor::visit(ReturnStatement* a) {
   this->as.write_label(string_printf("__ReturnStatement_%p_evaluate_expression", a));
   this->target_register = Register::RAX;
   a->value->accept(this);
+
+  // it had better be a new reference if the type is nontrivial
+  if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+    throw compile_error("can\'t return reference to " + this->current_type.str(),
+        this->file_offset);
+  }
 
   // record this return type
   this->function_return_types.emplace(this->current_type);
@@ -1578,6 +1772,7 @@ void CompilationVisitor::visit(IfStatement* a) {
   this->as.write_label(string_printf("__IfStatement_%p_test", a));
   this->write_truth_value_test(this->target_register, this->current_type);
   this->as.write_jz(false_label);
+  this->write_delete_held_reference(MemoryReference(this->target_register));
 
   // generate the body statements
   this->visit_list(a->items);
@@ -1591,7 +1786,11 @@ void CompilationVisitor::visit(IfStatement* a) {
   if (a->else_suite.get()) {
     this->as.write_jmp(end_label);
     this->as.write_label(false_label);
+    this->write_delete_held_reference(MemoryReference(this->target_register));
     a->else_suite->accept(this);
+  } else {
+    this->as.write_label(false_label);
+    this->write_delete_held_reference(MemoryReference(this->target_register));
   }
 
   // any break statement will jump over the loop body and the else statement
@@ -1653,6 +1852,11 @@ void CompilationVisitor::visit(ForStatement* a) {
     // increment the item index
     this->as.write_inc(rbx_mem);
 
+    // if the extension type has a refcount, add a reference
+    if (type_has_refcount(collection_type.extension_types[0].type)) {
+      this->write_add_reference(this->target_register);
+    }
+
     // load the value into the correct local variable slot
     this->as.write_label(string_printf("__ForStatement_%p_write_value", a));
     this->current_type = collection_type.extension_types[0];
@@ -1706,10 +1910,15 @@ void CompilationVisitor::visit(WhileStatement* a) {
   this->as.write_jz(end_label);
 
   // generate the loop body
+  this->write_delete_held_reference(MemoryReference(this->target_register));
   this->as.write_label(string_printf("__WhileStatement_%p_body", a));
   this->visit_list(a->items);
   this->as.write_jmp(start_label);
+
+  // when the loop ends normally, we may still be holding a reference to the
+  // condition result
   this->as.write_label(end_label);
+  this->write_delete_held_reference(MemoryReference(this->target_register));
 
   // if there's an else statement, generate the body here
   if (a->else_suite.get()) {
@@ -1773,6 +1982,24 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
   this->write_function_setup(base_label);
   this->target_register = Register::RAX;
   this->RecursiveASTVisitor::visit(a);
+
+  // if the function is __init__, implicitly return self (the function cannot
+  // explicitly return a value)
+  if (this->target_function->is_class_init()) {
+    // the value should be returned in rax
+    this->as.write_label(string_printf("__FunctionDefinition_%p_return_self_from_init", a));
+
+    VariableLocation loc = this->location_for_variable("self");
+
+    // add a reference to self and load it into rax for returning
+    this->target_register = Register::RAX;
+    this->as.write_mov(MemoryReference(this->target_register), loc.mem);
+    if (!type_has_refcount(loc.type.type)) {
+      throw compile_error("self is not an object", this->file_offset);
+    }
+    this->write_add_reference(this->target_register);
+  }
+
   this->write_function_cleanup(base_label);
 }
 
@@ -1788,22 +2015,25 @@ void CompilationVisitor::visit(ClassDefinition* a) {
 
   // create the class destructor function
   if (!cls->destructor) {
-    // if none of the class attributes have destructors, then the overall class
-    // destructor trivializes to free()
-    bool has_subdestructors = false;
-    for (const auto& it : cls->attributes) {
-      if (type_has_refcount(it.second.type)) {
-        has_subdestructors = true;
-        break;
+    // if none of the class attributes have destructors and it doesn't have a
+    // __del__ method, then the overall class destructor trivializes to free()
+    bool has_del = cls->attributes.count("__del__");
+    bool has_subdestructors = has_del;
+    if (!has_subdestructors) {
+      for (const auto& it : cls->attributes) {
+        if (type_has_refcount(it.second.type)) {
+          has_subdestructors = true;
+          break;
+        }
       }
     }
 
     // no subdestructors; just use free()
     if (!has_subdestructors) {
       cls->destructor = reinterpret_cast<void*>(&free);
-      if (this->global->debug_flags & DebugFlag::Assembly) {
-        fprintf(stderr, "[%s:%" PRId64 "] class has trivial destructor\n",
-            a->name.c_str(), a->class_id);
+      if (debug_flags & DebugFlag::ShowAssembly) {
+        fprintf(stderr, "[%s.%s:%" PRId64 "] class has trivial destructor\n",
+            this->module->name.c_str(), a->name.c_str(), a->class_id);
       }
 
     // there are subdestructors; have to write a destructor function
@@ -1825,30 +2055,109 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       // make sure the stack is aligned at call time for any subfunctions
       dtor_as.write_sub(MemoryReference(Register::RSP), 8);
 
+      // call __del__ before deleting attribute references
+      if (has_del) {
+        // figure out what __del__ is
+        auto& del_attr = cls->attributes.at("__del__");
+        if (del_attr.type != ValueType::Function) {
+          throw compile_error("__del__ exists but is not a function; instead it\'s " + del_attr.str(), this->file_offset);
+        }
+        if (!del_attr.value_known) {
+          throw compile_error("__del__ exists but is an unknown value", this->file_offset);
+        }
+
+        // the arg signature is blank since __del__ can't take any arguments
+        auto* fn = this->global->context_for_function(del_attr.function_id);
+        int64_t fragment_id = fn->arg_signature_to_fragment_id.emplace(
+            "", fn->fragments.size()).first->second;
+
+        // get or generate the Fragment object
+        const FunctionContext::Fragment* fragment;
+        try {
+          fragment = &fn->fragments.at(fragment_id);
+        } catch (const std::out_of_range& e) {
+          unordered_map<string, Variable> local_overrides;
+          auto new_fragment = this->global->compile_scope(fn->module, fn,
+              &local_overrides);
+          fragment = &fn->fragments.emplace(fragment_id, move(new_fragment)).first->second;
+        }
+
+        // generate the call to the fragment. note that the instance pointer is
+        // still in rdi, so we don't have to do anything to prepare, but we do
+        // have to add a fake reference to it! otherwise __del__ will call this
+        // destructor again, which would be a Bad Thing
+        dtor_as.write_lock();
+        dtor_as.write_inc(MemoryReference(Register::RBX, 0)); // fake reference
+        dtor_as.write_lock();
+        dtor_as.write_inc(MemoryReference(Register::RBX, 0)); // reference for the function arg
+        dtor_as.write_mov(Register::RAX,
+            reinterpret_cast<int64_t>(fragment->compiled));
+        dtor_as.write_call(MemoryReference(Register::RAX));
+
+        // __del__ can add new references to the object; if this happens, don't
+        // proceed with the destruction
+        dtor_as.write_lock();
+        dtor_as.write_dec(MemoryReference(Register::RBX, 0)); // fake reference
+        dtor_as.write_jz(base_label + "_proceed");
+        dtor_as.write_add(MemoryReference(Register::RSP), 8);
+        dtor_as.write_pop(Register::RBX);
+        dtor_as.write_ret();
+        dtor_as.write_label(base_label + "_proceed");
+      }
+
       // the first 2 fields are the refcount and destructor pointer
       // the rest are the attributes, in the same order as in the attributes map
       size_t offset = 16;
       for (const auto& it : cls->attributes) {
         if (type_has_refcount(it.second.type)) {
           // write a destructor call
-          dtor_as.write_label(string_printf("%s_destroy_%s", base_label.c_str(),
+          dtor_as.write_label(string_printf("%s_delete_reference_%s", base_label.c_str(),
               it.first.c_str()));
-          dtor_as.write_mov(MemoryReference(Register::RDI),
-              MemoryReference(Register::RBX, offset));
-          dtor_as.write_mov(MemoryReference(Register::RAX),
-              MemoryReference(RDI, 8));
-          dtor_as.write_call(MemoryReference(Register::RAX));
+
+          // if inline refcounting is disabled, call delete_reference manually
+          if (debug_flags & DebugFlag::NoInlineRefcounting) {
+            dtor_as.write_mov(MemoryReference(Register::RDI),
+                MemoryReference(Register::RBX, offset));
+            dtor_as.write_mov(Register::RAX,
+                reinterpret_cast<int64_t>(&delete_reference));
+            dtor_as.write_call(MemoryReference(Register::RAX));
+
+          } else {
+            string skip_label = string_printf(
+                "__destructor_delete_reference_skip_%" PRIu64, offset);
+
+            // get the object pointer
+            MemoryReference rdi(Register::RDI);
+            dtor_as.write_mov(rdi, MemoryReference(Register::RBX, offset));
+
+            // if the pointer is NULL, do nothing
+            this->as.write_test(rdi, rdi);
+            this->as.write_je(skip_label);
+
+            // decrement the refcount; if it's not zero, skip the destructor call
+            this->as.write_lock();
+            this->as.write_dec(MemoryReference(Register::RDI, 0));
+            this->as.write_jnz(skip_label);
+
+            // call the destructor
+            dtor_as.write_mov(Register::RAX, MemoryReference(Register::RDI, 8));
+            dtor_as.write_call(MemoryReference(Register::RAX));
+
+            this->as.write_label(skip_label);
+          }
         }
         offset += 8;
       }
 
       // cheating time: "return" by jumping directly to free() so it will return
       // to the caller
-      dtor_as.write_label(base_label + "_return");
+      dtor_as.write_label(base_label + "_jmp_free");
+      dtor_as.write_mov(MemoryReference(Register::RDI),
+          MemoryReference(Register::RBX));
       dtor_as.write_add(MemoryReference(Register::RSP), 8);
       dtor_as.write_pop(Register::RBX);
       dtor_as.write_mov(Register::RBP, reinterpret_cast<int64_t>(&free));
-      dtor_as.write_xchg(Register::RBP, MemoryReference(Register::RSP));
+      dtor_as.write_xchg(Register::RBP, MemoryReference(Register::RSP, 0));
       dtor_as.write_ret();
 
       // assemble it
@@ -1857,11 +2166,10 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       cls->destructor = this->global->code.append(compiled);
       this->module->compiled_size += compiled.size();
 
-      if (this->global->debug_flags & DebugFlag::Assembly) {
+      if (debug_flags & DebugFlag::ShowAssembly) {
         fprintf(stderr, "[%s:%" PRId64 "] class destructor assembled\n",
             a->name.c_str(), a->class_id);
         uint64_t addr = reinterpret_cast<uint64_t>(cls->destructor);
-        print_data(stderr, compiled.data(), compiled.size(), addr);
         string disassembly = AMD64Assembler::disassemble(compiled.data(),
             compiled.size(), addr, &compiled_labels);
         fprintf(stderr, "\n%s\n", disassembly.c_str());
@@ -1897,7 +2205,7 @@ void CompilationVisitor::write_code_for_value(const Variable& value) {
           reinterpret_cast<const void*>(this->global->get_or_create_constant(*value.bytes_value)) :
           reinterpret_cast<const void*>(this->global->get_or_create_constant(*value.unicode_value));
       this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(o));
-      this->write_add_reference(MemoryReference(this->target_register, 0));
+      this->write_add_reference(this->target_register);
       break;
     }
 
@@ -1917,6 +2225,13 @@ void CompilationVisitor::write_code_for_value(const Variable& value) {
       throw compile_error("Module default values not yet implemented", this->file_offset);
     default:
       throw compile_error("default value has unknown type", this->file_offset);
+  }
+}
+
+void CompilationVisitor::assert_not_evaluating_instance_pointer() {
+  if (this->evaluating_instance_pointer) {
+    throw compile_error("incorrect node visited when evaluating instnace pointer",
+        this->file_offset);
   }
 }
 
@@ -2119,9 +2434,28 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
   this->as.write_ret();
 }
 
-void CompilationVisitor::write_add_reference(const MemoryReference& mem) {
-  this->as.write_lock();
-  this->as.write_inc(mem);
+void CompilationVisitor::write_add_reference(Register addr_reg) {
+  if (debug_flags & DebugFlag::NoInlineRefcounting) {
+    this->reserve_register(addr_reg);
+    this->write_function_call(reinterpret_cast<const void*>(&add_reference),
+        NULL, {MemoryReference(addr_reg)});
+    this->release_register(addr_reg);
+  } else {
+    this->as.write_lock();
+    this->as.write_inc(MemoryReference(addr_reg, 0));
+  }
+  // TODO: we should check if the value is 1. if it is, then we've encountered a
+  // data race, and another thread is currently deleting this object!
+}
+
+void CompilationVisitor::write_delete_held_reference(const MemoryReference& mem) {
+  if (this->holding_reference) {
+    if (!type_has_refcount(this->current_type.type)) {
+      throw compile_error("holding a reference to a trivial type: " + this->current_type.str(), this->file_offset);
+    }
+    this->write_delete_reference(mem, this->current_type);
+    this->holding_reference = false;
+  }
 }
 
 void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
@@ -2131,21 +2465,36 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
   }
 
   if (type_has_refcount(type.type)) {
-    static uint64_t skip_label_id = 0;
-    Register r = this->available_register();
-    string skip_label = string_printf("__delete_reference_skip_%" PRIu64,
-        skip_label_id++);
+    if (debug_flags & DebugFlag::NoInlineRefcounting) {
+      this->write_function_call(reinterpret_cast<const void*>(delete_reference),
+          NULL, {mem});
 
-    if (mem.field_size || (r != mem.base_register)) {
-      this->as.write_mov(MemoryReference(r), mem);
+    } else {
+      static uint64_t skip_label_id = 0;
+      Register r = this->available_register();
+      string skip_label = string_printf("__delete_reference_skip_%" PRIu64,
+          skip_label_id++);
+
+      // get the object pointer
+      if (mem.field_size || (r != mem.base_register)) {
+        this->as.write_mov(MemoryReference(r), mem);
+      }
+
+      // if the pointer is NULL, do nothing
+      this->as.write_test(MemoryReference(r), MemoryReference(r));
+      this->as.write_je(skip_label);
+
+      // decrement the refcount; if it's not zero, skip the destructor call
+      this->as.write_lock();
+      this->as.write_dec(MemoryReference(r, 0));
+      this->as.write_jnz(skip_label);
+
+      // call the destructor
+      MemoryReference function_loc(r, 8);
+      this->write_function_call(NULL, &function_loc, {MemoryReference(r)});
+
+      this->as.write_label(skip_label);
     }
-    this->as.write_lock();
-    this->as.write_dec(MemoryReference(r, 0));
-    this->as.write_jnz(skip_label);
-
-    MemoryReference function_loc(r, 8);
-    this->write_function_call(NULL, &function_loc, {MemoryReference(r)});
-    this->as.write_label(skip_label);
   }
 }
 
@@ -2201,6 +2550,11 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
     const string& name) {
 
   // if we're writing a global, use its global slot offset (from R13)
+  if (this->target_function &&
+      this->target_function->explicit_globals.count(name) &&
+      this->target_function->locals.count(name)) {
+    throw compile_error("explicit global is also a local", this->file_offset);
+  }
   if (!this->target_function || !this->target_function->locals.count(name)) {
     return this->location_for_global(this->module, name);
   }

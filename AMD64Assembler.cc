@@ -267,7 +267,8 @@ string MemoryReference::str(OperandSize operand_size) const {
         ret += " + ";
       }
     }
-    ret += string_printf("%s0x%" PRIX64, (this->offset < 0) ? "-" : "", this->offset);
+    ret += string_printf("0x%" PRIX64,
+        (this->offset < 0) ? -this->offset : this->offset);
   }
   return ret + "]";
 }
@@ -592,6 +593,10 @@ void AMD64Assembler::write_mov(const MemoryReference& mem, int64_t value,
     OperandSize size) {
   Operation op = (size == OperandSize::Byte) ? Operation::MOV_MEM8_IMM : Operation::MOV_MEM_IMM;
   string data = this->generate_rm(op, mem, 0, size);
+
+  if (((value & 0xFFFFFFFF80000000) != 0) && ((value & 0xFFFFFFFF80000000) != 0xFFFFFFFF80000000)) {
+    throw invalid_argument("value out of range for r/m mov");
+  }
 
   // this opcode has a 32-bit imm for both 32-bit and 64-bit operand sizes
   if ((size == OperandSize::QuadWord) || (size == OperandSize::DoubleWord)) {

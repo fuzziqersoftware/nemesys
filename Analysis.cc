@@ -7,6 +7,7 @@
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
 
+#include "Debug.hh"
 #include "PythonLexer.hh"
 #include "PythonParser.hh"
 #include "PythonASTNodes.hh"
@@ -60,47 +61,13 @@ using namespace std;
 
 
 
-DebugFlag debug_flag_for_name(const char* name) {
-  if (!strcasecmp(name, "FindFile")) {
-    return DebugFlag::FindFile;
-  }
-  if (!strcasecmp(name, "Source")) {
-    return DebugFlag::Source;
-  }
-  if (!strcasecmp(name, "Lexing")) {
-    return DebugFlag::Lexing;
-  }
-  if (!strcasecmp(name, "Parsing")) {
-    return DebugFlag::Parsing;
-  }
-  if (!strcasecmp(name, "Annotation")) {
-    return DebugFlag::Annotation;
-  }
-  if (!strcasecmp(name, "Analysis")) {
-    return DebugFlag::Analysis;
-  }
-  if (!strcasecmp(name, "Compilation")) {
-    return DebugFlag::Compilation;
-  }
-  if (!strcasecmp(name, "Assembly")) {
-    return DebugFlag::Assembly;
-  }
-  if (!strcasecmp(name, "Execution")) {
-    return DebugFlag::Execution;
-  }
-  if (!strcasecmp(name, "All")) {
-    return DebugFlag::All;
-  }
-  return static_cast<DebugFlag>(0);
-}
-
 compile_error::compile_error(const std::string& what, ssize_t where) :
     runtime_error(what), where(where) { }
 
 
 
 ClassContext::ClassContext(ModuleAnalysis* module, int64_t id) : module(module),
-    id(id), ast_root(NULL) { }
+    id(id), destructor(NULL), ast_root(NULL) { }
 
 
 
@@ -231,9 +198,17 @@ GlobalAnalysis::~GlobalAnalysis() {
     free(this->global_space);
   }
   for (const auto& it : this->bytes_constants) {
+    if (debug_flags & DebugFlag::ShowRefcountChanges) {
+      fprintf(stderr, "[refcount:constants] deleting Bytes constant %s\n",
+          it.second->data);
+    }
     delete_reference(it.second);
   }
   for (const auto& it : this->unicode_constants) {
+    if (debug_flags & DebugFlag::ShowRefcountChanges) {
+      fprintf(stderr, "[refcount:constants] deleting Unicode constant %ls\n",
+          it.second->data);
+    }
     delete_reference(it.second);
   }
 }
@@ -281,7 +256,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
       case ModuleAnalysis::Phase::Initial: {
         if (module->source.get()) {
           shared_ptr<PythonLexer> lexer(new PythonLexer(module->source));
-          if (this->debug_flags & DebugFlag::Lexing) {
+          if (debug_flags & DebugFlag::ShowLexDebug) {
             fprintf(stderr, "[%s] ======== module lexed\n", module->name.c_str());
             const auto& tokens = lexer->get_tokens();
             for (size_t y = 0; y < tokens.size(); y++) {
@@ -295,12 +270,12 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           }
           PythonParser parser(lexer);
           module->ast_root = parser.get_root();
-          if (this->debug_flags & DebugFlag::Parsing) {
+          if (debug_flags & DebugFlag::ShowParseDebug) {
             fprintf(stderr, "[%s] ======== module parsed\n", module->name.c_str());
             module->ast_root->print(stderr);
             fputc('\n', stderr);
           }
-        } else if (this->debug_flags & (DebugFlag::Lexing | DebugFlag::Parsing)) {
+        } else if (debug_flags & (DebugFlag::ShowLexDebug | DebugFlag::ShowParseDebug)) {
           fprintf(stderr, "[%s] ======== no lexing/parsing for built-in module\n", module->name.c_str());
         }
 
@@ -323,7 +298,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
         module->global_base_offset = this->reserve_global_space(
             sizeof(int64_t) * module->globals.size());
 
-        if (this->debug_flags & DebugFlag::Annotation) {
+        if (debug_flags & DebugFlag::ShowAnnotateDebug) {
           fprintf(stderr, "[%s] ======== module annotated\n", module->name.c_str());
           if (module->ast_root.get()) {
             module->ast_root->print(stderr);
@@ -353,7 +328,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           }
         }
 
-        if (this->debug_flags & DebugFlag::Analysis) {
+        if (debug_flags & DebugFlag::ShowAnalyzeDebug) {
           fprintf(stderr, "[%s] ======== module analyzed\n", module->name.c_str());
           if (module->ast_root.get()) {
             module->ast_root->print(stderr);
@@ -371,7 +346,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
 
         this->initialize_global_space_for_module(module);
 
-        if (this->debug_flags & DebugFlag::Analysis) {
+        if (debug_flags & DebugFlag::ShowAnalyzeDebug) {
           fprintf(stderr, "[%s] ======== global space updated\n",
               module->name.c_str());
           print_data(stderr, this->global_space, this->global_space_used,
@@ -389,7 +364,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           module->compiled = reinterpret_cast<void(*)(int64_t*)>(const_cast<void*>(fragment.compiled));
           module->compiled_labels = move(fragment.compiled_labels);
 
-          if (this->debug_flags & DebugFlag::Execution) {
+          if (debug_flags & DebugFlag::ShowCompileDebug) {
             fprintf(stderr, "[%s] ======== executing root scope\n",
                 module->name.c_str());
           }
@@ -397,7 +372,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           module->compiled(this->global_space);
         }
 
-        if (this->debug_flags & DebugFlag::Execution) {
+        if (debug_flags & DebugFlag::ShowCompileDebug) {
           fprintf(stderr, "\n[%s] ======== import complete\n\n",
               module->name.c_str());
         }
@@ -415,16 +390,16 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
 }
 
 FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
-    FunctionContext* context,
+    FunctionContext* fn,
     const unordered_map<string, Variable>* local_overrides) {
 
   // if a context is given, then the module must match it
-  if (context && (context->module != module)) {
+  if (fn && (fn->module != module)) {
     throw compile_error("module context incorrect for function");
   }
 
   // if a context is not given, local_overrides must not be given either
-  if (!context && local_overrides) {
+  if (!fn && local_overrides) {
     throw compile_error("local overrides cannot be given for module scope");
   }
 
@@ -432,10 +407,16 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
   string scope_name;
   multimap<size_t, string> compiled_labels;
   unique_ptr<CompilationVisitor> v;
-  if (context) {
-    scope_name = string_printf("%s.%s+%" PRId64, module->name.c_str(),
-          context->name.c_str(), context->id);
-    v.reset(new CompilationVisitor(this, module, context->id, 0, local_overrides));
+  if (fn) {
+    auto* cls = this->context_for_class(fn->class_id);
+    if (cls) {
+      scope_name = string_printf("%s.%s.%s+%" PRId64, module->name.c_str(),
+          cls->name.c_str(), fn->name.c_str(), fn->id);
+    } else {
+      scope_name = string_printf("%s.%s+%" PRId64, module->name.c_str(),
+          fn->name.c_str(), fn->id);
+    }
+    v.reset(new CompilationVisitor(this, module, fn->id, 0, local_overrides));
   } else {
     scope_name = module->name;
     v.reset(new CompilationVisitor(this, module));
@@ -443,8 +424,8 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
 
   // compile it
   try {
-    if (context) {
-      context->ast_root->accept(v.get());
+    if (fn) {
+      fn->ast_root->accept(v.get());
     } else {
       module->ast_root->accept(v.get());
     }
@@ -455,7 +436,6 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
     fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
         scope_name.c_str());
     const string& compiled = v->assembler().assemble(&compiled_labels, true);
-    print_data(stderr, compiled.data(), compiled.size());
     string disassembly = AMD64Assembler::disassemble(compiled.data(),
         compiled.size(), 0, &compiled_labels);
     fprintf(stderr, "\n%s\n", disassembly.c_str());
@@ -463,7 +443,7 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
     throw;
   }
 
-  if (this->debug_flags & DebugFlag::Compilation) {
+  if (debug_flags & DebugFlag::ShowCompileDebug) {
     fprintf(stderr, "[%s] ======== scope compiled\n\n",
         scope_name.c_str());
   }
@@ -481,10 +461,9 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
   const void* executable = this->code.append(compiled);
   module->compiled_size += compiled.size();
 
-  if (this->debug_flags & DebugFlag::Assembly) {
+  if (debug_flags & DebugFlag::ShowAssembly) {
     fprintf(stderr, "[%s] ======== scope assembled\n", scope_name.c_str());
     uint64_t addr = reinterpret_cast<uint64_t>(executable);
-    print_data(stderr, compiled.data(), compiled.size(), addr);
     string disassembly = AMD64Assembler::disassemble(compiled.data(),
         compiled.size(), addr, &compiled_labels);
     fprintf(stderr, "\n%s\n", disassembly.c_str());
@@ -515,7 +494,7 @@ shared_ptr<ModuleAnalysis> GlobalAnalysis::get_or_create_module(
     auto module = this->modules.emplace(piecewise_construct,
         forward_as_tuple(module_name),
         forward_as_tuple(new ModuleAnalysis(module_name, filename, true))).first->second;
-    if (this->debug_flags & DebugFlag::Source) {
+    if (debug_flags & DebugFlag::ShowSourceDebug) {
       fprintf(stderr, "[%s] added code from memory (%zu lines, %zu bytes)\n\n",
           module_name.c_str(), module->source->line_count(),
           module->source->file_size());
@@ -533,7 +512,7 @@ shared_ptr<ModuleAnalysis> GlobalAnalysis::get_or_create_module(
   auto module = this->modules.emplace(piecewise_construct,
       forward_as_tuple(module_name),
       forward_as_tuple(new ModuleAnalysis(module_name, found_filename, false))).first->second;
-  if (this->debug_flags & DebugFlag::Source) {
+  if (debug_flags & DebugFlag::ShowSourceDebug) {
     fprintf(stderr, "[%s] loaded %s (%zu lines, %zu bytes)\n\n",
         module_name.c_str(), found_filename.c_str(), module->source->line_count(),
         module->source->file_size());

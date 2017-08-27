@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "../Debug.hh"
 #include "../Analysis.hh"
 #include "../BuiltinFunctions.hh"
 #include "../Types/Strings.hh"
@@ -54,8 +55,8 @@ static int64_t unicode_constant_count() {
   return global->unicode_constants.size();
 }
 
-static int64_t debug_flags() {
-  return global->debug_flags;
+static int64_t get_debug_flags() {
+  return debug_flags;
 }
 
 static std::shared_ptr<ModuleAnalysis> get_module(UnicodeObject* module_name) {
@@ -152,7 +153,7 @@ void __nemesys___initialize() {
 
   __nemesys___module->create_builtin_function("debug_flags",
       {}, Variable(ValueType::Int),
-      reinterpret_cast<const void*>(&debug_flags));
+      reinterpret_cast<const void*>(&get_debug_flags));
 
   __nemesys___module->create_builtin_function("errno",
       {}, Variable(ValueType::Int),

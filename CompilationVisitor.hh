@@ -111,15 +111,20 @@ private:
   int64_t stack_bytes_used;
 
   std::string return_label;
-  // TODO: break_label and continue_label stack
+  // TODO: break_label and continue_label stacks
 
   struct VariableLocation {
     std::string name;
     bool is_global;
     Variable type;
     MemoryReference mem;
+
+    std::string str() const;
   };
   Variable current_type;
+  bool holding_reference;
+
+  bool evaluating_instance_pointer;
 
   // output manager
   AMD64Assembler as;
@@ -127,6 +132,8 @@ private:
   Register reserve_register(Register which = Register::None);
   void release_register(Register reg);
   Register available_register(Register preferred = Register::None);
+  Register available_register_except(
+      const std::vector<Register>& prevented_registers);
 
   int64_t write_push_reserved_registers();
   void write_pop_reserved_registers(int64_t registers);
@@ -137,6 +144,8 @@ private:
 
   void write_code_for_value(const Variable& value);
 
+  void assert_not_evaluating_instance_pointer();
+
   ssize_t write_function_call_stack_prep(size_t arg_count);
   void write_function_call(const void* function,
       const MemoryReference* function_loc,
@@ -145,7 +154,8 @@ private:
   void write_function_setup(const std::string& base_label);
   void write_function_cleanup(const std::string& base_label);
 
-  void write_add_reference(const MemoryReference& mem);
+  void write_add_reference(Register addr_reg);
+  void write_delete_held_reference(const MemoryReference& mem);
   void write_delete_reference(const MemoryReference& mem, const Variable& type);
 
   void write_push(Register reg);

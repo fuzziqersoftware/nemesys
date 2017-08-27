@@ -988,6 +988,7 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
       fn->locals.at(arg.name) = Variable(ValueType::Instance, this->in_class_id,
           NULL);
 
+    // if the arg has a default value, infer the type from that
     } else if (arg.default_value.get()) {
       arg.default_value->accept(this);
       new_arg.default_value = move(this->current_value);
@@ -997,7 +998,12 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
       if (!new_arg.default_value.value_known) {
         throw compile_error("can\'t resolve default value", a->file_offset);
       }
+
+      fn->locals.at(arg.name) = new_arg.default_value.type_only();
     }
+
+    // TODO: if the arg doesn't have a default value, use the type annotation to
+    // infer the type
   }
   fn->varargs_name = a->args.varargs_name;
   fn->varkwargs_name = a->args.varkwargs_name;
@@ -1095,7 +1101,8 @@ void AnalysisVisitor::record_assignment_attribute(ClassContext* cls,
     this->record_assignment_generic(cls->attributes, name, value, file_offset);
   } catch (const out_of_range& e) {
     if (!allow_create) {
-      throw compile_error("class does not have attribute " + name);
+      throw compile_error("class does not have attribute " + name + "; it must be assigned in __init__",
+          file_offset);
     }
     // unlike locals and globals, class attributes aren't found in annotation.
     // just create it with the given value
