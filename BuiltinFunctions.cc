@@ -79,6 +79,10 @@ static UnicodeObject* builtin_input(UnicodeObject* prompt) {
   return unicode_new(NULL, data.data(), data.size());
 }
 
+static int64_t builtin_int_int(int64_t i, int64_t) {
+  return i;
+}
+
 static int64_t builtin_int_bytes(BytesObject* s, int64_t base) {
   int64_t ret = strtoll(reinterpret_cast<const char*>(s->data), NULL, base);
   delete_reference(s);
@@ -162,6 +166,68 @@ static int64_t builtin_len_list(ListObject* l) {
   return ret;
 }
 
+static int64_t builtin_abs_int(int64_t i) {
+  return (i < 0) ? -i : i;
+}
+
+static double builtin_abs_float(double i) {
+  return (i < 0) ? -i : i;
+}
+
+static UnicodeObject* builtin_chr_int(int64_t i) {
+  UnicodeObject* s = unicode_new(NULL, NULL, 1);
+  s->data[0] = i;
+  return s;
+}
+
+static int64_t builtin_ord_bytes(BytesObject* s) {
+  int64_t ret = (s->count < 1) ? -1 : s->data[0];
+  delete_reference(s);
+  return ret;
+}
+
+static int64_t builtin_ord_unicode(UnicodeObject* s) {
+  int64_t ret = (s->count < 1) ? -1 : s->data[0];
+  delete_reference(s);
+  return ret;
+}
+
+static UnicodeObject* builtin_bin_int(int64_t i) {
+  if (!i) {
+    return unicode_new(NULL, L"0b0", 3);
+  }
+
+  UnicodeObject* s = unicode_new(NULL, NULL, 67);
+  size_t x = 0;
+  if (i < 0) {
+    i = -i;
+    s->data[x++] = '-';
+  }
+  s->data[x++] = '0';
+  s->data[x++] = 'b';
+
+  bool should_write = false;
+  for (size_t y = 0; y < sizeof(int64_t) * 8; y++) {
+    bool bit_set = i & 0x8000000000000000;
+    if (bit_set) {
+      should_write = true;
+    }
+    if (should_write) {
+      s->data[x++] = bit_set ? '1' : '0';
+    }
+    i <<= 1;
+  }
+  s->data[x] = 0;
+  s->count = x;
+  return s;
+}
+
+static UnicodeObject* builtin_hex_int(int64_t i) {
+  UnicodeObject* s = unicode_new(NULL, NULL, 19);
+  s->count = swprintf(s->data, 19, L"%s0x%x", (i < 0) ? "-" : "", (i < 0) ? -i : i);
+  return s;
+}
+
 
 
 unordered_map<int64_t, FunctionContext> builtin_function_definitions;
@@ -235,23 +301,31 @@ void create_builtin_name(const char* name, const Variable& value) {
 
 
 static void create_default_builtin_functions() {
+  Variable None(ValueType::None);
+  Variable Bool(ValueType::Bool);
+  Variable Int(ValueType::Int);
+  Variable Int_Zero(ValueType::Int, 0LL);
+  Variable Float(ValueType::Float);
+  Variable Bytes(ValueType::Bytes);
+  Variable Unicode(ValueType::Unicode);
+  Variable Unicode_Blank(ValueType::Unicode, L"");
+
   // None print(Unicode)
-  create_builtin_function("print", {Variable(ValueType::Unicode)},
-      Variable(ValueType::None), reinterpret_cast<const void*>(&builtin_print),
-      true);
+  create_builtin_function("print", {Unicode}, None,
+      reinterpret_cast<const void*>(&builtin_print), true);
 
   // Unicode input(Unicode='')
-  create_builtin_function("input", {Variable(ValueType::Unicode, L"")},
-      Variable(ValueType::Unicode), reinterpret_cast<const void*>(&builtin_input),
-      true);
+  create_builtin_function("input", {Unicode_Blank}, Unicode,
+      reinterpret_cast<const void*>(&builtin_input), true);
 
+  // Int int(Int)
   // Int int(Bytes, Int=0)
   // Int int(Unicode, Int=0)
+  // Int int(Float) // unimplemented
   create_builtin_function("int", {
-      FragDef({Variable(ValueType::Bytes), Variable(ValueType::Int, 0LL)},
-        Variable(ValueType::Int), reinterpret_cast<const void*>(&builtin_int_bytes)),
-      FragDef({Variable(ValueType::Unicode), Variable(ValueType::Int, 0LL)},
-        Variable(ValueType::Int), reinterpret_cast<const void*>(&builtin_int_unicode)),
+      FragDef({Int_Zero, Int_Zero}, Int, reinterpret_cast<const void*>(&builtin_int_int)),
+      FragDef({Bytes, Int_Zero}, Int, reinterpret_cast<const void*>(&builtin_int_bytes)),
+      FragDef({Unicode, Int_Zero}, Int, reinterpret_cast<const void*>(&builtin_int_unicode)),
   }, true);
 
   // Unicode repr(None)
@@ -261,32 +335,113 @@ static void create_default_builtin_functions() {
   // Unicode repr(Bytes)
   // Unicode repr(Unicode)
   create_builtin_function("repr", {
-      FragDef({Variable(ValueType::None)}, Variable(ValueType::Unicode),
-        reinterpret_cast<const void*>(&builtin_repr_none)),
-      FragDef({Variable(ValueType::Bool)}, Variable(ValueType::Unicode),
-        reinterpret_cast<const void*>(&builtin_repr_bool)),
-      FragDef({Variable(ValueType::Int)}, Variable(ValueType::Unicode),
-        reinterpret_cast<const void*>(&builtin_repr_int)),
-      FragDef({Variable(ValueType::Float)}, Variable(ValueType::Unicode),
-        reinterpret_cast<const void*>(&builtin_repr_float)),
-      FragDef({Variable(ValueType::Bytes)}, Variable(ValueType::Unicode),
-        reinterpret_cast<const void*>(&builtin_repr_bytes)),
-      FragDef({Variable(ValueType::Unicode)}, Variable(ValueType::Unicode),
-        reinterpret_cast<const void*>(&builtin_repr_unicode)),
+      FragDef({None}, Unicode, reinterpret_cast<const void*>(&builtin_repr_none)),
+      FragDef({Bool}, Unicode, reinterpret_cast<const void*>(&builtin_repr_bool)),
+      FragDef({Int}, Unicode, reinterpret_cast<const void*>(&builtin_repr_int)),
+      FragDef({Float}, Unicode, reinterpret_cast<const void*>(&builtin_repr_float)),
+      FragDef({Bytes}, Unicode, reinterpret_cast<const void*>(&builtin_repr_bytes)),
+      FragDef({Unicode}, Unicode, reinterpret_cast<const void*>(&builtin_repr_unicode)),
   }, true);
 
   // Int len(Bytes)
   // Int len(Unicode)
   // Int len(List[Any])
+  // Int len(Tuple[...]) // unimplemented
+  // Int len(Set[Any]) // unimplemented
+  // Int len(Dict[Any, Any]) // unimplemented
   create_builtin_function("len", {
-      FragDef({Variable(ValueType::Bytes)}, Variable(ValueType::Int),
-        reinterpret_cast<const void*>(&builtin_len_bytes)),
-      FragDef({Variable(ValueType::Unicode)}, Variable(ValueType::Int),
-        reinterpret_cast<const void*>(&builtin_len_unicode)),
+      FragDef({Bytes}, Int, reinterpret_cast<const void*>(&builtin_len_bytes)),
+      FragDef({Unicode}, Int, reinterpret_cast<const void*>(&builtin_len_unicode)),
       FragDef({Variable(ValueType::List, vector<Variable>({Variable()}))},
-        Variable(ValueType::Int),
-        reinterpret_cast<const void*>(&builtin_len_list)),
+        Int, reinterpret_cast<const void*>(&builtin_len_list)),
   }, true);
+
+  // Int abs(Int)
+  // Float abs(Float)
+  // Float abs(Complex) // unimplemented
+  create_builtin_function("abs", {
+      FragDef({Int}, Int, reinterpret_cast<const void*>(&builtin_abs_int)),
+      FragDef({Float}, Float, reinterpret_cast<const void*>(&builtin_abs_float)),
+  }, true);
+
+  // Unicode chr(Int)
+  create_builtin_function("chr", {Int}, Unicode,
+      reinterpret_cast<const void*>(&builtin_chr_int), true);
+
+  // Int chr(Bytes) // aparently this isn't part of the Python standard anymore
+  // Int chr(Unicode)
+  create_builtin_function("ord", {
+      FragDef({Bytes}, Int, reinterpret_cast<const void*>(&builtin_ord_bytes)),
+      FragDef({Unicode}, Int, reinterpret_cast<const void*>(&builtin_ord_unicode)),
+  }, true);
+
+  // Unicode bin(Int)
+  create_builtin_function("bin", {Int}, Unicode,
+      reinterpret_cast<const void*>(&builtin_bin_int), true);
+
+  // Unicode hex(Int)
+  create_builtin_function("hex", {Int}, Unicode,
+      reinterpret_cast<const void*>(&builtin_hex_int), true);
+
+  // unimplemented:
+  //   __import__()
+  //   all()
+  //   any()
+  //   ascii()
+  //   bool()
+  //   bytearray()
+  //   bytes()
+  //   callable()
+  //   classmethod() // won't be implemented here (will be done statically)
+  //   compile()
+  //   complex()
+  //   delattr()
+  //   dict()
+  //   dir()
+  //   divmod()
+  //   enumerate()
+  //   eval()
+  //   exec()
+  //   filter()
+  //   float()
+  //   format()
+  //   frozenset()
+  //   getattr()
+  //   globals()
+  //   hasattr()
+  //   hash()
+  //   help()
+  //   id()
+  //   isinstance()
+  //   issubclass()
+  //   iter()
+  //   list()
+  //   locals()
+  //   map()
+  //   max()
+  //   memoryview()
+  //   min()
+  //   next()
+  //   object()
+  //   oct()
+  //   open()
+  //   pow()
+  //   property()
+  //   range()
+  //   reversed()
+  //   round()
+  //   set()
+  //   setattr()
+  //   slice()
+  //   sorted()
+  //   staticmethod() // won't be implemented here (will be done statically)
+  //   str()
+  //   sum()
+  //   super()
+  //   tuple()
+  //   type()
+  //   vars()
+  //   zip()
 }
 
 
