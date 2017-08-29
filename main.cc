@@ -82,6 +82,14 @@ int main(int argc, char* argv[]) {
   // set up the global environment
   global.reset(new GlobalAnalysis({"."}));
   create_default_builtin_names();
+
+  // populate the sys module appropriately
+  const char* argv0_realpath = realpath(argv[0], NULL);
+  if (!argv0_realpath) {
+    sys_set_executable("");
+  } else {
+    sys_set_executable(argv0_realpath);
+  }
   sys_set_argv(sys_argv);
 
   // run the specified script/code

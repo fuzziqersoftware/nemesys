@@ -6,6 +6,7 @@
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
 
+#include "Debug.hh"
 #include "PythonLexer.hh"
 #include "PythonParser.hh"
 #include "PythonASTNodes.hh"
@@ -1043,6 +1044,8 @@ void AnalysisVisitor::visit(ClassDefinition* a) {
   this->in_class_id = a->class_id;
 
   this->visit_list(a->items);
+
+  this->current_class()->populate_dynamic_attributes();
 
   this->in_class_id = prev_class_id;
 

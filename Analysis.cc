@@ -23,45 +23,7 @@ using namespace std;
 
 
 
-// compilation strategy (nemesys_compile_module):
-// 1. load and parse source file
-// 2. run AnnotationVisitor on it to get function IDs, variable names, and
-//    imported module names
-// 3. recursively load and parse source files and run AnnotationVisitor on them
-//    for all imported modules
-// 4. run AnalysisVisitor on the original source file to discover as many types
-//    as possible
-// 5. run CompilationVisitor to build the root scope of the module, generating
-//    calls to nemesys_compile_function appropriately
-// TODO: the rest
-
-// by the time 2 is done, we should be able to resolve all function IDs. by the
-// time 4 is done, we should know the types of all variables (and in some cases,
-// the values as well).
-
-// functions are compiled in blocks called "fragments". a fragment is a
-// contiguous chunk of a function's execution path over which we know the types
-// of all variables. this means that fragments can only end when new values are
-// introduced into the function, either through yield expressions or function
-// calls. (note that we need to split functions even if the return value of a
-// function call or yield expression isn't used, since we may need to free it.)
-
-// example function:
-// def some_function(num):
-//   print('some_function...')  # <-- split #1
-//   for x in range(num):  # <-- split #2 (at range() call)
-//     if 2 == x:
-//       continue
-//     elif x > 10:
-//       break
-//     else:
-//       print(x)  # <-- split #3
-//   y = other_function(x)  # <-- split #4 (at function call)
-//   return y * 2 if y < 5 else x * 3
-
-
-
-compile_error::compile_error(const std::string& what, ssize_t where) :
+compile_error::compile_error(const string& what, ssize_t where) :
     runtime_error(what), where(where) { }
 
 
@@ -69,18 +31,36 @@ compile_error::compile_error(const std::string& what, ssize_t where) :
 ClassContext::ClassContext(ModuleAnalysis* module, int64_t id) : module(module),
     id(id), destructor(NULL), ast_root(NULL) { }
 
+void ClassContext::populate_dynamic_attributes() {
+  for (const auto& it : this->attributes) {
+    if ((it.second.type != ValueType::Function) &&
+        (it.second.type != ValueType::Class)) {
+      if (debug_flags & DebugFlag::ShowAnalyzeDebug) {
+        string type_str = it.second.str();
+        fprintf(stderr, "[finalize_class] %s<%" PRId64 ">.%s = %s (dynamic)\n",
+            this->name.c_str(), this->id, it.first.c_str(), type_str.c_str());
+      }
+      this->dynamic_attributes.emplace(it.first);
+    } else if (debug_flags & DebugFlag::ShowAnalyzeDebug) {
+      string type_str = it.second.str();
+      fprintf(stderr, "[finalize_class] %s<%" PRId64 ">.%s = %s (static)\n",
+          this->name.c_str(), this->id, it.first.c_str(), type_str.c_str());
+    }
+  }
+}
+
 
 
 FunctionContext::Fragment::Fragment(Variable return_type, const void* compiled)
     : return_type(return_type), compiled(compiled) { }
 
 FunctionContext::Fragment::Fragment(Variable return_type, const void* compiled,
-    std::multimap<size_t, std::string>&& compiled_labels) :
+    multimap<size_t, string>&& compiled_labels) :
     return_type(return_type), compiled(compiled),
     compiled_labels(move(compiled_labels)) { }
 
 FunctionContext::BuiltinFunctionFragmentDefinition::BuiltinFunctionFragmentDefinition(
-    const std::vector<Variable>& arg_types, Variable return_type,
+    const vector<Variable>& arg_types, Variable return_type,
     const void* compiled) : arg_types(arg_types), return_type(return_type),
     compiled(compiled) { }
 
@@ -94,7 +74,7 @@ FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
 
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
     const char* name,
-    const std::vector<BuiltinFunctionFragmentDefinition>& fragments) :
+    const vector<BuiltinFunctionFragmentDefinition>& fragments) :
     module(module), id(id), class_id(0), name(name), ast_root(NULL),
     num_splits(0) {
 
@@ -167,13 +147,13 @@ ModuleAnalysis::ModuleAnalysis(const string& name, const string& filename,
   }
 }
 
-ModuleAnalysis::ModuleAnalysis(const std::string& name,
-    const std::map<std::string, Variable>& globals) : phase(Phase::Initial),
+ModuleAnalysis::ModuleAnalysis(const string& name,
+    const map<string, Variable>& globals) : phase(Phase::Initial),
     name(name), source(NULL), ast_root(NULL), globals(globals),
     global_base_offset(-1), num_splits(0), compiled(NULL) { }
 
 int64_t ModuleAnalysis::create_builtin_function(const char* name,
-    const std::vector<Variable>& arg_types, const Variable& return_type,
+    const vector<Variable>& arg_types, const Variable& return_type,
     const void* compiled) {
   int64_t function_id = ::create_builtin_function(name, arg_types, return_type,
       compiled, false);
@@ -182,15 +162,25 @@ int64_t ModuleAnalysis::create_builtin_function(const char* name,
 }
 
 int64_t ModuleAnalysis::create_builtin_function(const char* name,
-    const std::vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments) {
+    const vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments) {
   int64_t function_id = ::create_builtin_function(name, fragments, false);
   this->globals.emplace(name, Variable(ValueType::Function, function_id));
   return function_id;
 }
 
+int64_t ModuleAnalysis::create_builtin_class(const char* name,
+    const std::map<std::string, Variable>& attributes,
+    const std::vector<Variable>& init_arg_types, const void* init_compiled,
+    const void* destructor) {
+  int64_t class_id = ::create_builtin_class(name, attributes, init_arg_types,
+      init_compiled, destructor, false);
+  this->globals.emplace(name, Variable(ValueType::Class, class_id));
+  return class_id;
+}
 
 
-GlobalAnalysis::GlobalAnalysis(const std::vector<std::string>& import_paths) :
+
+GlobalAnalysis::GlobalAnalysis(const vector<string>& import_paths) :
     import_paths(import_paths), global_space(NULL), global_space_used(0) { }
 
 GlobalAnalysis::~GlobalAnalysis() {
@@ -527,7 +517,7 @@ shared_ptr<ModuleAnalysis> GlobalAnalysis::get_module_at_phase(
   return module;
 }
 
-std::string GlobalAnalysis::find_source_file(const string& module_name) {
+string GlobalAnalysis::find_source_file(const string& module_name) {
   string module_path_name = module_name;
   for (char& ch : module_path_name) {
     if (ch == '.') {
@@ -572,8 +562,15 @@ FunctionContext* GlobalAnalysis::context_for_function(int64_t function_id,
 
 ClassContext* GlobalAnalysis::context_for_class(int64_t class_id,
     ModuleAnalysis* module_for_create) {
-  if (class_id <= 0) {
+  if (class_id == 0) {
     return NULL;
+  }
+  if (class_id < 0) {
+    try {
+      return &builtin_class_definitions.at(class_id);
+    } catch (const out_of_range& e) {
+      return NULL;
+    }
   }
   if (module_for_create) {
     return &(*this->class_id_to_context.emplace(piecewise_construct,

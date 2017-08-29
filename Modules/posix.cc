@@ -264,6 +264,7 @@ static map<string, Variable> globals({
   // {"XATTR_REPLACE", Variable()}, // linux only
   // {"XATTR_SIZE_MAX", Variable()}, // linux only
   // {"X_OK", Variable()},
+
   // {"_have_functions", Variable()},
   // {"access", Variable()},
   // {"chdir", Variable()},

@@ -26,8 +26,6 @@ static wstring __doc__ = L"Common built-in objects and functions.\n\
 \n\
 Attributes that are present have the same meanings as in Python 3.";
 
-static wstring copyright = L"TODO";
-
 static map<string, Variable> globals({
   {"__doc__",              Variable(ValueType::Unicode, __doc__)},
   {"__name__",             Variable(ValueType::Unicode, L"sys")},
@@ -41,11 +39,10 @@ static map<string, Variable> globals({
   // {"base_prefix",          Variable()},
   // {"builtin_module_names", Variable()},
   {"byteorder",            Variable(ValueType::Unicode, L"little")},
-  {"copyright",            Variable(ValueType::Unicode, copyright)},
+  {"copyright",            Variable(ValueType::Unicode, L"")},
   {"dont_write_bytecode",  Variable(ValueType::Bool, true)},
   // {"exc_info",             Variable()},
   // {"exec_prefix",          Variable()},
-  // {"executable",           Variable()},
   // {"exit",                 Variable()},
   // {"flags",                Variable()},
   // {"float_info",           Variable()},
@@ -77,6 +74,10 @@ static map<string, Variable> globals({
 });
 
 std::shared_ptr<ModuleAnalysis> sys_module(new ModuleAnalysis("sys", globals));
+
+void sys_set_executable(const char* realpath) {
+  sys_module->globals.emplace("executable", Variable(ValueType::Bytes, realpath));
+}
 
 void sys_set_argv(const vector<const char*>& sys_argv) {
   vector<shared_ptr<Variable>> argv;

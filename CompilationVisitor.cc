@@ -1079,7 +1079,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
       this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_alloc_instance",
           a, arg_index));
       this->as.write_mov(MemoryReference(Register::RDI),
-          sizeof(int64_t) * (cls->attributes.size() + 2));
+          sizeof(int64_t) * (cls->dynamic_attributes.size() + 2));
       this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(&malloc));
       this->as.write_call(MemoryReference(Register::RAX));
       this->as.write_mov(this->target_register, MemoryReference(Register::RAX));
@@ -1094,7 +1094,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
       // zero everything else in the class
       this->as.write_xor(MemoryReference(Register::RAX),
           MemoryReference(Register::RAX));
-      for (size_t x = 16; x < (cls->attributes.size() * 8) + 16; x += 8) {
+      for (size_t x = 16; x < (cls->dynamic_attributes.size() * 8) + 16; x += 8) {
         this->as.write_mov(MemoryReference(this->target_register, x),
             MemoryReference(Register::RAX));
       }
@@ -1469,6 +1469,9 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     auto* cls = this->global->context_for_class(this->current_type.class_id);
     if (!cls) {
       throw compile_error("object class does not exist", this->file_offset);
+    }
+    if (!cls->dynamic_attributes.count(a->name)) {
+      throw compile_error("object attribute is static", this->file_offset);
     }
     VariableLocation loc = this->location_for_attribute(cls, a->name,
         this->target_register);
@@ -2108,11 +2111,12 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       // the first 2 fields are the refcount and destructor pointer
       // the rest are the attributes, in the same order as in the attributes map
       size_t offset = 16;
-      for (const auto& it : cls->attributes) {
-        if (type_has_refcount(it.second.type)) {
+      for (const auto& attr_name : cls->dynamic_attributes) {
+        auto& attr = cls->attributes.at(attr_name);
+        if (type_has_refcount(attr.type)) {
           // write a destructor call
           dtor_as.write_label(string_printf("%s_delete_reference_%s", base_label.c_str(),
-              it.first.c_str()));
+              attr_name.c_str()));
 
           // if inline refcounting is disabled, call delete_reference manually
           if (debug_flags & DebugFlag::NoInlineRefcounting) {
@@ -2583,9 +2587,9 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
 CompilationVisitor::VariableLocation CompilationVisitor::location_for_attribute(
     ClassContext* cls, const string& name, Register instance_reg) {
 
-  auto it = cls->attributes.find(name);
-  if (it == cls->attributes.end()) {
-    throw compile_error("nonexistent attribute: " + name, this->file_offset);
+  auto it = cls->dynamic_attributes.find(name);
+  if (it == cls->dynamic_attributes.end()) {
+    throw compile_error("nonexistent or static attribute: " + name, this->file_offset);
   }
 
   // attributes are stored at [instance_reg + 8 * which + 16]
@@ -2593,7 +2597,7 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_attribute(
   loc.name = name;
   loc.is_global = false;
   loc.mem = MemoryReference(instance_reg,
-      sizeof(int64_t) * (2 + distance(cls->attributes.begin(), it)));
-  loc.type = it->second;
+      sizeof(int64_t) * (2 + distance(cls->dynamic_attributes.begin(), it)));
+  loc.type = cls->attributes.at(name);
   return loc;
 }

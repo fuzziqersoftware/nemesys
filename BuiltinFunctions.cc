@@ -164,11 +164,17 @@ static int64_t builtin_len_list(ListObject* l) {
 
 
 
-unordered_map<string, int64_t> builtin_function_to_id;
 unordered_map<int64_t, FunctionContext> builtin_function_definitions;
+unordered_map<int64_t, ClassContext> builtin_class_definitions;
 unordered_map<string, Variable> builtin_names;
 
 
+
+static int64_t generate_function_id() {
+  // all builtin functions and classes have negative IDs
+  static int64_t next_function_id = -1;
+  return next_function_id--;
+}
 
 int64_t create_builtin_function(const char* name,
     const vector<Variable>& arg_types, const Variable& return_type,
@@ -179,17 +185,47 @@ int64_t create_builtin_function(const char* name,
 
 int64_t create_builtin_function(const char* name,
     const vector<FragDef>& fragments, bool register_globally) {
-  // all builtin functions have negative function IDs
-  static int64_t next_function_id = -1;
-  int64_t function_id = next_function_id--;
 
-  builtin_function_definitions.emplace(function_id, FunctionContext(NULL,
-      function_id, name, fragments));
+  int64_t function_id = generate_function_id();
+
+  builtin_function_definitions.emplace(piecewise_construct,
+      forward_as_tuple(function_id), forward_as_tuple(nullptr, function_id, name, fragments));
   if (register_globally) {
     create_builtin_name(name, Variable(ValueType::Function, function_id));
   }
 
   return function_id;
+}
+
+int64_t create_builtin_class(const char* name,
+    const map<string, Variable>& attributes,
+    const vector<Variable>& init_arg_types, const void* init_compiled,
+    const void* destructor, bool register_globally) {
+
+  int64_t class_id = generate_function_id();
+
+  // create and register the class context
+  // TODO: define a built-in constructor that will do all this
+  ClassContext cls = builtin_class_definitions.emplace(piecewise_construct,
+      forward_as_tuple(class_id), forward_as_tuple(nullptr, class_id)).first->second;
+  cls.destructor = destructor;
+  cls.name = name;
+  cls.ast_root = NULL;
+  cls.attributes = attributes;
+  cls.populate_dynamic_attributes();
+
+  // create and register __init__
+  Variable return_type(ValueType::Instance, class_id, NULL);
+  vector<FragDef> defs({{init_arg_types, return_type, init_compiled}});
+  FunctionContext& fn = builtin_function_definitions.emplace(piecewise_construct,
+      forward_as_tuple(class_id), forward_as_tuple(nullptr, class_id, name, defs)).first->second;
+  fn.class_id = class_id;
+
+  if (register_globally) {
+    create_builtin_name(name, Variable(ValueType::Class, class_id));
+  }
+
+  return class_id;
 }
 
 void create_builtin_name(const char* name, const Variable& value) {
@@ -198,7 +234,7 @@ void create_builtin_name(const char* name, const Variable& value) {
 
 
 
-void create_default_builtin_functions() {
+static void create_default_builtin_functions() {
   // None print(Unicode)
   create_builtin_function("print", {Variable(ValueType::Unicode)},
       Variable(ValueType::None), reinterpret_cast<const void*>(&builtin_print),
@@ -252,6 +288,96 @@ void create_default_builtin_functions() {
         reinterpret_cast<const void*>(&builtin_len_list)),
   }, true);
 }
+
+
+
+/* TODO: finish implementing file objects here
+struct FileObject {
+  int64_t closed;
+  FILE* f;
+  UnicodeObject* mode;
+  UnicodeObject* name;
+
+  static FileObject* __init__(FileObject* f, UnicodeObject* filename,
+      UnicodeObject* mode) {
+    // TODO
+    // return f;
+  }
+
+  static void __del__(FileObject* f) {
+    if (!f->closed) {
+      fclose(f->f);
+    }
+    delete_reference(f->mode);
+  }
+
+  static void close(FileObject* f) {
+    fclose(f->f);
+  }
+
+  static int64_t fileno(FileObject* f) {
+    return fileno(f->f);
+  }
+
+  static void flush(FileObject* f) {
+    fflush(f->f);
+  }
+
+  static int64_t isatty(FileObject* f) {
+    return isatty(fileno(f->f));
+  }
+
+  static BytesObject* read(FileObject* f, int64_t size) {
+    // TODO
+  }
+
+  static BytesObject* read1(FileObject* f, int64_t size) {
+    if (bytes <= 0) {
+      return bytes_new(NULL, NULL, 0);
+    }
+
+    BytesObject* block = bytes_new(NULL, NULL, size);
+    ssize_t bytes_read = fread(block->data, 1, size, f->f);
+    if (bytes_read <= 0) {
+      delete_reference(block);
+      return bytes_new(NULL, NULL, size);
+    }
+    block->count = bytes_read;
+    return block;
+  }
+};
+
+void create_default_builtin_classes() {
+  const map<string, Variable> file_attributes({
+    // {"__enter__", Variable()},
+    // {"__exit__", Variable()},
+    // {"__iter__", Variable()},
+    // {"__next__", Variable()},
+    // {"__repr__", Variable()},
+    // {"_checkClosed", Variable()},
+    // {"_checkReadable", Variable()},
+    // {"_checkSeekable", Variable()},
+    // {"_checkWritable", Variable()},
+    // {"_dealloc_warn", Variable()},
+    // {"_finalizing", Variable()},
+    {"close", Variable()},
+    {"closed", Variable()},
+    {"fileno", Variable()},
+    {"flush", Variable()},
+    {"isatty", Variable()},
+    {"mode", Variable()},
+    {"name", Variable()},
+    {"read", Variable()},
+    {"read1", Variable()},
+    {"readline", Variable()},
+    {"seek", Variable()},
+    {"tell", Variable()},
+    {"truncate", Variable()},
+    {"write", Variable()},
+  });
+} */
+
+void create_default_builtin_classes() { }
 
 void create_default_builtin_names() {
   static const unordered_map<Variable, shared_ptr<Variable>> empty_dict_contents;
@@ -403,6 +529,7 @@ void create_default_builtin_names() {
   create_builtin_name("zip",                       Variable(ValueType::Function));
 
   create_default_builtin_functions();
+  create_default_builtin_classes();
 }
 
 

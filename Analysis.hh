@@ -1,7 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -31,15 +33,18 @@ class ModuleAnalysis;
 struct ClassContext {
   ModuleAnalysis* module; // Annotated; NULL for built-in functions
   int64_t id; // Annotated. note that __init__ has the same ID
-  void* destructor; // Compiled; generated when class def is visited
+  const void* destructor; // Compiled; generated when class def is visited
 
   std::string name; // Annotated
   ASTNode* ast_root; // Annotated
 
   std::map<std::string, Variable> attributes; // Annotated; values Analyzed
+  std::set<std::string> dynamic_attributes; // Analyzed
 
   // constructor for dynamic classes (defined in .py files)
   ClassContext(ModuleAnalysis* module, int64_t id);
+
+  void populate_dynamic_attributes();
 };
 
 struct FunctionContext {
@@ -153,6 +158,10 @@ public:
       const void* compiled);
   int64_t create_builtin_function(const char* name,
       const std::vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments);
+  int64_t create_builtin_class(const char* name,
+    const std::map<std::string, Variable>& attributes,
+    const std::vector<Variable>& init_arg_types, const void* init_compiled,
+    const void* destructor);
 };
 
 
