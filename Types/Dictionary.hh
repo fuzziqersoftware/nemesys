@@ -27,8 +27,8 @@ struct DictionaryObject {
   struct SlotContents {
     void* key;
     void* value;
-    bool occupied;
-    bool is_subnode;
+    uint8_t occupied;
+    uint8_t is_subnode;
 
     SlotContents();
   };

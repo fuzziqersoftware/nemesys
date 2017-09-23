@@ -17,27 +17,27 @@ void test_trivial_function() {
   AMD64Assembler as;
 
   as.write_push(Register::RBP);
-  as.write_mov(MemoryReference(Register::RBP), MemoryReference(Register::RSP));
+  as.write_mov(rbp, rsp);
 
-  as.write_mov(MemoryReference(Register::RDX), MemoryReference(Register::RDI, 0));
+  as.write_mov(rdx, MemoryReference(Register::RDI, 0));
 
-  as.write_not(MemoryReference(Register::RDX));
+  as.write_not(rdx);
 
-  as.write_test(MemoryReference(Register::RDX), MemoryReference(Register::RDX));
-  as.write_setz(MemoryReference(Register::DH));
+  as.write_test(rdx, rdx);
+  as.write_setz(dh);
 
-  as.write_mov(MemoryReference(Register::R10), MemoryReference(Register::RDX));
+  as.write_mov(r10, rdx);
 
-  as.write_test(MemoryReference(Register::R10), MemoryReference(Register::R10));
-  as.write_setz(MemoryReference(Register::R10B));
+  as.write_test(r10, r10);
+  as.write_setz(r10b);
 
-  as.write_xor(MemoryReference(Register::R10), 0x3F3F);
-  as.write_xor(MemoryReference(Register::R10), 0x40);
-  as.write_xor(MemoryReference(Register::R10B), 0x01, OperandSize::Byte);
+  as.write_xor(r10, 0x3F3F);
+  as.write_xor(r10, 0x40);
+  as.write_xor(r10b, 0x01, OperandSize::Byte);
 
-  as.write_mov(MemoryReference(Register::RAX), MemoryReference(Register::R10));
+  as.write_mov(rax, r10);
 
-  as.write_mov(MemoryReference(Register::RDI, 0), MemoryReference(Register::RAX));
+  as.write_mov(MemoryReference(Register::RDI, 0), rax);
 
   as.write_pop(Register::RBP);
   as.write_ret();
@@ -65,10 +65,6 @@ void test_pow() {
   printf("-- pow\n");
 
   AMD64Assembler as;
-
-  const auto rax = MemoryReference(Register::RAX);
-  const auto rsi = MemoryReference(Register::RSI);
-  const auto rdi = MemoryReference(Register::RDI);
 
   // this mirrors the implementation in notes/pow.s
   as.write_mov(rax, 1);
@@ -133,51 +129,43 @@ void test_quicksort() {
 
   AMD64Assembler as;
 
-  const Register rax = Register::RAX;
-  const Register rcx = Register::RCX;
-  const Register rdx = Register::RDX;
-  const Register rsi = Register::RSI;
-  const Register rdi = Register::RDI;
-  const Register r8 = Register::R8;
-  const Register r9 = Register::R9;
-
   // this mirrors the implementation in notes/quicksort.s
-  as.write_mov(MemoryReference(rdx), MemoryReference(rdi));
-  as.write_xor(MemoryReference(rdi), MemoryReference(rdi));
-  as.write_dec(MemoryReference(rsi));
+  as.write_mov(rdx, rdi);
+  as.write_xor(rdi, rdi);
+  as.write_dec(rsi);
   as.write_label("0");
-  as.write_cmp(MemoryReference(rdi), MemoryReference(rsi));
+  as.write_cmp(rdi, rsi);
   as.write_jl("1");
   as.write_ret();
   as.write_label("1");
-  as.write_lea(rcx, MemoryReference(rdi, 0, rsi));
-  as.write_shr(MemoryReference(rcx), 1);
-  as.write_mov(MemoryReference(rax), MemoryReference(rdx, 0, rsi, 8));
-  as.write_xchg(rax, MemoryReference(rdx, 0, rcx, 8));
-  as.write_mov(MemoryReference(rdx, 0, rsi, 8), MemoryReference(rax));
-  as.write_lea(r8, MemoryReference(rdi, -1));
-  as.write_mov(MemoryReference(r9), MemoryReference(rdi));
+  as.write_lea(Register::RCX, MemoryReference(Register::RDI, 0, Register::RSI));
+  as.write_shr(rcx, 1);
+  as.write_mov(rax, MemoryReference(Register::RDX, 0, Register::RSI, 8));
+  as.write_xchg(Register::RAX, MemoryReference(Register::RDX, 0, Register::RCX, 8));
+  as.write_mov(MemoryReference(Register::RDX, 0, Register::RSI, 8), rax);
+  as.write_lea(Register::R8, MemoryReference(Register::RDI, -1));
+  as.write_mov(r9, rdi);
   as.write_label("2");
-  as.write_inc(MemoryReference(r8));
-  as.write_cmp(MemoryReference(r8), MemoryReference(rsi));
+  as.write_inc(r8);
+  as.write_cmp(r8, rsi);
   as.write_jge("3");
-  as.write_cmp(MemoryReference(rdx, 0, r8, 8), MemoryReference(rax));
+  as.write_cmp(MemoryReference(Register::RDX, 0, Register::R8, 8), rax);
   as.write_jge("2");
-  as.write_mov(MemoryReference(rcx), MemoryReference(rdx, 0, r9, 8));
-  as.write_xchg(rcx, MemoryReference(rdx, 0, r8, 8));
-  as.write_mov(MemoryReference(rdx, 0, r9, 8), MemoryReference(rcx));
-  as.write_inc(MemoryReference(r9));
+  as.write_mov(rcx, MemoryReference(Register::RDX, 0, Register::R9, 8));
+  as.write_xchg(Register::RCX, MemoryReference(Register::RDX, 0, Register::R8, 8));
+  as.write_mov(MemoryReference(Register::RDX, 0, Register::R9, 8), rcx);
+  as.write_inc(r9);
   as.write_jmp("2");
   as.write_label("3");
-  as.write_xchg(rax, MemoryReference(rdx, 0, r9, 8));
-  as.write_mov(MemoryReference(rdx, 0, rsi, 8), MemoryReference(rax));
-  as.write_push(MemoryReference(rsi));
-  as.write_lea(rax, MemoryReference(r9, 1));
+  as.write_xchg(Register::RAX, MemoryReference(Register::RDX, 0, Register::R9, 8));
+  as.write_mov(MemoryReference(Register::RDX, 0, Register::RSI, 8), rax);
+  as.write_push(rsi);
+  as.write_lea(Register::RAX, MemoryReference(Register::R9, 1));
   as.write_push(rax);
-  as.write_lea(rsi, MemoryReference(r9, -1));
+  as.write_lea(Register::RSI, MemoryReference(Register::R9, -1));
   as.write_call("0");
-  as.write_pop(rdi);
-  as.write_pop(rsi);
+  as.write_pop(Register::RDI);
+  as.write_pop(Register::RSI);
   as.write_jmp("0");
 
   string code = as.assemble();

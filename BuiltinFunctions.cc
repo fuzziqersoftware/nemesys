@@ -272,7 +272,7 @@ int64_t create_builtin_class(const char* name,
 
   // create and register the class context
   // TODO: define a built-in constructor that will do all this
-  ClassContext cls = builtin_class_definitions.emplace(piecewise_construct,
+  ClassContext& cls = builtin_class_definitions.emplace(piecewise_construct,
       forward_as_tuple(class_id), forward_as_tuple(nullptr, class_id)).first->second;
   cls.destructor = destructor;
   cls.name = name;
@@ -280,15 +280,19 @@ int64_t create_builtin_class(const char* name,
   cls.attributes = attributes;
   cls.populate_dynamic_attributes();
 
-  // create and register __init__
-  Variable return_type(ValueType::Instance, class_id, NULL);
-  vector<FragDef> defs({{init_arg_types, return_type, init_compiled}});
-  FunctionContext& fn = builtin_function_definitions.emplace(piecewise_construct,
-      forward_as_tuple(class_id), forward_as_tuple(nullptr, class_id, name, defs)).first->second;
-  fn.class_id = class_id;
+  // create and register __init__ if given
+  // note that if __init__ is not given, the class can only be constructed from
+  // nemesys internals, not by python code
+  if (init_compiled) {
+    Variable return_type(ValueType::Instance, class_id, NULL);
+    vector<FragDef> defs({{init_arg_types, return_type, init_compiled}});
+    FunctionContext& fn = builtin_function_definitions.emplace(piecewise_construct,
+        forward_as_tuple(class_id), forward_as_tuple(nullptr, class_id, name, defs)).first->second;
+    fn.class_id = class_id;
 
-  if (register_globally) {
-    create_builtin_name(name, Variable(ValueType::Class, class_id));
+    if (register_globally) {
+      create_builtin_name(name, Variable(ValueType::Class, class_id));
+    }
   }
 
   return class_id;

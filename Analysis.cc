@@ -17,6 +17,7 @@
 #include "CompilationVisitor.hh"
 #include "Environment.hh"
 #include "BuiltinFunctions.hh"
+#include "Types/Dictionary.hh"
 #include "Types/List.hh"
 
 using namespace std;
@@ -40,13 +41,40 @@ void ClassContext::populate_dynamic_attributes() {
         fprintf(stderr, "[finalize_class] %s<%" PRId64 ">.%s = %s (dynamic)\n",
             this->name.c_str(), this->id, it.first.c_str(), type_str.c_str());
       }
-      this->dynamic_attributes.emplace(it.first);
+      this->dynamic_attribute_indexes.emplace(
+          it.first, this->dynamic_attribute_indexes.size());
     } else if (debug_flags & DebugFlag::ShowAnalyzeDebug) {
       string type_str = it.second.str();
       fprintf(stderr, "[finalize_class] %s<%" PRId64 ">.%s = %s (static)\n",
           this->name.c_str(), this->id, it.first.c_str(), type_str.c_str());
     }
   }
+}
+
+int64_t ClassContext::instance_size() const {
+  return sizeof(int64_t) * (this->dynamic_attribute_indexes.size() + 2);
+}
+
+void* ClassContext::allocate_object() const {
+  uint8_t* instance = reinterpret_cast<uint8_t*>(malloc(this->instance_size()));
+  *reinterpret_cast<int64_t*>(instance) = 1; // refcount
+  *reinterpret_cast<const void**>(instance + 8) = this->destructor;
+  return instance;
+}
+
+int64_t ClassContext::offset_for_attribute(const char* attribute) const {
+  // attributes are stored at [instance + 8 * which + 16]
+  return this->offset_for_attribute(this->dynamic_attribute_indexes.at(attribute));
+}
+
+int64_t ClassContext::offset_for_attribute(size_t index) const {
+  // attributes are stored at [instance + 8 * which + 16]
+  return sizeof(int64_t) * (2 + index);
+}
+
+void ClassContext::set_attribute(void* instance, const char* attribute, int64_t value) const {
+  uint8_t* p = reinterpret_cast<uint8_t*>(instance);
+  *reinterpret_cast<int64_t*>(p + this->offset_for_attribute(attribute)) = value;
 }
 
 
@@ -695,9 +723,31 @@ int64_t GlobalAnalysis::construct_value(const Variable& value,
       return reinterpret_cast<int64_t>(l);
     }
 
+    case ValueType::Dict: {
+      size_t (*key_length)(const void*) = NULL;
+      uint8_t (*key_at)(const void*, size_t) = NULL;
+      if (value.extension_types[0].type == ValueType::Bytes) {
+        key_length = reinterpret_cast<size_t (*)(const void*)>(bytes_length);
+        key_at = reinterpret_cast<uint8_t (*)(const void*, size_t)>(bytes_at);
+      } else if (value.extension_types[0].type == ValueType::Unicode) {
+        key_length = reinterpret_cast<size_t (*)(const void*)>(unicode_length);
+        key_at = reinterpret_cast<uint8_t (*)(const void*, size_t)>(unicode_at);
+      }
+
+      uint64_t flags = (type_has_refcount(value.extension_types[0].type) ? DictionaryFlag::KeysAreObjects : 0) |
+          (type_has_refcount(value.extension_types[1].type) ? DictionaryFlag::ValuesAreObjects : 0);
+      DictionaryObject* d = dictionary_new(NULL, key_length, key_at, flags);
+
+      for (const auto& item : *value.dict_value) {
+        dictionary_insert(d,
+            reinterpret_cast<void*>(this->construct_value(item.first, false)),
+            reinterpret_cast<void*>(this->construct_value(*item.second, false)));
+      }
+      return reinterpret_cast<int64_t>(d);
+    }
+
     case ValueType::Tuple:
     case ValueType::Set:
-    case ValueType::Dict:
     case ValueType::Class:
     default: {
       string value_str = value.str();

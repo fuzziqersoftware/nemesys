@@ -38,13 +38,20 @@ struct ClassContext {
   std::string name; // Annotated
   ASTNode* ast_root; // Annotated
 
+  // {name: (value, index)}
   std::map<std::string, Variable> attributes; // Annotated; values Analyzed
-  std::set<std::string> dynamic_attributes; // Analyzed
+  std::unordered_map<std::string, int64_t> dynamic_attribute_indexes; // Analyzed
 
   // constructor for dynamic classes (defined in .py files)
   ClassContext(ModuleAnalysis* module, int64_t id);
 
   void populate_dynamic_attributes();
+
+  int64_t instance_size() const;
+  void* allocate_object() const;
+  int64_t offset_for_attribute(const char* attribute) const;
+  int64_t offset_for_attribute(size_t index) const;
+  void set_attribute(void* instance, const char* attribute, int64_t value) const;
 };
 
 struct FunctionContext {

@@ -483,7 +483,9 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
       try {
         this->current_value = cls->attributes.at(a->name);
       } catch (const out_of_range& e) {
-        throw compile_error("class attribute lookup refers to missing attribute",
+        throw compile_error(string_printf(
+              "class %" PRId64 " attribute lookup refers to missing attribute: %s",
+              this->current_value.class_id, a->name.c_str()),
             a->file_offset);
       }
 
