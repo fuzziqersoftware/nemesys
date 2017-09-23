@@ -115,6 +115,7 @@ enum Operation {
   JMP32      = 0xE9,
   JMP8       = 0xEB,
   LOCK       = 0xF0,
+  XMM_PREFIX = 0xF2,
   TEST_IMM8  = 0xF6,
   NOT_NEG8   = 0xF7,
   TEST_IMM32 = 0xF7,
@@ -123,6 +124,9 @@ enum Operation {
   INC_DEC    = 0xFF,
   PUSH_RM    = 0xFF,
   CALL_JMP_ABS = 0xFF,
+
+  MOVQ_TO_XMM   = 0x0F6E,
+  MOVQ_FROM_XMM = 0x0F7E,
   JO         = 0x0F80,
   JNO        = 0x0F81,
   JB         = 0x0F82,
@@ -184,6 +188,14 @@ enum Operation {
   SETNLE     = 0x0F9F,
   SETG       = 0x0F9F,
   IMUL       = 0x0FAF,
+  MOVSD_LOAD  = 0x0F10,
+  MOVSD_STORE = 0x0F11,
+  ADDSD      = 0x0F58,
+  MULSD      = 0x0F59,
+  SUBSD      = 0x0F5C,
+  MINSD      = 0x0F5D,
+  DIVSD      = 0x0F5E,
+  MAXSD      = 0x0F5F,
 };
 
 
@@ -194,81 +206,97 @@ enum Register {
   EAX = 0,
   AX = 0,
   AL = 0,
+  XMM0 = 0,
 
   RCX = 1,
   ECX = 1,
   CX = 1,
   CL = 1,
+  XMM1 = 1,
 
   RDX = 2,
   EDX = 2,
   DX = 2,
   DL = 2,
+  XMM2 = 2,
 
   RBX = 3,
   EBX = 3,
   BX = 3,
   BL = 3,
+  XMM3 = 3,
 
   RSP = 4,
   ESP = 4,
   SP = 4,
   AH = 4,
+  XMM4 = 4,
 
   RBP = 5,
   EBP = 5,
   BP = 5,
   CH = 5,
+  XMM5 = 5,
 
   RSI = 6,
   ESI = 6,
   SI = 6,
   DH = 6,
+  XMM6 = 6,
 
   RDI = 7,
   EDI = 7,
   DI = 7,
   BH = 7,
+  XMM7 = 7,
 
   R8 = 8,
   R8D = 8,
   R8W = 8,
   R8B = 8,
+  XMM8 = 8,
 
   R9 = 9,
   R9D = 9,
   R9W = 9,
   R9B = 9,
+  XMM9 = 9,
 
   R10 = 10,
   R10D = 10,
   R10W = 10,
   R10B = 10,
+  XMM10 = 10,
 
   R11 = 11,
   R11D = 11,
   R11W = 11,
   R11B = 11,
+  XMM11 = 11,
 
   R12 = 12,
   R12D = 12,
   R12W = 12,
   R12B = 12,
+  XMM12 = 12,
 
   R13 = 13,
   R13D = 13,
   R13W = 13,
   R13B = 13,
+  XMM13 = 13,
 
   R14 = 14,
   R14D = 14,
   R14W = 14,
   R14B = 14,
+  XMM14 = 14,
 
   R15 = 15,
   R15D = 15,
   R15W = 15,
   R15B = 15,
+  XMM15 = 15,
 
   Count = 16,
 
@@ -287,6 +315,9 @@ enum OperandSize {
   Word = 1,
   DoubleWord = 2,
   QuadWord = 3,
+  SinglePrecision = 4,
+  DoublePrecision = 5,
+  QuadWordXMM = 6,
 };
 
 const char* name_for_register(Register r,
@@ -316,6 +347,7 @@ extern MemoryReference rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8, r9, r10, r11,
 extern MemoryReference eax, ecx, edx, ebx, esp, ebp, esi, edi, r8d, r9d, r10d, r11d, r12d, r13d, r14d, r15d;
 extern MemoryReference ax, cx, dx, bx, sp, bp, si, di, r8w, r9w, r10w, r11w, r12w, r13w, r14w, r15w;
 extern MemoryReference al, cl, dl, bl, ah, ch, dh, bh, r8b, r9b, r10b, r11b, r12b, r13b, r14b, r15b, spl, bpl, sil, dil;
+extern MemoryReference xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15;
 
 class AMD64Assembler {
 public:
@@ -356,6 +388,17 @@ public:
       OperandSize size = OperandSize::QuadWord);
   void write_xchg(Register r, const MemoryReference& mem,
       OperandSize size = OperandSize::QuadWord);
+
+  // floating-point stuff
+  void write_movq_to_xmm(Register reg, const MemoryReference& from);
+  void write_movq_from_xmm(const MemoryReference& from, Register reg);
+  void write_movsd(const MemoryReference& to, const MemoryReference& from);
+  void write_addsd(Register to, const MemoryReference& from);
+  void write_subsd(Register to, const MemoryReference& from);
+  void write_mulsd(Register to, const MemoryReference& from);
+  void write_divsd(Register to, const MemoryReference& from);
+  void write_minsd(Register to, const MemoryReference& from);
+  void write_maxsd(Register to, const MemoryReference& from);
 
   // control flow opcodes
   void write_nop();
@@ -514,13 +557,13 @@ private:
   static std::string generate_jmp(Operation op8, Operation op32,
     int64_t opcode_address, int64_t target_address);
   static std::string generate_rm(Operation op, const MemoryReference& mem,
-      Register reg, OperandSize size);
+      Register reg, OperandSize size, uint32_t extra_prefixes = 0);
   static std::string generate_rm(Operation op, const MemoryReference& mem,
-      uint8_t z, OperandSize size);
+      uint8_t z, OperandSize size, uint32_t extra_prefixes = 0);
   void write_rm(Operation op, const MemoryReference& mem, Register reg,
-      OperandSize size);
+      OperandSize size, uint32_t extra_prefixes = 0);
   void write_rm(Operation op, const MemoryReference& mem, uint8_t z,
-      OperandSize size);
+      OperandSize size, uint32_t extra_prefixes = 0);
   static Operation load_store_oper_for_args(Operation op,
       const MemoryReference& to, const MemoryReference& from, OperandSize size);
   void write_load_store(Operation base_op, const MemoryReference& to,
@@ -570,7 +613,7 @@ private:
   static std::string disassemble_rm(const uint8_t* data, size_t size,
       size_t& offset, const char* opcode_name, bool is_load,
       const char** op_name_table, bool ext, bool reg_ext, bool base_ext,
-      bool index_ext, OperandSize operand_size);
+      bool index_ext, OperandSize operand_size, bool reg_xmm = false);
   static std::string disassemble_jmp(const uint8_t* data, size_t size,
       size_t& offset, uint64_t addr, const char* opcode_name, bool is_32bit,
       std::multimap<size_t, std::string>& addr_to_label, uint64_t& next_label);

@@ -23,16 +23,31 @@ shared_ptr<GlobalAnalysis> global;
 void print_usage(const char* argv0) {
   printf("\
 Usage:\n\
-  %s [options] filename\n\
-  %s [options] -c\"code\"\n\
+  %s [options] filename [arguments ...]\n\
+  %s [options] -c\"code\" [arguments ...]\n\
 \n\
 Options:\n\
   -h, -?, --help: print this text and exit.\n\
-  -X<debug>: print debugging information for the given steps.\n\
-      Steps are FindFile, Source, Lexing, Parsing, Annotation, Analysis,\n\
-                Compilation, Assembly and Execution.\n\
-      Multiple steps can be given; separate them with commas or use -X multiple\n\
-      times. -Xall enables debug output for all steps.\n\
+  -X<debug>: enable debug flags.\n\
+      Flags which print extra messages but don\'t modify behavior:\n\
+        ShowSearchDebug - show actions when looking for source files\n\
+        ShowSourceDebug - show actions when reading source files\n\
+        ShowLexDebug - show actions when lexing source files\n\
+        ShowParseDebug - show actions when parsing source files\n\
+        ShowAnnotateDebug - show actions in code annotation phase\n\
+        ShowAnalyzeDebug - show actions in static analysis phase\n\
+        ShowCompileDebug - show actions in compilation phase\n\
+        ShowAssembly - show actions and code in assembly phase\n\
+        ShowRefcountChanges - show refcount change messages\n\
+        Code - combination of annotation, analysis, and compilation flags\n\
+        Verbose - all debug info, no behavior changes\n\
+      Flags which modify behavior:\n\
+        NoInlineRefcounting - disable inline refcounting\n\
+        All - enable all behavior flags and debug info\n\
+      -X may be used multiple times to enable multiple flags.\n\
+\n\
+All arguments after a filename or -c option are not parsed by nemesys; instead,\n\
+they are available to the program in sys.argv.\n\
 ", argv0, argv0);
 }
 

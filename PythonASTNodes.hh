@@ -653,6 +653,10 @@ struct YieldStatement : FlowStatement {
 struct SingleIfStatement : CompoundStatement {
   std::shared_ptr<Expression> check;
 
+  // annotations
+  bool always_true;
+  bool always_false;
+
   SingleIfStatement(std::shared_ptr<Expression> check,
       std::vector<std::shared_ptr<Statement>>&& items, size_t file_offset);
 

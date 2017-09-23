@@ -30,204 +30,6 @@ using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
 static BytesObject* empty_bytes = bytes_new(NULL, NULL, 0);
 static UnicodeObject* empty_unicode = unicode_new(NULL, NULL, 0);
 
-static void builtin_print(UnicodeObject* str) {
-  fprintf(stdout, "%.*ls\n", static_cast<int>(str->count), str->data);
-  delete_reference(str);
-}
-
-static UnicodeObject* builtin_input(UnicodeObject* prompt) {
-  if (prompt->count) {
-    fprintf(stdout, "%.*ls", static_cast<int>(prompt->count), prompt->data);
-    fflush(stdout);
-  }
-  delete_reference(prompt);
-
-  vector<wstring> blocks;
-  while (blocks.empty() || blocks.back().back() != '\n') {
-    blocks.emplace_back(0x400, 0);
-    if (!fgetws(const_cast<wchar_t*>(blocks.back().data()), blocks.back().size(), stdin)) {
-      blocks.pop_back();
-      break;
-    }
-    blocks.back().resize(wcslen(blocks.back().c_str()));
-  }
-
-  if (blocks.empty()) {
-    add_reference(empty_unicode);
-    return empty_unicode;
-  }
-
-  // concatenate the blocks
-  wstring data;
-  if (blocks.size() == 1) {
-    data = move(blocks[0]);
-  } else {
-    for (const auto& block : blocks) {
-      data += block;
-    }
-  }
-
-  // trim off the trailing newline
-  if (!data.empty() && (data.back() == '\n')) {
-    data.resize(data.size() - 1);
-  }
-
-  if (data.empty()) {
-    add_reference(empty_unicode);
-    return empty_unicode;
-  }
-  return unicode_new(NULL, data.data(), data.size());
-}
-
-static int64_t builtin_int_int(int64_t i, int64_t) {
-  return i;
-}
-
-static int64_t builtin_int_bytes(BytesObject* s, int64_t base) {
-  int64_t ret = strtoll(reinterpret_cast<const char*>(s->data), NULL, base);
-  delete_reference(s);
-  return ret;
-}
-
-static int64_t builtin_int_unicode(UnicodeObject* s, int64_t base) {
-  int64_t ret = wcstoll(s->data, NULL, base);
-  delete_reference(s);
-  return ret;
-}
-
-static UnicodeObject* builtin_repr_none(void* None) {
-  static UnicodeObject* ret = unicode_new(NULL, L"None", 4);
-  add_reference(ret);
-  return ret;
-}
-
-static UnicodeObject* builtin_repr_bool(bool v) {
-  static UnicodeObject* true_str = unicode_new(NULL, L"True", 4);
-  static UnicodeObject* false_str = unicode_new(NULL, L"False", 5);
-  UnicodeObject* ret = v ? true_str : false_str;
-  add_reference(ret);
-  return ret;
-}
-
-static UnicodeObject* builtin_repr_int(int64_t v) {
-  wchar_t buf[24];
-  swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%" PRId64, v);
-  return unicode_new(NULL, buf, wcslen(buf));
-}
-
-static UnicodeObject* builtin_repr_float(double v) {
-  wchar_t buf[60]; // TODO: figure out how long this actually needs to be
-  swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%g", v);
-  return unicode_new(NULL, buf, wcslen(buf));
-}
-
-static UnicodeObject* builtin_repr_bytes(BytesObject* v) {
-  string escape_ret = escape(reinterpret_cast<const char*>(v->data), v->count);
-  UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 3);
-  ret->data[0] = L'b';
-  ret->data[1] = L'\'';
-  for (size_t x = 0; x < escape_ret.size(); x++) {
-    ret->data[x + 2] = escape_ret[x];
-  }
-  ret->data[escape_ret.size() + 2] = L'\'';
-  ret->data[escape_ret.size() + 3] = 0;
-  delete_reference(v);
-  return ret;
-}
-
-static UnicodeObject* builtin_repr_unicode(UnicodeObject* v) {
-  string escape_ret = escape(v->data, v->count);
-  UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 2);
-  ret->data[0] = L'\'';
-  for (size_t x = 0; x < escape_ret.size(); x++) {
-    ret->data[x + 1] = escape_ret[x];
-  }
-  ret->data[escape_ret.size() + 1] = L'\'';
-  ret->data[escape_ret.size() + 2] = 0;
-  delete_reference(v);
-  return ret;
-}
-
-static int64_t builtin_len_bytes(BytesObject* s) {
-  int64_t ret = s->count;
-  delete_reference(s);
-  return ret;
-}
-
-static int64_t builtin_len_unicode(UnicodeObject* s) {
-  int64_t ret = s->count;
-  delete_reference(s);
-  return ret;
-}
-
-static int64_t builtin_len_list(ListObject* l) {
-  int64_t ret = l->count;
-  delete_reference(l);
-  return ret;
-}
-
-static int64_t builtin_abs_int(int64_t i) {
-  return (i < 0) ? -i : i;
-}
-
-static double builtin_abs_float(double i) {
-  return (i < 0) ? -i : i;
-}
-
-static UnicodeObject* builtin_chr_int(int64_t i) {
-  UnicodeObject* s = unicode_new(NULL, NULL, 1);
-  s->data[0] = i;
-  return s;
-}
-
-static int64_t builtin_ord_bytes(BytesObject* s) {
-  int64_t ret = (s->count < 1) ? -1 : s->data[0];
-  delete_reference(s);
-  return ret;
-}
-
-static int64_t builtin_ord_unicode(UnicodeObject* s) {
-  int64_t ret = (s->count < 1) ? -1 : s->data[0];
-  delete_reference(s);
-  return ret;
-}
-
-static UnicodeObject* builtin_bin_int(int64_t i) {
-  if (!i) {
-    return unicode_new(NULL, L"0b0", 3);
-  }
-
-  UnicodeObject* s = unicode_new(NULL, NULL, 67);
-  size_t x = 0;
-  if (i < 0) {
-    i = -i;
-    s->data[x++] = '-';
-  }
-  s->data[x++] = '0';
-  s->data[x++] = 'b';
-
-  bool should_write = false;
-  for (size_t y = 0; y < sizeof(int64_t) * 8; y++) {
-    bool bit_set = i & 0x8000000000000000;
-    if (bit_set) {
-      should_write = true;
-    }
-    if (should_write) {
-      s->data[x++] = bit_set ? '1' : '0';
-    }
-    i <<= 1;
-  }
-  s->data[x] = 0;
-  s->count = x;
-  return s;
-}
-
-static UnicodeObject* builtin_hex_int(int64_t i) {
-  UnicodeObject* s = unicode_new(NULL, NULL, 19);
-  s->count = swprintf(s->data, 19, L"%s0x%x", (i < 0) ? "-" : "", (i < 0) ? -i : i);
-  return s;
-}
-
 
 
 unordered_map<int64_t, FunctionContext> builtin_function_definitions;
@@ -310,27 +112,102 @@ static void create_default_builtin_functions() {
   Variable Int(ValueType::Int);
   Variable Int_Zero(ValueType::Int, 0LL);
   Variable Float(ValueType::Float);
+  Variable Float_Zero(ValueType::Float, 0.0);
   Variable Bytes(ValueType::Bytes);
   Variable Unicode(ValueType::Unicode);
   Variable Unicode_Blank(ValueType::Unicode, L"");
+  Variable List_Any(ValueType::List, vector<Variable>({Variable()}));
 
   // None print(Unicode)
   create_builtin_function("print", {Unicode}, None,
-      reinterpret_cast<const void*>(&builtin_print), true);
+      reinterpret_cast<const void*>(+[](UnicodeObject* str) {
+    fprintf(stdout, "%.*ls\n", static_cast<int>(str->count), str->data);
+    delete_reference(str);
+  }), true);
 
   // Unicode input(Unicode='')
   create_builtin_function("input", {Unicode_Blank}, Unicode,
-      reinterpret_cast<const void*>(&builtin_input), true);
+      reinterpret_cast<const void*>(+[](UnicodeObject* prompt) -> UnicodeObject* {
+    if (prompt->count) {
+      fprintf(stdout, "%.*ls", static_cast<int>(prompt->count), prompt->data);
+      fflush(stdout);
+    }
+    delete_reference(prompt);
 
-  // Int int(Int)
+    vector<wstring> blocks;
+    while (blocks.empty() || blocks.back().back() != '\n') {
+      blocks.emplace_back(0x400, 0);
+      if (!fgetws(const_cast<wchar_t*>(blocks.back().data()), blocks.back().size(), stdin)) {
+        blocks.pop_back();
+        break;
+      }
+      blocks.back().resize(wcslen(blocks.back().c_str()));
+    }
+
+    if (blocks.empty()) {
+      add_reference(empty_unicode);
+      return empty_unicode;
+    }
+
+    // concatenate the blocks
+    wstring data;
+    if (blocks.size() == 1) {
+      data = move(blocks[0]);
+    } else {
+      for (const auto& block : blocks) {
+        data += block;
+      }
+    }
+
+    // trim off the trailing newline
+    if (!data.empty() && (data.back() == '\n')) {
+      data.resize(data.size() - 1);
+    }
+
+    if (data.empty()) {
+      add_reference(empty_unicode);
+      return empty_unicode;
+    }
+    return unicode_new(NULL, data.data(), data.size());
+  }), true);
+
+  // Int int(Int=0, Int=0)
   // Int int(Bytes, Int=0)
   // Int int(Unicode, Int=0)
-  // Int int(Float) // unimplemented
+  // Int int(Float, Int=0)
   create_builtin_function("int", {
-      FragDef({Int_Zero, Int_Zero}, Int, reinterpret_cast<const void*>(&builtin_int_int)),
-      FragDef({Bytes, Int_Zero}, Int, reinterpret_cast<const void*>(&builtin_int_bytes)),
-      FragDef({Unicode, Int_Zero}, Int, reinterpret_cast<const void*>(&builtin_int_unicode)),
-  }, true);
+      FragDef({Int_Zero, Int_Zero}, Int, reinterpret_cast<const void*>(+[](int64_t i, int64_t) -> int64_t {
+    return i;
+  })), FragDef({Bytes, Int_Zero}, Int, reinterpret_cast<const void*>(+[](BytesObject* s, int64_t base) -> int64_t {
+    int64_t ret = strtoll(reinterpret_cast<const char*>(s->data), NULL, base);
+    delete_reference(s);
+    return ret;
+  })), FragDef({Unicode, Int_Zero}, Int, reinterpret_cast<const void*>(+[](UnicodeObject* s, int64_t base) -> int64_t {
+    int64_t ret = wcstoll(s->data, NULL, base);
+    delete_reference(s);
+    return ret;
+  })), FragDef({Float, Int_Zero}, Int, reinterpret_cast<const void*>(+[](double x, int64_t) -> int64_t {
+    return static_cast<int64_t>(x);
+  }))}, true);
+
+  // Float float(Float=0.0)
+  // Float float(Int)
+  // Float float(Bytes)
+  // Float float(Unicode)
+  create_builtin_function("float", {
+      FragDef({Float_Zero}, Float, reinterpret_cast<const void*>(+[](double f) -> double {
+    return f;
+  })), FragDef({Int}, Float, reinterpret_cast<const void*>(+[](int64_t i) -> double {
+    return static_cast<double>(i);
+  })), FragDef({Bytes}, Float, reinterpret_cast<const void*>(+[](BytesObject* s) -> double {
+    double ret = strtod(s->data, NULL);
+    delete_reference(s);
+    return ret;
+  })), FragDef({Unicode}, Float, reinterpret_cast<const void*>(+[](UnicodeObject* s) -> double {
+    double ret = wcstod(s->data, NULL);
+    delete_reference(s);
+    return ret;
+  }))}, true);
 
   // Unicode repr(None)
   // Unicode repr(Bool)
@@ -339,13 +216,53 @@ static void create_default_builtin_functions() {
   // Unicode repr(Bytes)
   // Unicode repr(Unicode)
   create_builtin_function("repr", {
-      FragDef({None}, Unicode, reinterpret_cast<const void*>(&builtin_repr_none)),
-      FragDef({Bool}, Unicode, reinterpret_cast<const void*>(&builtin_repr_bool)),
-      FragDef({Int}, Unicode, reinterpret_cast<const void*>(&builtin_repr_int)),
-      FragDef({Float}, Unicode, reinterpret_cast<const void*>(&builtin_repr_float)),
-      FragDef({Bytes}, Unicode, reinterpret_cast<const void*>(&builtin_repr_bytes)),
-      FragDef({Unicode}, Unicode, reinterpret_cast<const void*>(&builtin_repr_unicode)),
-  }, true);
+       FragDef({None}, Unicode, reinterpret_cast<const void*>(+[](void*) -> UnicodeObject* {
+    static UnicodeObject* ret = unicode_new(NULL, L"None", 4);
+    add_reference(ret);
+    return ret;
+
+  })), FragDef({Bool}, Unicode, reinterpret_cast<const void*>(+[](bool v) -> UnicodeObject* {
+    static UnicodeObject* true_str = unicode_new(NULL, L"True", 4);
+    static UnicodeObject* false_str = unicode_new(NULL, L"False", 5);
+    UnicodeObject* ret = v ? true_str : false_str;
+    add_reference(ret);
+    return ret;
+
+  })), FragDef({Int}, Unicode, reinterpret_cast<const void*>(+[](int64_t v) -> UnicodeObject* {
+    wchar_t buf[24];
+    swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%" PRId64, v);
+    return unicode_new(NULL, buf, wcslen(buf));
+
+  })), FragDef({Float}, Unicode, reinterpret_cast<const void*>(+[](double v) -> UnicodeObject* {
+    wchar_t buf[60]; // TODO: figure out how long this actually needs to be
+    swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%g", v);
+    return unicode_new(NULL, buf, wcslen(buf));
+
+  })), FragDef({Bytes}, Unicode, reinterpret_cast<const void*>(+[](BytesObject* v) -> UnicodeObject* {
+    string escape_ret = escape(reinterpret_cast<const char*>(v->data), v->count);
+    UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 3);
+    ret->data[0] = L'b';
+    ret->data[1] = L'\'';
+    for (size_t x = 0; x < escape_ret.size(); x++) {
+      ret->data[x + 2] = escape_ret[x];
+    }
+    ret->data[escape_ret.size() + 2] = L'\'';
+    ret->data[escape_ret.size() + 3] = 0;
+    delete_reference(v);
+    return ret;
+
+  })), FragDef({Unicode}, Unicode, reinterpret_cast<const void*>(+[](UnicodeObject* v) -> UnicodeObject* {
+    string escape_ret = escape(v->data, v->count);
+    UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 2);
+    ret->data[0] = L'\'';
+    for (size_t x = 0; x < escape_ret.size(); x++) {
+      ret->data[x + 1] = escape_ret[x];
+    }
+    ret->data[escape_ret.size() + 1] = L'\'';
+    ret->data[escape_ret.size() + 2] = 0;
+    delete_reference(v);
+    return ret;
+  }))}, true);
 
   // Int len(Bytes)
   // Int len(Unicode)
@@ -354,38 +271,91 @@ static void create_default_builtin_functions() {
   // Int len(Set[Any]) // unimplemented
   // Int len(Dict[Any, Any]) // unimplemented
   create_builtin_function("len", {
-      FragDef({Bytes}, Int, reinterpret_cast<const void*>(&builtin_len_bytes)),
-      FragDef({Unicode}, Int, reinterpret_cast<const void*>(&builtin_len_unicode)),
-      FragDef({Variable(ValueType::List, vector<Variable>({Variable()}))},
-        Int, reinterpret_cast<const void*>(&builtin_len_list)),
-  }, true);
+       FragDef({Bytes}, Int, reinterpret_cast<const void*>(+[](BytesObject* s) -> int64_t {
+    int64_t ret = s->count;
+    delete_reference(s);
+    return ret;
+  })), FragDef({Unicode}, Int, reinterpret_cast<const void*>(+[](UnicodeObject* s) -> int64_t {
+    int64_t ret = s->count;
+    delete_reference(s);
+    return ret;
+  })), FragDef({List_Any}, Int, reinterpret_cast<const void*>(+[](ListObject* l) -> int64_t {
+    int64_t ret = l->count;
+    delete_reference(l);
+    return ret;
+  }))}, true);
 
   // Int abs(Int)
   // Float abs(Float)
   // Float abs(Complex) // unimplemented
   create_builtin_function("abs", {
-      FragDef({Int}, Int, reinterpret_cast<const void*>(&builtin_abs_int)),
-      FragDef({Float}, Float, reinterpret_cast<const void*>(&builtin_abs_float)),
-  }, true);
+       FragDef({Int}, Int, reinterpret_cast<const void*>(+[](int64_t i) -> int64_t {
+    return (i < 0) ? -i : i;
+  })), FragDef({Float}, Float, reinterpret_cast<const void*>(+[](double i) -> double {
+    return (i < 0) ? -i : i;
+  }))}, true);
 
   // Unicode chr(Int)
   create_builtin_function("chr", {Int}, Unicode,
-      reinterpret_cast<const void*>(&builtin_chr_int), true);
+      reinterpret_cast<const void*>(+[](int64_t i) -> UnicodeObject* {
+    UnicodeObject* s = unicode_new(NULL, NULL, 1);
+    s->data[0] = i;
+    s->data[1] = 0;
+    return s;
+  }), true);
 
-  // Int chr(Bytes) // aparently this isn't part of the Python standard anymore
-  // Int chr(Unicode)
+  // Int ord(Bytes) // apparently this isn't part of the Python standard anymore
+  // Int ord(Unicode)
   create_builtin_function("ord", {
-      FragDef({Bytes}, Int, reinterpret_cast<const void*>(&builtin_ord_bytes)),
-      FragDef({Unicode}, Int, reinterpret_cast<const void*>(&builtin_ord_unicode)),
-  }, true);
+       FragDef({Bytes}, Int, reinterpret_cast<const void*>(+[](BytesObject* s) -> int64_t {
+    int64_t ret = (s->count < 1) ? -1 : s->data[0];
+    delete_reference(s);
+    return ret;
+  })), FragDef({Unicode}, Int, reinterpret_cast<const void*>(+[](UnicodeObject* s) -> int64_t {
+    int64_t ret = (s->count < 1) ? -1 : s->data[0];
+    delete_reference(s);
+    return ret;
+  }))}, true);
 
   // Unicode bin(Int)
   create_builtin_function("bin", {Int}, Unicode,
-      reinterpret_cast<const void*>(&builtin_bin_int), true);
+      reinterpret_cast<const void*>(+[](int64_t i) -> UnicodeObject* {
+    if (!i) {
+      return unicode_new(NULL, L"0b0", 3);
+    }
+
+    UnicodeObject* s = unicode_new(NULL, NULL, 67);
+    size_t x = 0;
+    if (i < 0) {
+      i = -i;
+      s->data[x++] = '-';
+    }
+    s->data[x++] = '0';
+    s->data[x++] = 'b';
+
+    bool should_write = false;
+    for (size_t y = 0; y < sizeof(int64_t) * 8; y++) {
+      bool bit_set = i & 0x8000000000000000;
+      if (bit_set) {
+        should_write = true;
+      }
+      if (should_write) {
+        s->data[x++] = bit_set ? '1' : '0';
+      }
+      i <<= 1;
+    }
+    s->data[x] = 0;
+    s->count = x;
+    return s;
+  }), true);
 
   // Unicode hex(Int)
   create_builtin_function("hex", {Int}, Unicode,
-      reinterpret_cast<const void*>(&builtin_hex_int), true);
+      reinterpret_cast<const void*>(+[](int64_t i) -> UnicodeObject* {
+    UnicodeObject* s = unicode_new(NULL, NULL, 19);
+    s->count = swprintf(s->data, 19, L"%s0x%x", (i < 0) ? "-" : "", (i < 0) ? -i : i);
+    return s;
+  }), true);
 
   // unimplemented:
   //   __import__()
@@ -407,7 +377,6 @@ static void create_default_builtin_functions() {
   //   eval()
   //   exec()
   //   filter()
-  //   float()
   //   format()
   //   frozenset()
   //   getattr()

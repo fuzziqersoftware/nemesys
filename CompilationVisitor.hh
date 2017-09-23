@@ -108,6 +108,7 @@ private:
   // compilation state
   int64_t available_registers; // bit mask; check for (1 << register)
   Register target_register;
+  Register float_target_register;
   int64_t stack_bytes_used;
 
   std::string return_label;
@@ -140,7 +141,7 @@ private:
 
   bool is_always_truthy(const Variable& type);
   bool is_always_falsey(const Variable& type);
-  void write_truth_value_test(Register reg, const Variable& type);
+  void write_current_truth_value_test();
 
   void write_code_for_value(const Variable& value);
 
@@ -150,6 +151,7 @@ private:
   void write_function_call(const void* function,
       const MemoryReference* function_loc,
       const std::vector<const MemoryReference>& args,
+      const std::vector<const MemoryReference>& float_args,
       ssize_t arg_stack_bytes = -1, Register return_register = Register::None);
   void write_function_setup(const std::string& base_label);
   void write_function_cleanup(const std::string& base_label);
@@ -163,6 +165,8 @@ private:
   void write_push(int64_t value);
   void write_pop(Register reg);
   void adjust_stack(ssize_t bytes);
+
+  void write_load_double(Register reg, double value);
 
   VariableLocation location_for_global(ModuleAnalysis* module,
       const std::string& name);

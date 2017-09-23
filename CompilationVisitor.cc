@@ -72,6 +72,10 @@ static const vector<Register> argument_register_order = {
   Register::RDI, Register::RSI, Register::RDX, Register::RCX, Register::R8,
   Register::R9,
 };
+static const vector<Register> floating_argument_register_order = {
+  Register::XMM0, Register::XMM1, Register::XMM2, Register::XMM3,
+  Register::XMM4, Register::XMM5, Register::XMM6, Register::XMM7,
+};
 
 static const int64_t default_available_registers =
     (1 << Register::RAX) |
@@ -93,8 +97,9 @@ CompilationVisitor::CompilationVisitor(GlobalAnalysis* global,
     target_function(this->global->context_for_function(target_function_id)),
     target_split_id(target_split_id),
     available_registers(default_available_registers),
-    target_register(Register::None), stack_bytes_used(0),
-    holding_reference(false), evaluating_instance_pointer(false) {
+    target_register(Register::None), float_target_register(Register::XMM0),
+    stack_bytes_used(0), holding_reference(false),
+    evaluating_instance_pointer(false) {
 
   if (target_function_id) {
 
@@ -244,6 +249,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
 
   // now apply the unary operation on top of the result
   // we can use the same target register
+  MemoryReference target_mem(this->target_register);
   this->as.write_label(string_printf("__UnaryOperation_%p_apply", a));
   switch (a->oper) {
 
@@ -254,18 +260,23 @@ void CompilationVisitor::visit(UnaryOperation* a) {
 
       } else if (this->current_type.type == ValueType::Bool) {
         // bools are either 0 or 1; just flip it
-        this->as.write_xor(MemoryReference(this->target_register), 1);
+        this->as.write_xor(target_mem, 1);
 
       } else if (this->current_type.type == ValueType::Int) {
         // check if the value is zero
-        this->as.write_test(MemoryReference(this->target_register),
-            MemoryReference(this->target_register));
+        this->as.write_test(target_mem, target_mem);
         this->as.write_mov(this->target_register, 0);
         this->as.write_setz(this->target_register);
 
       } else if (this->current_type == ValueType::Float) {
-        // TODO
-        throw compile_error("floating-point operations not yet supported", this->file_offset);
+        // 0.0 and -0.0 are falsey, everything else is truthy
+        // the sign bit is the highest bit; to truth-test floats, we just shift
+        // out the sign bit and check if the rest is zero
+        this->as.write_movq_from_xmm(target_mem, this->float_target_register);
+        this->as.write_shl(target_mem, 1);
+        this->as.write_test(target_mem, target_mem);
+        this->as.write_mov(this->target_register, 0);
+        this->as.write_setz(this->target_register);
 
       } else if ((this->current_type == ValueType::Bytes) ||
                  (this->current_type == ValueType::Unicode) ||
@@ -280,8 +291,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         this->as.write_mov(MemoryReference(size_reg),
             MemoryReference(this->target_register, 0x08));
         // if we're holding a reference to the object, release it
-        this->write_delete_held_reference(
-            MemoryReference(this->target_register));
+        this->write_delete_held_reference(target_mem);
         this->as.write_test(MemoryReference(size_reg),
             MemoryReference(size_reg));
         this->as.write_mov(this->target_register, 0);
@@ -300,7 +310,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
     case UnaryOperator::Not:
       if ((this->current_type.type == ValueType::Int) ||
           (this->current_type.type == ValueType::Bool)) {
-        this->as.write_not(MemoryReference(this->target_register));
+        this->as.write_not(target_mem);
       } else {
         throw compile_error("bitwise not can only be applied to ints and bools", this->file_offset);
       }
@@ -318,11 +328,17 @@ void CompilationVisitor::visit(UnaryOperation* a) {
     case UnaryOperator::Negative:
       if ((this->current_type.type == ValueType::Bool) ||
           (this->current_type.type == ValueType::Int)) {
-        this->as.write_neg(MemoryReference(this->target_register));
+        this->as.write_neg(target_mem);
 
       } else if (this->current_type == ValueType::Float) {
-        // TODO: some stuff with fmul (there's no fneg)
-        throw compile_error("floating-point operations not yet supported", this->file_offset);
+        // this is totally cheating. here we manually flip the sign bit
+        // TODO: there's probably a not-stupid way to do this
+        MemoryReference tmp(this->available_register());
+        this->as.write_movq_from_xmm(tmp, this->float_target_register);
+        this->as.write_rol(tmp, 1);
+        this->as.write_xor(tmp, 1);
+        this->as.write_ror(tmp, 1);
+        this->as.write_movq_to_xmm(this->float_target_register, tmp);
 
       } else {
         throw compile_error("arithmetic negative can only be applied to numeric values", this->file_offset);
@@ -344,20 +360,29 @@ bool CompilationVisitor::is_always_falsey(const Variable& type) {
   return (type.type == ValueType::None);
 }
 
-void CompilationVisitor::write_truth_value_test(Register reg,
-    const Variable& type) {
+void CompilationVisitor::write_current_truth_value_test() {
 
-  switch (type.type) {
+  MemoryReference target_mem((this->current_type.type == ValueType::Float) ?
+      this->float_target_register : this->target_register);
+  switch (this->current_type.type) {
     case ValueType::Indeterminate:
       throw compile_error("truth value test on Indeterminate type", this->file_offset);
 
     case ValueType::Bool:
     case ValueType::Int:
-      this->as.write_test(MemoryReference(reg), MemoryReference(reg));
+      this->as.write_test(target_mem, target_mem);
       break;
 
-    case ValueType::Float:
-      throw compile_error("floating-point truth tests not yet implemented", this->file_offset);
+    case ValueType::Float: {
+      // 0.0 and -0.0 are falsey, everything else is truthy
+      // the sign bit is the highest bit; to truth-test floats, we just shift
+      // out the sign bit and check if the rest is zero
+      MemoryReference tmp(this->available_register());
+      this->as.write_movq_from_xmm(tmp, this->float_target_register);
+      this->as.write_shl(tmp, 1);
+      this->as.write_test(tmp, tmp);
+      break;
+    }
 
     case ValueType::Bytes:
     case ValueType::Unicode:
@@ -366,9 +391,10 @@ void CompilationVisitor::write_truth_value_test(Register reg,
     case ValueType::Set:
     case ValueType::Dict: {
       // we have to use a register for this
-      Register size_reg = this->available_register_except({reg});
-      this->as.write_mov(MemoryReference(size_reg), MemoryReference(reg, 0x10));
-      this->as.write_test(MemoryReference(size_reg), MemoryReference(size_reg));
+      MemoryReference size_mem(this->available_register_except(
+          {this->target_register}));
+      this->as.write_mov(size_mem, MemoryReference(this->target_register, 0x10));
+      this->as.write_test(size_mem, size_mem);
       break;
     }
 
@@ -377,7 +403,7 @@ void CompilationVisitor::write_truth_value_test(Register reg,
     case ValueType::Class:
     case ValueType::Instance:
     case ValueType::Module: {
-      string type_str = type.str();
+      string type_str = this->current_type.str();
       throw compile_error(string_printf(
           "cannot generate truth test for %s value", type_str.c_str()),
           this->file_offset);
@@ -419,7 +445,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     // for LogicalOr, use the left value if it's nonzero and use the right value
     // otherwise; for LogicalAnd, do the opposite
     string label_name = string_printf("BinaryOperation_%p_evaluate_right", a);
-    this->write_truth_value_test(this->target_register, this->current_type);
+    this->write_current_truth_value_test();
     if (a->oper == BinaryOperator::LogicalOr) {
       this->as.write_jnz(label_name); // skip right if left truthy
     } else { // LogicalAnd
@@ -440,23 +466,30 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     return;
   }
 
+  MemoryReference target_mem(this->target_register);
+
   // all of the remaining operators use both operands, so evaluate both of them
   // into different registers
   // TODO: it's kind of stupid that we push the result onto the stack; figure
   // out a way to implement this without using memory access
   this->as.write_label(string_printf("__BinaryOperation_%p_evaluate_left", a));
   a->left->accept(this);
-  this->write_push(this->target_register); // so right doesn't clobber it
   Variable left_type = move(this->current_type);
+  if (left_type.type == ValueType::Float) {
+    this->as.write_movq_from_xmm(target_mem, this->float_target_register);
+  }
+  this->write_push(this->target_register); // so right doesn't clobber it
 
   this->as.write_label(string_printf("__BinaryOperation_%p_evaluate_right", a));
   a->right->accept(this);
-  this->write_push(this->target_register); // for the destructor call later
   Variable& right_type = this->current_type;
+  if (left_type.type == ValueType::Float) {
+    this->as.write_movq_from_xmm(target_mem, this->float_target_register);
+  }
+  this->write_push(this->target_register); // for the destructor call later
 
   MemoryReference left_mem(Register::RSP, 8);
   MemoryReference right_mem(Register::RSP, 0);
-  MemoryReference target_mem(this->target_register);
 
   // pick a temporary register that isn't the target register
   MemoryReference temp_mem(this->available_register_except({this->target_register}));
@@ -508,7 +541,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
             reinterpret_cast<const void*>(&unicode_contains);
         this->write_function_call(target_function,
             NULL, {MemoryReference(this->target_register),
-              MemoryReference(Register::RSP, 8)}, -1,
+              MemoryReference(Register::RSP, 8)}, {}, -1,
             this->target_register);
       } else {
         // TODO
@@ -590,14 +623,14 @@ void CompilationVisitor::visit(BinaryOperation* a) {
           (right_type.type == ValueType::Bytes)) {
         this->write_function_call(reinterpret_cast<const void*>(&bytes_concat),
             NULL, {MemoryReference(Register::RSP, 8),
-              MemoryReference(this->target_register)}, -1,
+              MemoryReference(this->target_register)}, {}, -1,
             this->target_register);
         break;
       } else if ((left_type.type == ValueType::Unicode) &&
                  (right_type.type == ValueType::Unicode)) {
         this->write_function_call(reinterpret_cast<const void*>(&unicode_concat),
             NULL, {MemoryReference(Register::RSP, 8),
-              MemoryReference(this->target_register)}, -1,
+              MemoryReference(this->target_register)}, {}, -1,
             this->target_register);
         break;
       } else if (((left_type.type == ValueType::Int) ||
@@ -605,6 +638,12 @@ void CompilationVisitor::visit(BinaryOperation* a) {
                  ((right_type.type == ValueType::Int) ||
                   (right_type.type == ValueType::Bool))) {
         this->as.write_add(MemoryReference(this->target_register),
+            MemoryReference(Register::RSP, 8));
+        break;
+
+      } else if ((left_type.type == ValueType::Float) &&
+                 (right_type.type == ValueType::Float)) {
+        this->as.write_addsd(this->float_target_register,
             MemoryReference(Register::RSP, 8));
         break;
       }
@@ -619,6 +658,12 @@ void CompilationVisitor::visit(BinaryOperation* a) {
            (right_type.type == ValueType::Bool))) {
         this->as.write_neg(MemoryReference(this->target_register));
         this->as.write_add(MemoryReference(this->target_register),
+            MemoryReference(Register::RSP, 8));
+        break;
+
+      } else if ((left_type.type == ValueType::Float) &&
+                 (right_type.type == ValueType::Float)) {
+        this->as.write_subsd(this->float_target_register,
             MemoryReference(Register::RSP, 8));
         break;
       }
@@ -723,7 +768,7 @@ void CompilationVisitor::visit(TernaryOperation* a) {
   // left comes first in the code
   string false_label = string_printf("TernaryOperation_%p_condition_false", a);
   string end_label = string_printf("TernaryOperation_%p_end", a);
-  this->write_truth_value_test(this->target_register, this->current_type);
+  this->write_current_truth_value_test();
   this->as.write_jz(false_label); // skip left
 
   // generate code for the left (True) value
@@ -767,8 +812,8 @@ void CompilationVisitor::visit(ListConstructor* a) {
   this->as.write_mov(args[0], 0);
   this->as.write_mov(args[1], a->items.size());
   this->as.write_mov(args[2], 0);
-  this->write_function_call(reinterpret_cast<void*>(list_new), NULL, args, -1,
-      this->target_register);
+  this->write_function_call(reinterpret_cast<void*>(list_new), NULL, args, {},
+      -1, this->target_register);
 
   // save the list items pointer
   this->as.write_mov(rbx, MemoryReference(this->target_register, 0x20));
@@ -1259,8 +1304,7 @@ void CompilationVisitor::visit(FloatConstant* a) {
   this->file_offset = a->file_offset;
   this->assert_not_evaluating_instance_pointer();
 
-  // TODO
-  throw compile_error("FloatConstant not yet implemented", this->file_offset);
+  this->write_load_double(this->float_target_register, a->value);
 }
 
 void CompilationVisitor::visit(BytesConstant* a) {
@@ -1449,6 +1493,7 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     Register value_register = this->target_register;
     this->reserve_register(this->target_register);
     this->target_register = this->available_register();
+    Variable value_type = move(this->current_type);
 
     // evaluate the base object
     a->base->accept(this);
@@ -1469,7 +1514,7 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     const auto& attr = cls->attributes.at(a->name);
     if (!attr.types_equal(loc.type)) {
       string attr_type = attr.str();
-      string new_type = this->current_type.str();
+      string new_type = value_type.str();
       throw compile_error(string_printf("attribute %s changes type from %s to %s",
           a->name.c_str(), attr_type.c_str(), new_type.c_str()),
           this->file_offset);
@@ -1483,7 +1528,11 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     this->release_register(this->target_register);
 
     // write the value into the right attribute
-    this->as.write_mov(loc.mem, MemoryReference(value_register));
+    if (value_type.type == ValueType::Float) {
+      this->as.write_movsd(loc.mem, MemoryReference(this->float_target_register));
+    } else {
+      this->as.write_mov(loc.mem, MemoryReference(value_register));
+    }
 
     // if we're holding a reference to the base, delete it
     this->write_delete_held_reference(MemoryReference(this->target_register));
@@ -1530,7 +1579,11 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     this->release_register(this->target_register);
 
     // now save the value to the appropriate slot
-    this->as.write_mov(loc.mem, MemoryReference(this->target_register));
+    if (target_variable->type == ValueType::Float) {
+      this->as.write_movsd(loc.mem, MemoryReference(this->float_target_register));
+    } else {
+      this->as.write_mov(loc.mem, MemoryReference(this->target_register));
+    }
   }
 }
 
@@ -1753,38 +1806,51 @@ void CompilationVisitor::visit(SingleIfStatement* a) {
 void CompilationVisitor::visit(IfStatement* a) {
   this->file_offset = a->file_offset;
 
+  // if the condition is never true, skip it entirely
+  if (a->always_false) {
+    this->as.write_label(string_printf("__IfStatement_%p_always_false", a));
+    return; // nothing to do
+  }
+
   string false_label = string_printf("__IfStatement_%p_condition_false", a);
   string end_label = string_printf("__IfStatement_%p_end", a);
 
-  // generate the condition check
-  this->as.write_label(string_printf("__IfStatement_%p_condition", a));
-  this->target_register = this->available_register();
-  a->check->accept(this);
-  this->as.write_label(string_printf("__IfStatement_%p_test", a));
-  this->write_truth_value_test(this->target_register, this->current_type);
-  this->as.write_jz(false_label);
-  this->write_delete_held_reference(MemoryReference(this->target_register));
+  // if the condition is always true, skip generating the condition check
+  if (!a->always_true) {
+    this->as.write_label(string_printf("__IfStatement_%p_condition", a));
+    this->target_register = this->available_register();
+    a->check->accept(this);
+    this->as.write_label(string_printf("__IfStatement_%p_test", a));
+    this->write_current_truth_value_test();
+    this->as.write_jz(false_label);
+    this->write_delete_held_reference(MemoryReference(this->target_register));
+
+  } else {
+    this->as.write_label(string_printf("__IfStatement_%p_always_true", a));
+  }
 
   // generate the body statements
   this->visit_list(a->items);
 
-  // TODO: support elifs
-  if (!a->elifs.empty()) {
-    throw compile_error("elif clauses not yet supported");
+  // if the condition is always true, no elifs/elses will ever run
+  if (!a->always_true) {
+    // TODO: support elifs
+    if (!a->elifs.empty()) {
+      throw compile_error("elif clauses not yet supported");
+    }
+
+    // generate the else block, if any
+    if (a->else_suite.get()) {
+      this->as.write_jmp(end_label);
+      this->as.write_label(false_label);
+      this->write_delete_held_reference(MemoryReference(this->target_register));
+      a->else_suite->accept(this);
+    } else {
+      this->as.write_label(false_label);
+      this->write_delete_held_reference(MemoryReference(this->target_register));
+    }
   }
 
-  // generate the else block, if any
-  if (a->else_suite.get()) {
-    this->as.write_jmp(end_label);
-    this->as.write_label(false_label);
-    this->write_delete_held_reference(MemoryReference(this->target_register));
-    a->else_suite->accept(this);
-  } else {
-    this->as.write_label(false_label);
-    this->write_delete_held_reference(MemoryReference(this->target_register));
-  }
-
-  // any break statement will jump over the loop body and the else statement
   this->as.write_label(end_label);
 }
 
@@ -1880,7 +1946,7 @@ void CompilationVisitor::visit(ForStatement* a) {
     // call dictionary_next_item
     this->write_function_call(
         reinterpret_cast<const void*>(&dictionary_next_item), NULL, {rdi, rsi},
-        -1, Register::RAX);
+        {}, -1);
 
     // if dictionary_next_item returned 0, then we're done
     this->as.write_test(rax, rax);
@@ -1944,7 +2010,7 @@ void CompilationVisitor::visit(WhileStatement* a) {
   this->as.write_label(start_label);
   this->target_register = this->available_register();
   a->condition->accept(this);
-  this->write_truth_value_test(this->target_register, this->current_type);
+  this->write_current_truth_value_test();
   this->as.write_jz(end_label);
 
   // generate the loop body
@@ -2233,7 +2299,8 @@ void CompilationVisitor::write_code_for_value(const Variable& value) {
       break;
 
     case ValueType::Float:
-      throw compile_error("Float default values not yet implemented", this->file_offset);
+      this->write_load_double(this->float_target_register, value.float_value);
+      break;
 
     case ValueType::Bytes:
     case ValueType::Unicode: {
@@ -2286,8 +2353,16 @@ ssize_t CompilationVisitor::write_function_call_stack_prep(size_t arg_count) {
 
 void CompilationVisitor::write_function_call(const void* function,
     const MemoryReference* function_loc,
-    const std::vector<const MemoryReference>& args, ssize_t arg_stack_bytes,
-    Register return_register) {
+    const std::vector<const MemoryReference>& args,
+    const std::vector<const MemoryReference>& float_args,
+    ssize_t arg_stack_bytes, Register return_register) {
+
+  if (float_args.size() > 8) {
+    // TODO: we should support this in the future. probably we just stuff them
+    // into the stack somewhere, but need to figure out exactly where/how
+    throw compile_error("cannot call functions with more than 8 floating-point arguments",
+        this->file_offset);
+  }
 
   size_t rsp_adjustment = 0;
   if (arg_stack_bytes < 0) {
@@ -2313,7 +2388,6 @@ void CompilationVisitor::write_function_call(const void* function,
   // topological sort on this graph and do the moves in that order. but watch
   // out: the graph can have cycles, and we'll have to break them somehow,
   // probably by using stack space
-
   unordered_map<size_t, unordered_set<size_t>> move_to_dependents;
   for (size_t x = 0; x < args.size(); x++) {
     for (size_t y = 0; y < args.size(); y++) {
@@ -2366,6 +2440,25 @@ void CompilationVisitor::write_function_call(const void* function,
       this->as.write_mov(dest, new_ref);
     } else {
       this->as.write_mov(dest, ref);
+    }
+  }
+
+  // generate the appropriate floating mov opcodes
+  // TODO: we need to topological sort these too, sigh
+  for (size_t arg_index = 0; arg_index < float_args.size(); arg_index++) {
+    auto& ref = float_args[arg_index];
+    MemoryReference dest(floating_argument_register_order[arg_index]);
+    if (ref == dest) {
+      continue;
+    }
+    if (!ref.field_size) {
+      this->as.write_movq_to_xmm(dest.base_register, ref);
+    } else if (ref.base_register == Register::RSP) {
+      MemoryReference new_ref(ref.base_register, ref.offset + rsp_adjustment,
+          ref.index_register, ref.field_size);
+      this->as.write_movsd(dest, new_ref);
+    } else {
+      this->as.write_movsd(dest, ref);
     }
   }
 
@@ -2472,7 +2565,7 @@ void CompilationVisitor::write_add_reference(Register addr_reg) {
   if (debug_flags & DebugFlag::NoInlineRefcounting) {
     this->reserve_register(addr_reg);
     this->write_function_call(reinterpret_cast<const void*>(&add_reference),
-        NULL, {MemoryReference(addr_reg)});
+        NULL, {MemoryReference(addr_reg)}, {});
     this->release_register(addr_reg);
   } else {
     this->as.write_lock();
@@ -2501,7 +2594,7 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
   if (type_has_refcount(type.type)) {
     if (debug_flags & DebugFlag::NoInlineRefcounting) {
       this->write_function_call(reinterpret_cast<const void*>(delete_reference),
-          NULL, {mem});
+          NULL, {mem}, {});
 
     } else {
       static uint64_t skip_label_id = 0;
@@ -2525,7 +2618,7 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
 
       // call the destructor
       MemoryReference function_loc(r, 8);
-      this->write_function_call(NULL, &function_loc, {MemoryReference(r)});
+      this->write_function_call(NULL, &function_loc, {MemoryReference(r)}, {});
 
       this->as.write_label(skip_label);
     }
@@ -2559,6 +2652,14 @@ void CompilationVisitor::adjust_stack(ssize_t bytes) {
     this->as.write_add(rsp, bytes);
   }
   this->stack_bytes_used -= bytes;
+}
+
+void CompilationVisitor::write_load_double(Register reg, double value) {
+  // TODO: can we do this more efficiently?
+  Register tmp = this->available_register();
+  const int64_t* int_value = reinterpret_cast<const int64_t*>(&value);
+  this->as.write_mov(tmp, *int_value);
+  this->as.write_movq_to_xmm(this->float_target_register, MemoryReference(tmp));
 }
 
 CompilationVisitor::VariableLocation CompilationVisitor::location_for_global(

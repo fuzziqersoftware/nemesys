@@ -718,6 +718,7 @@ void AnalysisVisitor::visit(IfStatement* a) {
 
   // if we know the value and it's truthy, skip all the elif/else branches
   if (check_result.value_known && check_result.truth_value()) {
+    a->always_true = true;
     this->visit_list(a->items);
     return;
   }
@@ -727,6 +728,8 @@ void AnalysisVisitor::visit(IfStatement* a) {
   // TODO: there may be more optimizations we can do here (e.g. if one of the
   // elifs is known and truthy, skip the rest and the else suite)
   if (check_result.value_known && !check_result.truth_value()) {
+    a->always_false = true;
+
     for (auto& elif : a->elifs) {
       elif->accept(this);
     }
@@ -753,8 +756,16 @@ void AnalysisVisitor::visit(ElseStatement* a) {
 void AnalysisVisitor::visit(ElifStatement* a) {
   a->check->accept(this);
 
+  if (this->current_value.value_known) {
+    if (this->current_value.truth_value()) {
+      a->always_true = true;
+    } else {
+      a->always_false = true;
+    }
+  }
+
   // if we don't know the value or it's truthy, skip this branch
-  if (!this->current_value.value_known || this->current_value.truth_value()) {
+  if (!this->current_value.value_known || a->always_true) {
     this->visit_list(a->items);
   }
 }

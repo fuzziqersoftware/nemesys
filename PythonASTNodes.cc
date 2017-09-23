@@ -982,7 +982,8 @@ void YieldStatement::accept(ASTVisitor* v) {
 
 SingleIfStatement::SingleIfStatement(shared_ptr<Expression> check,
     vector<shared_ptr<Statement>>&& items, size_t file_offset) :
-    CompoundStatement(move(items), file_offset), check(check) { }
+    CompoundStatement(move(items), file_offset), check(check),
+    always_true(false), always_false(false) { }
 
 string SingleIfStatement::str() const {
   return "if " + this->check->str() + ":";

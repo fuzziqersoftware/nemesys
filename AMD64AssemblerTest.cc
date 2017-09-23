@@ -203,10 +203,64 @@ void test_quicksort() {
 }
 
 
+void test_float_move_load_multiply() {
+  printf("-- floating move + load + multiple\n");
+
+  AMD64Assembler as;
+
+  as.write_movq_from_xmm(rax, Register::XMM0);
+  as.write_movq_to_xmm(Register::XMM0, rax);
+  as.write_movsd(Register::XMM1, MemoryReference(Register::RDI, 0));
+  as.write_mulsd(Register::XMM0, xmm1);
+  as.write_ret();
+
+  string code = as.assemble();
+  //print_data(stderr, code);
+
+  //string disassembly = AMD64Assembler::disassemble(code.data(), code.size());
+  //fprintf(stderr, "%s\n", disassembly.c_str());
+
+  CodeBuffer buf;
+  void* function = buf.append(code);
+  double (*mul)(double*, double) = reinterpret_cast<double (*)(double*, double)>(function);
+
+  double x = 1.5;
+  assert(mul(&x, 3.0) == 4.5);
+}
+
+
+void test_float_neg() {
+  printf("-- floating negative\n");
+
+  AMD64Assembler as;
+
+  as.write_movq_from_xmm(rax, Register::XMM0);
+  as.write_rol(rax, 1);
+  as.write_xor(rax, 1);
+  as.write_ror(rax, 1);
+  as.write_movq_to_xmm(Register::XMM0, rax);
+  as.write_ret();
+
+  string code = as.assemble();
+  //print_data(stderr, code);
+
+  //string disassembly = AMD64Assembler::disassemble(code.data(), code.size());
+  //fprintf(stderr, "%s\n", disassembly.c_str());
+
+  CodeBuffer buf;
+  void* function = buf.append(code);
+  double (*neg)(double) = reinterpret_cast<double (*)(double)>(function);
+
+  assert(neg(1.5) == -1.5);
+}
+
+
 int main(int argc, char** argv) {
   test_trivial_function();
   test_pow();
   test_quicksort();
+  test_float_move_load_multiply();
+  test_float_neg();
 
   printf("-- all tests passed\n");
   return 0;

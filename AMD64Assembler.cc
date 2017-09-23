@@ -174,6 +174,46 @@ const char* name_for_register(Register r, OperandSize size) {
         default:
           return "UNKNOWN64";
       }
+
+    case OperandSize::SinglePrecision:
+    case OperandSize::DoublePrecision:
+    case OperandSize::QuadWordXMM:
+      switch (r) {
+        case Register::XMM0:
+          return "xmm0";
+        case Register::XMM1:
+          return "xmm1";
+        case Register::XMM2:
+          return "xmm2";
+        case Register::XMM3:
+          return "xmm3";
+        case Register::XMM4:
+          return "xmm4";
+        case Register::XMM5:
+          return "xmm5";
+        case Register::XMM6:
+          return "xmm6";
+        case Register::XMM7:
+          return "xmm7";
+        case Register::XMM8:
+          return "xmm8";
+        case Register::XMM9:
+          return "xmm9";
+        case Register::XMM10:
+          return "xmm10";
+        case Register::XMM11:
+          return "xmm11";
+        case Register::XMM12:
+          return "xmm12";
+        case Register::XMM13:
+          return "xmm13";
+        case Register::XMM14:
+          return "xmm14";
+        case Register::XMM15:
+          return "xmm15";
+        default:
+          return "UNKNOWNFLOAT";
+      }
   }
   return "UNKNOWN";
 }
@@ -217,6 +257,21 @@ Register byte_register_for_register(Register r) {
     default:
       return Register::None;
   }
+}
+
+static string data_for_opcode(uint32_t opcode) {
+  string ret;
+  if (opcode > 0xFFFFFF) {
+    ret += (opcode >> 24) & 0xFF;
+  }
+  if (opcode > 0xFFFF) {
+    ret += (opcode >> 16) & 0xFF;
+  }
+  if (opcode > 0xFF) {
+    ret += (opcode >> 8) & 0xFF;
+  }
+  ret += opcode & 0xFF;
+  return ret;
 }
 
 
@@ -341,6 +396,23 @@ MemoryReference spl(Register::SPL);
 MemoryReference bpl(Register::BPL);
 MemoryReference sil(Register::SIL);
 MemoryReference dil(Register::DIL);
+MemoryReference xmm0(Register::XMM0);
+MemoryReference xmm1(Register::XMM1);
+MemoryReference xmm2(Register::XMM2);
+MemoryReference xmm3(Register::XMM3);
+MemoryReference xmm4(Register::XMM4);
+MemoryReference xmm5(Register::XMM5);
+MemoryReference xmm6(Register::XMM6);
+MemoryReference xmm7(Register::XMM7);
+MemoryReference xmm8(Register::XMM8);
+MemoryReference xmm9(Register::XMM9);
+MemoryReference xmm10(Register::XMM10);
+MemoryReference xmm11(Register::XMM11);
+MemoryReference xmm12(Register::XMM12);
+MemoryReference xmm13(Register::XMM13);
+MemoryReference xmm14(Register::XMM14);
+MemoryReference xmm15(Register::XMM15);
+
 
 static inline bool is_extension_register(Register r) {
   return (static_cast<int8_t>(r) >= 8) && (static_cast<int8_t>(r) < 16);
@@ -370,8 +442,8 @@ void AMD64Assembler::write_label(const std::string& name) {
 
 
 string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
-    Register reg, OperandSize size) {
-  uint16_t opcode = static_cast<uint16_t>(op);
+    Register reg, OperandSize size, uint32_t extra_prefixes) {
+  uint32_t opcode = static_cast<uint32_t>(op);
 
   string ret;
   if (!mem.field_size) { // behavior = 3 (register reference)
@@ -389,20 +461,22 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
       mem_base = static_cast<Register>(mem_base - 13); // convert from enum value to register number
     }
 
+    if (extra_prefixes) {
+      ret += data_for_opcode(extra_prefixes);
+    }
+
     uint8_t prefix_byte = 0x40 | (mem_ext ? 0x01 : 0) | (reg_ext ? 0x04 : 0);
-    if (size == OperandSize::QuadWord) {
+    if ((size == OperandSize::QuadWord) || (size == OperandSize::QuadWordXMM)) {
       prefix_byte |= 0x08;
-    } else if (size == OperandSize::Word) {
+    }
+    if ((size == OperandSize::Word) || (size == OperandSize::QuadWordXMM)) {
       ret += 0x66;
     }
 
     if (mem_nonext_byte || reg_nonext_byte || (prefix_byte != 0x40)) {
       ret += prefix_byte;
     }
-    if (opcode > 0xFF) {
-      ret += (opcode >> 8);
-    }
-    ret += (opcode & 0xFF);
+    ret += data_for_opcode(opcode);
     ret += static_cast<char>(0xC0 | ((reg & 7) << 3) | (mem_base & 7));
     return ret;
   }
@@ -481,23 +555,23 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
   }
 
   // fill in the ret string
+  if (extra_prefixes) {
+    ret += data_for_opcode(extra_prefixes);
+  }
+
   uint8_t prefix_byte = 0x40 | (reg_ext ? 0x04 : 0) | (mem_index_ext ? 0x02 : 0) |
       (mem_base_ext ? 0x01 : 0);
-  if (size == OperandSize::QuadWord) {
+  if ((size == OperandSize::QuadWord) || (size == OperandSize::QuadWordXMM)) {
     prefix_byte |= 0x08;
-  } else if (size == OperandSize::Word) {
+  }
+  if ((size == OperandSize::Word) || (size == OperandSize::QuadWordXMM)) {
     ret += 0x66;
   }
 
   if (prefix_byte != 0x40) {
     ret += prefix_byte;
   }
-
-  if (opcode > 0xFF) {
-    ret += (opcode >> 8);
-  }
-  ret += (opcode & 0xFF);
-
+  ret += data_for_opcode(opcode);
   ret += rm_byte;
   if ((rm_byte & 0x07) == 0x04) {
     ret += sib_byte;
@@ -511,18 +585,19 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
 }
 
 string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
-    uint8_t z, OperandSize size) {
-  return AMD64Assembler::generate_rm(op, mem, static_cast<Register>(z), size);
+    uint8_t z, OperandSize size, uint32_t extra_prefixes) {
+  return AMD64Assembler::generate_rm(op, mem, static_cast<Register>(z), size,
+      extra_prefixes);
 }
 
 void AMD64Assembler::write_rm(Operation op, const MemoryReference& mem,
-    Register reg, OperandSize size) {
-  this->write(this->generate_rm(op, mem, reg, size));
+    Register reg, OperandSize size, uint32_t extra_prefixes) {
+  this->write(this->generate_rm(op, mem, reg, size, extra_prefixes));
 }
 
 void AMD64Assembler::write_rm(Operation op, const MemoryReference& mem,
-    uint8_t z, OperandSize size) {
-  this->write(this->generate_rm(op, mem, z, size));
+    uint8_t z, OperandSize size, uint32_t extra_prefixes) {
+  this->write(this->generate_rm(op, mem, z, size, extra_prefixes));
 }
 
 
@@ -685,6 +760,55 @@ void AMD64Assembler::write_xchg(Register reg, const MemoryReference& mem,
     OperandSize size) {
   Operation op = (size == OperandSize::Byte) ? Operation::XCHG8 : Operation::XCHG;
   this->write_rm(op, mem, reg, size);
+}
+
+void AMD64Assembler::write_movq_to_xmm(Register reg,
+    const MemoryReference& from) {
+  this->write_rm(Operation::MOVQ_TO_XMM, from, reg, OperandSize::QuadWordXMM);
+}
+
+void AMD64Assembler::write_movq_from_xmm(const MemoryReference& from,
+    Register reg) {
+  this->write_rm(Operation::MOVQ_FROM_XMM, from, reg, OperandSize::QuadWordXMM);
+}
+
+void AMD64Assembler::write_movsd(const MemoryReference& to,
+    const MemoryReference& from) {
+  if (to.field_size && from.field_size) {
+    throw invalid_argument("load/store opcodes can have at most one memory reference");
+  }
+
+  if (!from.field_size) {
+    this->write_rm(Operation::MOVSD_STORE, to, from.base_register,
+        OperandSize::DoublePrecision, 0xF2);
+  } else {
+    this->write_rm(Operation::MOVSD_LOAD, from, to.base_register,
+        OperandSize::DoublePrecision, 0xF2);
+  }
+}
+
+void AMD64Assembler::write_addsd(Register to, const MemoryReference& from) {
+  this->write_rm(Operation::ADDSD, from, to, OperandSize::DoublePrecision, 0xF2);
+}
+
+void AMD64Assembler::write_subsd(Register to, const MemoryReference& from) {
+  this->write_rm(Operation::SUBSD, from, to, OperandSize::DoublePrecision, 0xF2);
+}
+
+void AMD64Assembler::write_mulsd(Register to, const MemoryReference& from) {
+  this->write_rm(Operation::MULSD, from, to, OperandSize::DoublePrecision, 0xF2);
+}
+
+void AMD64Assembler::write_divsd(Register to, const MemoryReference& from) {
+  this->write_rm(Operation::DIVSD, from, to, OperandSize::DoublePrecision, 0xF2);
+}
+
+void AMD64Assembler::write_minsd(Register to, const MemoryReference& from) {
+  this->write_rm(Operation::MINSD, from, to, OperandSize::DoublePrecision, 0xF2);
+}
+
+void AMD64Assembler::write_maxsd(Register to, const MemoryReference& from) {
+  this->write_rm(Operation::MAXSD, from, to, OperandSize::DoublePrecision, 0xF2);
 }
 
 
@@ -1460,6 +1584,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
   bool base_ext = false;
   bool index_ext = false;
   bool reg_ext = false;
+  bool xmm_prefix = false;
   OperandSize operand_size = OperandSize::DoubleWord;
 
   size_t offset = 0;
@@ -1483,6 +1608,10 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
       operand_size = OperandSize::Word;
       continue;
     }
+    if (opcode == Operation::XMM_PREFIX) {
+      xmm_prefix = true;
+      continue;
+    }
 
     string opcode_text;
 
@@ -1494,7 +1623,42 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
         opcode = data[offset];
         offset++;
 
-        if ((opcode & 0xF0) == 0x80) {
+        if ((opcode & 0xFE) == 0x10) {
+          if (!xmm_prefix) {
+            opcode_text = "<<unknown-0F-non-xmm>>";
+          } else {
+            opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+                "movsd", (opcode == 0x10), NULL, ext, reg_ext, base_ext,
+                index_ext, OperandSize::DoublePrecision);
+          }
+
+        } else if ((opcode & 0xF8) == 0x58) {
+          if (!xmm_prefix) {
+            opcode_text = "<<unknown-0F-58-non-xmm>>";
+          } else {
+            static const char* names[8] = {
+                "addsd", "mulsd", NULL, NULL, "subsd", "minsd", "divsd", "maxsd"};
+            const char* name = names[opcode & 7];
+            if (!name) {
+              opcode_text = "<<unknown-0F-58-xmm>>";
+            } else {
+              opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+                  name, true, NULL, ext, reg_ext, base_ext, index_ext,
+                  OperandSize::DoublePrecision);
+            }
+          }
+
+        } else if (opcode == 0x6E) {
+          opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+              "movq", true, NULL, ext, reg_ext, base_ext,
+              index_ext, OperandSize::QuadWord, true);
+
+        } else if (opcode == 0x7E) {
+          opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+              "movq", false, NULL, ext, reg_ext, base_ext,
+              index_ext, OperandSize::QuadWord, true);
+
+        } else if ((opcode & 0xF0) == 0x80) {
           opcode_text = AMD64Assembler::disassemble_jmp(data, size, offset,
               addr, jmp_names[opcode & 0x0F], true, addr_to_label, next_label);
 
@@ -1715,6 +1879,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
     base_ext = false;
     index_ext = false;
     reg_ext = false;
+    xmm_prefix = false;
     operand_size = OperandSize::DoubleWord;
     opcode_start_offset = offset;
   }
@@ -1740,7 +1905,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
 string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
     size_t& offset, const char* opcode_name, bool is_load,
     const char** op_name_table, bool ext, bool reg_ext, bool base_ext,
-    bool index_ext, OperandSize operand_size) {
+    bool index_ext, OperandSize operand_size, bool reg_xmm) {
   if (offset >= size) {
     return "<<incomplete>>";
   }
@@ -1752,7 +1917,8 @@ string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
   Register reg = make_reg(reg_ext, subtype);
   offset++;
 
-  string reg_str = name_for_register(reg, operand_size);
+  string reg_str = name_for_register(reg,
+      reg_xmm ? OperandSize::QuadWordXMM : operand_size);
 
   string mem_str;
   if (behavior == 3) {
