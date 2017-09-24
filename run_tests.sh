@@ -16,6 +16,8 @@ echo "-- tests.integers"
 #./nemesys tests/floats.py | diff -U3 tests/floats.expected_output -
 echo "-- tests.functions"
 ./nemesys tests/functions.py | diff -U3 tests/functions.expected_output -
+echo "-- tests.explicit_globals"
+./nemesys tests/explicit_globals.py | diff -U3 tests/explicit_globals.expected_output -
 echo "-- tests.lists"
 ./nemesys tests/lists.py | diff -U3 tests/lists.expected_output -
 echo "-- tests.loops"
