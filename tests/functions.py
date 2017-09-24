@@ -43,6 +43,8 @@ int_sum = sum_all_arguments(1, 2, 3, 4, h=8, j=10)
 print('the sum of 6 ints is ' + repr(int_sum))
 str_sum = sum_all_arguments('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j')
 print('the sum of 10 strs is ' + repr(str_sum))
+# float_sum = sum_all_arguments(1, 2.0, 3.5, 4.0)
+# print('the sum of 4 floats is ' + repr(float_sum))
 
 double = lambda x: x + x
 a = 0

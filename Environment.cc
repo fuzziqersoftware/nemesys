@@ -109,7 +109,7 @@ Variable::Variable(ValueType type, vector<Variable>&& extension_types) :
 Variable::Variable(ValueType type, bool bool_value) : type(type),
     value_known(true), int_value(bool_value), instance(NULL) {
   if (this->type != ValueType::Bool) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, bool)", type));
   }
 }
 
@@ -119,7 +119,7 @@ Variable::Variable(ValueType type, int64_t int_value) : type(type),
   if ((this->type != ValueType::Int) &&
       (this->type != ValueType::Function) &&
       (this->type != ValueType::Class)) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, int64_t)", type));
   }
 }
 
@@ -127,7 +127,7 @@ Variable::Variable(ValueType type, int64_t int_value) : type(type),
 Variable::Variable(ValueType type, double float_value) : type(type),
     value_known(true), float_value(float_value), instance(NULL) {
   if (this->type != ValueType::Float) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, double)", type));
   }
 }
 
@@ -137,7 +137,7 @@ Variable::Variable(ValueType type, const char* bytes_value, size_t size) :
     instance(NULL) {
   if ((this->type != ValueType::Bytes) &&
       (this->type != ValueType::Module)) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, const char*, size_t)", type));
   }
 }
 Variable::Variable(ValueType type, const char* bytes_value) :
@@ -146,7 +146,7 @@ Variable::Variable(ValueType type, const string& bytes_value) : type(type),
     value_known(true), bytes_value(new string(bytes_value)), instance(NULL) {
   if ((this->type != ValueType::Bytes) &&
       (this->type != ValueType::Module)) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, const char*)", type));
   }
 }
 Variable::Variable(ValueType type, string&& bytes_value) : type(type),
@@ -154,7 +154,7 @@ Variable::Variable(ValueType type, string&& bytes_value) : type(type),
     instance(NULL) {
   if ((this->type != ValueType::Bytes) &&
       (this->type != ValueType::Module)) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, string&&)", type));
   }
 }
 
@@ -163,7 +163,7 @@ Variable::Variable(ValueType type, const wchar_t* unicode_value, size_t size) :
     type(type), value_known(true),
     unicode_value(new wstring(unicode_value, size)), instance(NULL) {
   if (this->type != ValueType::Unicode) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, const wchar_t*, size_t)", type));
   }
 }
 Variable::Variable(ValueType type, const wchar_t* unicode_value) :
@@ -172,14 +172,14 @@ Variable::Variable(ValueType type, const wstring& unicode_value) : type(type),
     value_known(true), unicode_value(new wstring(unicode_value)),
     instance(NULL) {
   if (this->type != ValueType::Unicode) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, const wchar_t*)", type));
   }
 }
 Variable::Variable(ValueType type, wstring&& unicode_value) : type(type),
     value_known(true), unicode_value(new wstring(move(unicode_value))),
     instance(NULL) {
   if (this->type != ValueType::Unicode) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, wstring&&)", type));
   }
 }
 
@@ -190,7 +190,7 @@ Variable::Variable(ValueType type,
     list_value(new vector<shared_ptr<Variable>>(list_value)),
     instance(NULL) {
   if ((this->type != ValueType::List) && (this->type != ValueType::Tuple)) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, const vector<...>& list_value)", type));
   }
   if (this->type == ValueType::Tuple) {
     this->extension_types = compute_tuple_extension_type(*this->list_value);
@@ -203,7 +203,7 @@ Variable::Variable(ValueType type, vector<shared_ptr<Variable>>&& list_value) :
     list_value(new vector<shared_ptr<Variable>>(move(list_value))),
     instance(NULL) {
   if ((this->type != ValueType::List) && (this->type != ValueType::Tuple)) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, vector<...>&& list_value)", type));
   }
   if (this->type == ValueType::Tuple) {
     this->extension_types = compute_tuple_extension_type(*this->list_value);
@@ -218,7 +218,7 @@ Variable::Variable(ValueType type, const unordered_set<Variable>& set_value) :
     set_value(new unordered_set<Variable>(set_value)),
     instance(NULL) {
   if (this->type != ValueType::Set) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, const unordered_set<...>&)", type));
   }
   this->extension_types = compute_set_extension_type(*this->set_value);
 }
@@ -227,7 +227,7 @@ Variable::Variable(ValueType type, unordered_set<Variable>&& set_value) :
     set_value(new unordered_set<Variable>(move(set_value))),
     instance(NULL) {
   if (this->type != ValueType::Set) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, unordered_set<...>&&)", type));
   }
   this->extension_types = compute_set_extension_type(*this->set_value);
 }
@@ -239,7 +239,7 @@ Variable::Variable(ValueType type,
     dict_value(new unordered_map<Variable, shared_ptr<Variable>>(dict_value)),
     instance(NULL) {
   if (this->type != ValueType::Dict) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, const unordered_map<...>&)", type));
   }
   this->extension_types = compute_dict_extension_type(*this->dict_value);
 }
@@ -248,7 +248,7 @@ Variable::Variable(ValueType type, unordered_map<Variable, shared_ptr<Variable>>
     dict_value(new unordered_map<Variable, shared_ptr<Variable>>(move(dict_value))),
     instance(NULL) {
   if (this->type != ValueType::Dict) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, unordered_map<...>&&)", type));
   }
   this->extension_types = compute_dict_extension_type(*this->dict_value);
 }
@@ -261,7 +261,7 @@ Variable::Variable(ValueType type, int64_t class_id, void* instance) :
     throw invalid_argument("Instance objects must have a nonzero class_id");
   }
   if (this->type != ValueType::Instance) {
-    throw invalid_argument("incorrect Variable constructor type called");
+    throw invalid_argument(string_printf("incorrect construction: Variable(%d, int64_t, void*)", type));
   }
 }
 
@@ -1650,7 +1650,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(ValueType::Int,
+            return Variable(ValueType::Float,
                 static_cast<double>(left.int_value) /
                   static_cast<double>(right.int_value));
           }

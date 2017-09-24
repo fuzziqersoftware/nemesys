@@ -125,6 +125,8 @@ enum Operation {
   PUSH_RM    = 0xFF,
   CALL_JMP_ABS = 0xFF,
 
+  CVTSI2SD   = 0x0F2A,
+  CVTSD2SI   = 0x0F2C,
   MOVQ_TO_XMM   = 0x0F6E,
   MOVQ_FROM_XMM = 0x0F7E,
   JO         = 0x0F80,
@@ -399,6 +401,8 @@ public:
   void write_divsd(Register to, const MemoryReference& from);
   void write_minsd(Register to, const MemoryReference& from);
   void write_maxsd(Register to, const MemoryReference& from);
+  void write_cvtsi2sd(Register to, Register from);
+  void write_cvtsd2si(Register to, Register from);
 
   // control flow opcodes
   void write_nop();
@@ -508,6 +512,14 @@ public:
       OperandSize size = OperandSize::QuadWord);
 
   void write_imul(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_mul(const MemoryReference& mem,
+      OperandSize size = OperandSize::QuadWord);
+  void write_imul(const MemoryReference& mem,
+      OperandSize size = OperandSize::QuadWord);
+  void write_div(const MemoryReference& mem,
+      OperandSize size = OperandSize::QuadWord);
+  void write_idiv(const MemoryReference& mem,
       OperandSize size = OperandSize::QuadWord);
 
   // comparison opcodes

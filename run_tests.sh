@@ -12,6 +12,8 @@ echo "-- tests.repr"
 ./nemesys tests/repr.py | diff -U3 tests/repr.expected_output -
 echo "-- tests.integers"
 ./nemesys tests/integers.py | diff -U3 tests/integers.expected_output -
+#echo "-- tests.floats"
+#./nemesys tests/floats.py | diff -U3 tests/floats.expected_output -
 echo "-- tests.functions"
 ./nemesys tests/functions.py | diff -U3 tests/functions.expected_output -
 echo "-- tests.lists"
@@ -28,5 +30,7 @@ echo "-- tests.quine_nemesys"
 ./nemesys tests/quine_nemesys.py | diff -U3 tests/quine_nemesys.py -
 echo "-- tests.classes"
 ./nemesys tests/classes.py | diff -U3 tests/classes.expected_output -
+echo "-- tests.static_analysis"
+./nemesys tests/static_analysis.py | diff -U3 tests/static_analysis.expected_output -
 
 echo "-- all tests passed"

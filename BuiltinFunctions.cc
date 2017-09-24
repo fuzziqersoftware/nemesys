@@ -230,12 +230,25 @@ static void create_default_builtin_functions() {
 
   })), FragDef({Int}, Unicode, reinterpret_cast<const void*>(+[](int64_t v) -> UnicodeObject* {
     wchar_t buf[24];
-    swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%" PRId64, v);
-    return unicode_new(NULL, buf, wcslen(buf));
+    return unicode_new(NULL, buf, swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%" PRId64, v));
 
   })), FragDef({Float}, Unicode, reinterpret_cast<const void*>(+[](double v) -> UnicodeObject* {
     wchar_t buf[60]; // TODO: figure out how long this actually needs to be
-    swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%g", v);
+    size_t count = swprintf(buf, sizeof(buf) / sizeof(buf[0]) - 2, L"%g", v);
+
+    // if there isn't a . in the output, add .0 at the end
+    size_t x;
+    for (x = 0; x < count; x++) {
+      if (buf[x] == L'.') {
+        break;
+      }
+    }
+    if (x == count) {
+      buf[count] = L'.';
+      buf[count + 1] = L'0';
+      buf[count + 2] = 0;
+    }
+
     return unicode_new(NULL, buf, wcslen(buf));
 
   })), FragDef({Bytes}, Unicode, reinterpret_cast<const void*>(+[](BytesObject* v) -> UnicodeObject* {

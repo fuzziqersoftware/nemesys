@@ -106,7 +106,13 @@ private:
   std::unordered_set<Variable> function_return_types;
 
   // compilation state
-  int64_t available_registers; // bit mask; check for (1 << register)
+  union {
+    int64_t available_registers; // bit mask; check for (1 << register)
+    struct {
+      int32_t available_int_registers;
+      int32_t available_float_registers;
+    };
+  };
   Register target_register;
   Register float_target_register;
   int64_t stack_bytes_used;
@@ -130,11 +136,15 @@ private:
   // output manager
   AMD64Assembler as;
 
-  Register reserve_register(Register which = Register::None);
-  void release_register(Register reg);
-  Register available_register(Register preferred = Register::None);
+  Register reserve_register(Register which = Register::None,
+      bool float_register = false);
+  void release_register(Register reg, bool float_register = false);
+  bool register_is_available(Register which, bool float_register = false);
+  Register available_register(Register preferred = Register::None,
+      bool float_register = false);
   Register available_register_except(
-      const std::vector<Register>& prevented_registers);
+      const std::vector<Register>& prevented_registers,
+      bool float_register = false);
 
   int64_t write_push_reserved_registers();
   void write_pop_reserved_registers(int64_t registers);

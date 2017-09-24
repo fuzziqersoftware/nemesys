@@ -5,3 +5,5 @@ a << 2 should be 2064: 2064
 a >> 2 should be 129: 129
 a + b should be 1544: 1544
 a - b should be -512: -512
+a * b should be 530448: 530448
+b // a should be 1: 1

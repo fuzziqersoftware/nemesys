@@ -440,6 +440,18 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
     v.reset(new CompilationVisitor(this, module));
   }
 
+  // write the local overrides, if any
+  if ((debug_flags & DebugFlag::ShowCompileDebug) && local_overrides &&
+      !local_overrides->empty()) {
+    fprintf(stderr, "[%s] ======== compiling with local overrides\n",
+        scope_name.c_str());
+    for (const auto& it : *local_overrides) {
+      string value_str = it.second.str();
+      fprintf(stderr, "%s = %s\n", it.first.c_str(), value_str.c_str());
+    }
+    fputc('\n', stderr);
+  }
+
   // compile it
   try {
     if (fn) {

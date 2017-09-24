@@ -811,6 +811,16 @@ void AMD64Assembler::write_maxsd(Register to, const MemoryReference& from) {
   this->write_rm(Operation::MAXSD, from, to, OperandSize::DoublePrecision, 0xF2);
 }
 
+void AMD64Assembler::write_cvtsi2sd(Register to, Register from) {
+  this->write_rm(Operation::CVTSI2SD, MemoryReference(from), to,
+      OperandSize::QuadWord, 0xF2);
+}
+
+void AMD64Assembler::write_cvtsd2si(Register to, Register from) {
+  this->write_rm(Operation::CVTSD2SI, MemoryReference(from), to,
+      OperandSize::QuadWord, 0xF2);
+}
+
 
 
 void AMD64Assembler::write_nop() {
@@ -1247,6 +1257,26 @@ void AMD64Assembler::write_imul(Register target, const MemoryReference& mem,
   this->write_load_store(Operation::IMUL, mem, target_mem, size);
 }
 
+void AMD64Assembler::write_mul(const MemoryReference& mem, OperandSize size) {
+  Operation op = (size == OperandSize::Byte) ? Operation::NOT_NEG8 : Operation::NOT_NEG32;
+  this->write_rm(op, mem, 4, size);
+}
+
+void AMD64Assembler::write_imul(const MemoryReference& mem, OperandSize size) {
+  Operation op = (size == OperandSize::Byte) ? Operation::NOT_NEG8 : Operation::NOT_NEG32;
+  this->write_rm(op, mem, 5, size);
+}
+
+void AMD64Assembler::write_div(const MemoryReference& mem, OperandSize size) {
+  Operation op = (size == OperandSize::Byte) ? Operation::NOT_NEG8 : Operation::NOT_NEG32;
+  this->write_rm(op, mem, 6, size);
+}
+
+void AMD64Assembler::write_idiv(const MemoryReference& mem, OperandSize size) {
+  Operation op = (size == OperandSize::Byte) ? Operation::NOT_NEG8 : Operation::NOT_NEG32;
+  this->write_rm(op, mem, 7, size);
+}
+
 
 
 void AMD64Assembler::write_test(const MemoryReference& a,
@@ -1632,6 +1662,24 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
                 index_ext, OperandSize::DoublePrecision);
           }
 
+        } else if (opcode == 0x2A) {
+          if (!xmm_prefix) {
+            opcode_text = "<<unknown-0F-2A-non-xmm>>";
+          } else {
+            opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+                "cvtsi2sd", true, NULL, ext, reg_ext, base_ext, index_ext,
+                OperandSize::DoublePrecision);
+          }
+
+        } else if (opcode == 0x2C) {
+          if (!xmm_prefix) {
+            opcode_text = "<<unknown-0F-2C-non-xmm>>";
+          } else {
+            opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+                "cvtsd2si", true, NULL, ext, reg_ext, base_ext, index_ext,
+                OperandSize::DoublePrecision);
+          }
+
         } else if ((opcode & 0xF8) == 0x58) {
           if (!xmm_prefix) {
             opcode_text = "<<unknown-0F-58-non-xmm>>";
@@ -1835,7 +1883,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
         uint8_t subcode = (data[offset] & 0x38) >> 3;
 
         static const char* names[] = {
-            "test", "test", "not", "neg", NULL, NULL, NULL, NULL};
+            "test", "test", "not", "neg", "mul", "imul", "div", "idiv"};
         opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
             true, names, ext, reg_ext, base_ext, index_ext, operand_size);
 

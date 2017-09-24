@@ -255,7 +255,15 @@ void test_float_neg() {
 }
 
 
+double test_lolz() {
+  double x = 3.5;
+  x = -x;
+  return x;
+}
+
+
 int main(int argc, char** argv) {
+  test_lolz();
   test_trivial_function();
   test_pow();
   test_quicksort();

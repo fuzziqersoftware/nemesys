@@ -77,7 +77,7 @@ static const vector<Register> floating_argument_register_order = {
   Register::XMM4, Register::XMM5, Register::XMM6, Register::XMM7,
 };
 
-static const int64_t default_available_registers =
+static const int64_t default_available_int_registers =
     (1 << Register::RAX) |
     (1 << Register::RCX) |
     (1 << Register::RDX) |
@@ -87,6 +87,7 @@ static const int64_t default_available_registers =
     (1 << Register::R9) |
     (1 << Register::R10) |
     (1 << Register::R11);
+static const int64_t default_available_float_registers = 0xFFFF; // all of them
 
 
 
@@ -96,7 +97,8 @@ CompilationVisitor::CompilationVisitor(GlobalAnalysis* global,
     global(global), module(module),
     target_function(this->global->context_for_function(target_function_id)),
     target_split_id(target_split_id),
-    available_registers(default_available_registers),
+    available_int_registers(default_available_int_registers),
+    available_float_registers(default_available_float_registers),
     target_register(Register::None), float_target_register(Register::XMM0),
     stack_bytes_used(0), holding_reference(false),
     evaluating_instance_pointer(false) {
@@ -141,29 +143,39 @@ string CompilationVisitor::VariableLocation::str() const {
 
 
 
-Register CompilationVisitor::reserve_register(Register which) {
+Register CompilationVisitor::reserve_register(Register which,
+    bool float_register) {
   if (which == Register::None) {
-    which = this->available_register();
+    which = this->available_register(Register::None, float_register);
   }
-  if (!(this->available_registers & (1 << which))) {
+
+  int32_t* available_mask = float_register ? &this->available_float_registers :
+      &this->available_int_registers;
+  if (!(*available_mask & (1 << which))) {
     throw compile_error(string_printf("register %s is not available", name_for_register(which)), this->file_offset);
   }
-  this->available_registers &= ~(1 << which);
+  *available_mask &= ~(1 << which);
   return which;
 }
 
-void CompilationVisitor::release_register(Register which) {
-  this->available_registers |= (1 << which);
+void CompilationVisitor::release_register(Register which, bool float_register) {
+  int32_t* available_mask = float_register ? &this->available_float_registers :
+      &this->available_int_registers;
+  *available_mask |= (1 << which);
 }
 
-Register CompilationVisitor::available_register(Register preferred) {
-  if (this->available_registers & (1 << preferred)) {
+Register CompilationVisitor::available_register(Register preferred,
+    bool float_register) {
+  int32_t* available_mask = float_register ? &this->available_float_registers :
+      &this->available_int_registers;
+
+  if (*available_mask & (1 << preferred)) {
     return preferred;
   }
 
   Register which;
   for (which = Register::RAX; // = 0
-       !(this->available_registers & (1 << which)) && (static_cast<int64_t>(which) < Register::Count);
+       !(*available_mask & (1 << which)) && (static_cast<int64_t>(which) < Register::Count);
        which = static_cast<Register>(static_cast<int64_t>(which) + 1));
   if (static_cast<int64_t>(which) >= Register::Count) {
     throw compile_error("no registers are available", this->file_offset);
@@ -171,17 +183,26 @@ Register CompilationVisitor::available_register(Register preferred) {
   return which;
 }
 
+bool CompilationVisitor::register_is_available(Register which,
+    bool float_register) {
+  int32_t* available_mask = float_register ? &this->available_float_registers :
+      &this->available_int_registers;
+  return *available_mask & (1 << which);
+}
+
 Register CompilationVisitor::available_register_except(
-    const vector<Register>& prevented) {
-  int64_t prevented_mask = 0;
+    const vector<Register>& prevented, bool float_register) {
+  int32_t* available_mask = float_register ? &this->available_float_registers :
+      &this->available_int_registers;
+
+  int32_t prevented_mask = 0;
   for (Register r : prevented) {
     prevented_mask |= (1 << r);
   }
 
   Register which;
   for (which = Register::RAX; // = 0
-       ((prevented_mask & (1 << which)) ||
-        !(this->available_registers & (1 << which))) &&
+       ((prevented_mask & (1 << which)) || !(*available_mask & (1 << which))) &&
        (static_cast<int64_t>(which) < Register::Count);
        which = static_cast<Register>(static_cast<int64_t>(which) + 1));
   if (static_cast<int64_t>(which) >= Register::Count) {
@@ -191,45 +212,78 @@ Register CompilationVisitor::available_register_except(
 }
 
 int64_t CompilationVisitor::write_push_reserved_registers() {
+  // push int registers
   Register which;
   for (which = Register::RAX; // = 0
       static_cast<int64_t>(which) < Register::Count;
        which = static_cast<Register>(static_cast<int64_t>(which) + 1)) {
-    if (!(default_available_registers & (1 << which))) {
+    if (!(default_available_int_registers & (1 << which))) {
       continue; // this register isn't used by CompilationVisitor
     }
-    if (this->available_registers & (1 << which)) {
+    if (this->available_int_registers & (1 << which)) {
       continue; // this register is used but not reserved
     }
 
     this->write_push(which);
   }
 
+  // push xmm registers
+  for (which = Register::XMM0; // = 0
+      static_cast<int64_t>(which) < Register::Count;
+       which = static_cast<Register>(static_cast<int64_t>(which) + 1)) {
+    if (!(default_available_float_registers & (1 << which))) {
+      continue; // this register isn't used by CompilationVisitor
+    }
+    if (this->available_float_registers & (1 << which)) {
+      continue; // this register is used but not reserved
+    }
+
+    this->adjust_stack(-8);
+    this->as.write_movsd(MemoryReference(Register::RSP, 0), which);
+  }
+
+  // reset the available flags and return the old flags
   int64_t ret = this->available_registers;
-  this->available_registers = default_available_registers;
+  this->available_int_registers = default_available_int_registers;
+  this->available_float_registers = default_available_float_registers;
   return ret;
 }
 
 void CompilationVisitor::write_pop_reserved_registers(int64_t mask) {
-  if (this->available_registers != default_available_registers) {
+  if ((this->available_int_registers != default_available_int_registers) ||
+      (this->available_float_registers != default_available_float_registers)) {
     throw compile_error("some registers were not released when reserved were popped", this->file_offset);
   }
 
+  this->available_registers = mask;
+
   Register which;
-  for (which = Register::R15; // = 0
+  for (which = Register::XMM15;
       static_cast<int64_t>(which) > Register::None;
        which = static_cast<Register>(static_cast<int64_t>(which) - 1)) {
-    if (!(default_available_registers & (1 << which))) {
+    if (!(default_available_float_registers & (1 << which))) {
       continue; // this register isn't used by CompilationVisitor
     }
-    if (mask & (1 << which)) {
+    if (this->available_float_registers & (1 << which)) {
+      continue; // this register is used but not reserved
+    }
+
+    this->as.write_movsd(MemoryReference(which), MemoryReference(Register::RSP, 0));
+    this->adjust_stack(8);
+  }
+
+  for (which = Register::R15;
+      static_cast<int64_t>(which) > Register::None;
+       which = static_cast<Register>(static_cast<int64_t>(which) - 1)) {
+    if (!(default_available_int_registers & (1 << which))) {
+      continue; // this register isn't used by CompilationVisitor
+    }
+    if (this->available_int_registers & (1 << which)) {
       continue; // this register is used but not reserved
     }
 
     this->write_pop(which);
   }
-
-  this->available_registers = mask;
 }
 
 
@@ -247,7 +301,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
     throw compile_error("operand has Indeterminate type", this->file_offset);
   }
 
-  // now apply the unary operation on top of the result
+  // apply the unary operation on top of the result
   // we can use the same target register
   MemoryReference target_mem(this->target_register);
   this->as.write_label(string_printf("__UnaryOperation_%p_apply", a));
@@ -483,7 +537,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   this->as.write_label(string_printf("__BinaryOperation_%p_evaluate_right", a));
   a->right->accept(this);
   Variable& right_type = this->current_type;
-  if (left_type.type == ValueType::Float) {
+  if (right_type.type == ValueType::Float) {
     this->as.write_movq_from_xmm(target_mem, this->float_target_register);
   }
   this->write_push(this->target_register); // for the destructor call later
@@ -494,6 +548,13 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   // pick a temporary register that isn't the target register
   MemoryReference temp_mem(this->available_register_except({this->target_register}));
 
+  bool left_int = ((left_type.type == ValueType::Int) ||
+      (left_type.type == ValueType::Bool));
+  bool right_int = ((right_type.type == ValueType::Int) ||
+      (right_type.type == ValueType::Bool));
+  bool left_float = (left_type.type == ValueType::Float);
+  bool right_float = (right_type.type == ValueType::Float);
+
   this->as.write_label(string_printf("__BinaryOperation_%p_combine", a));
   switch (a->oper) {
     case BinaryOperator::LessThan:
@@ -503,10 +564,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::Equality:
     case BinaryOperator::NotEqual:
       // integer comparisons
-      if (((left_type.type == ValueType::Int) ||
-           (left_type.type == ValueType::Bool)) &&
-          ((right_type.type == ValueType::Int) ||
-           (right_type.type == ValueType::Bool))) {
+      if (left_int && right_int) {
         this->as.write_mov(target_mem, 0);
         this->as.write_mov(temp_mem, left_mem);
         this->as.write_cmp(temp_mem, right_mem);
@@ -524,8 +582,9 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         } else if (a->oper == BinaryOperator::NotEqual) {
           this->as.write_setne(target_mem);
         }
+
       } else {
-        throw compile_error("operator not yet implemented", this->file_offset);
+        throw compile_error("operator not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
       }
       this->current_type = Variable(ValueType::Bool);
       break;
@@ -539,13 +598,11 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         const void* target_function = (left_type.type == ValueType::Bytes) ?
             reinterpret_cast<const void*>(&bytes_contains) :
             reinterpret_cast<const void*>(&unicode_contains);
-        this->write_function_call(target_function,
-            NULL, {MemoryReference(this->target_register),
-              MemoryReference(Register::RSP, 8)}, {}, -1,
-            this->target_register);
+        this->write_function_call(target_function, NULL, {target_mem, left_mem},
+            {}, -1, this->target_register);
       } else {
         // TODO
-        throw compile_error("In/NotIn not yet implemented", this->file_offset);
+        throw compile_error("In/NotIn not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
       }
       if (a->oper == BinaryOperator::NotIn) {
         this->as.write_xor(this->target_register, 1);
@@ -556,137 +613,269 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::Is:
       // TODO
       this->current_type = Variable(ValueType::Bool);
-      throw compile_error("Is not yet implemented", this->file_offset);
+      throw compile_error("Is not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+
     case BinaryOperator::IsNot:
       // TODO
       this->current_type = Variable(ValueType::Bool);
-      throw compile_error("IsNot not yet implemented", this->file_offset);
+      throw compile_error("IsNot not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     case BinaryOperator::Or:
-      if (((left_type.type == ValueType::Int) ||
-           (left_type.type == ValueType::Bool)) &&
-          ((right_type.type == ValueType::Int) ||
-           (right_type.type == ValueType::Bool))) {
-        this->as.write_or(MemoryReference(this->target_register),
-            MemoryReference(Register::RSP, 8));
+      if (left_int && right_int) {
+        this->as.write_or(target_mem, left_mem);
         break;
       }
-      throw compile_error("Or only valid for integer types", this->file_offset);
+      throw compile_error("Or not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     case BinaryOperator::And:
-      if (((left_type.type == ValueType::Int) ||
-           (left_type.type == ValueType::Bool)) &&
-          ((right_type.type == ValueType::Int) ||
-           (right_type.type == ValueType::Bool))) {
-        this->as.write_and(MemoryReference(this->target_register),
-            MemoryReference(Register::RSP, 8));
+      if (left_int && right_int) {
+        this->as.write_and(target_mem, left_mem);
         break;
       }
-      throw compile_error("And only valid for integer types", this->file_offset);
+      throw compile_error("And not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     case BinaryOperator::Xor:
-      if (((left_type.type == ValueType::Int) ||
-           (left_type.type == ValueType::Bool)) &&
-          ((right_type.type == ValueType::Int) ||
-           (right_type.type == ValueType::Bool))) {
-        this->as.write_xor(MemoryReference(this->target_register),
-            MemoryReference(Register::RSP, 8));
+      if (left_int && right_int) {
+        this->as.write_xor(target_mem, left_mem);
         break;
       }
-      throw compile_error("Xor only valid for integer types", this->file_offset);
+      throw compile_error("Xor not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     case BinaryOperator::LeftShift:
     case BinaryOperator::RightShift:
-      if (((left_type.type == ValueType::Int) ||
-           (left_type.type == ValueType::Bool)) &&
-          ((right_type.type == ValueType::Int) ||
-           (right_type.type == ValueType::Bool))) {
+      if (left_int && right_int) {
         // we can only use cl apparently
         if (this->reserve_register(Register::RCX) != Register::RCX) {
-          throw compile_error("RCX not available for shift operation");
+          throw compile_error("RCX not available for shift operation", this->file_offset);
         }
         this->release_register(Register::RCX);
-        this->as.write_mov(rcx, MemoryReference(this->target_register));
-        this->as.write_mov(MemoryReference(this->target_register),
-            MemoryReference(Register::RSP, 8));
+        this->as.write_mov(rcx, target_mem);
+        this->as.write_mov(target_mem, left_mem);
         if (a->oper == BinaryOperator::LeftShift) {
-          this->as.write_shl_cl(MemoryReference(this->target_register));
+          this->as.write_shl_cl(target_mem);
         } else {
-          this->as.write_sar_cl(MemoryReference(this->target_register));
+          this->as.write_sar_cl(target_mem);
         }
         break;
       }
-      throw compile_error("LeftShift/RightShift only valid for integer types", this->file_offset);
+      throw compile_error("bit shift not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     case BinaryOperator::Addition:
       if ((left_type.type == ValueType::Bytes) &&
           (right_type.type == ValueType::Bytes)) {
         this->write_function_call(reinterpret_cast<const void*>(&bytes_concat),
-            NULL, {MemoryReference(Register::RSP, 8),
-              MemoryReference(this->target_register)}, {}, -1,
-            this->target_register);
-        break;
+            NULL, {left_mem, target_mem}, {}, -1, this->target_register);
+
       } else if ((left_type.type == ValueType::Unicode) &&
                  (right_type.type == ValueType::Unicode)) {
         this->write_function_call(reinterpret_cast<const void*>(&unicode_concat),
-            NULL, {MemoryReference(Register::RSP, 8),
-              MemoryReference(this->target_register)}, {}, -1,
-            this->target_register);
-        break;
-      } else if (((left_type.type == ValueType::Int) ||
-                  (left_type.type == ValueType::Bool)) &&
-                 ((right_type.type == ValueType::Int) ||
-                  (right_type.type == ValueType::Bool))) {
-        this->as.write_add(MemoryReference(this->target_register),
-            MemoryReference(Register::RSP, 8));
-        break;
+            NULL, {left_mem, target_mem}, {}, -1, this->target_register);
 
-      } else if ((left_type.type == ValueType::Float) &&
-                 (right_type.type == ValueType::Float)) {
-        this->as.write_addsd(this->float_target_register,
-            MemoryReference(Register::RSP, 8));
-        break;
+      } else if (left_int && right_int) {
+        this->as.write_add(target_mem, left_mem);
+
+      } else if (left_int && right_float) {
+        this->as.write_mov(this->target_register, left_mem);
+        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_addsd(this->float_target_register, right_mem);
+
+      } else if (left_float && right_int) {
+        // the int value is still in the target register; skip the memory access
+        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_addsd(this->float_target_register, left_mem);
+
+        // watch it: in this case the type is different from right_type
+        this->current_type = Variable(ValueType::Float);
+
+      } else if (left_float && right_float) {
+        this->as.write_addsd(this->float_target_register, left_mem);
+
+      } else {
+        throw compile_error("Addition not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
       }
-
-      // TODO
-      throw compile_error("Addition not yet implemented for these types", this->file_offset);
+      break;
 
     case BinaryOperator::Subtraction:
-      if (((left_type.type == ValueType::Int) ||
-           (left_type.type == ValueType::Bool)) &&
-          ((right_type.type == ValueType::Int) ||
-           (right_type.type == ValueType::Bool))) {
-        this->as.write_neg(MemoryReference(this->target_register));
-        this->as.write_add(MemoryReference(this->target_register),
-            MemoryReference(Register::RSP, 8));
-        break;
+      if (left_int && right_int) {
+        this->as.write_neg(target_mem);
+        this->as.write_add(target_mem, left_mem);
 
-      } else if ((left_type.type == ValueType::Float) &&
-                 (right_type.type == ValueType::Float)) {
-        this->as.write_subsd(this->float_target_register,
-            MemoryReference(Register::RSP, 8));
-        break;
+      } else if (left_int && right_float) {
+        this->as.write_mov(this->target_register, left_mem);
+        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_subsd(this->float_target_register, right_mem);
+
+      } else if (left_float && right_int) {
+        this->as.write_neg(target_mem);
+        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_addsd(this->float_target_register, left_mem);
+
+        // watch it: in this case the type is different from right_type
+        this->current_type = Variable(ValueType::Float);
+
+      } else if (left_float && right_float) {
+        this->as.write_movq_to_xmm(this->float_target_register, left_mem);
+        this->as.write_subsd(this->float_target_register, right_mem);
+
+      } else {
+        throw compile_error("Subtraction not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
       }
-      throw compile_error("Subtraction not valid for these types", this->file_offset);
+      break;
 
     case BinaryOperator::Multiplication:
-      // TODO
-      throw compile_error("Multiplication not yet implemented", this->file_offset);
-    case BinaryOperator::Division:
-      // TODO
-      throw compile_error("Division not yet implemented", this->file_offset);
+      if (left_int && right_int) {
+        this->as.write_imul(target_mem.base_register, left_mem);
+
+      } else if (left_int && right_float) {
+        this->as.write_mov(target_mem, left_mem);
+        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_mulsd(this->float_target_register, right_mem);
+
+      } else if (left_float && right_int) {
+        this->as.write_mov(target_mem, right_mem);
+        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_mulsd(this->float_target_register, left_mem);
+
+        // watch it: in this case the type is different from right_type
+        this->current_type = Variable(ValueType::Float);
+
+      } else if (left_float && right_float) {
+        this->as.write_mulsd(this->float_target_register, left_mem);
+
+      } else {
+        throw compile_error("Multiplication not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+      }
+      break;
+
+    case BinaryOperator::Division: {
+      // we'll need a temp reg for these
+      Register tmp_xmm = this->available_register_except(
+          {this->float_target_register}, true);
+      MemoryReference tmp_xmm_mem(tmp_xmm);
+
+      if (left_int && right_int) {
+        this->as.write_mov(target_mem, left_mem);
+        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_mov(target_mem, right_mem);
+        this->as.write_cvtsi2sd(tmp_xmm, this->target_register);
+        this->as.write_divsd(this->float_target_register, tmp_xmm_mem);
+
+      } else if (left_int && right_float) {
+        this->as.write_mov(target_mem, left_mem);
+        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_divsd(this->float_target_register, right_mem);
+
+      } else if (left_float && right_int) {
+        this->as.write_movsd(this->float_target_register, left_mem);
+        this->as.write_mov(target_mem, right_mem);
+        this->as.write_cvtsi2sd(tmp_xmm, this->target_register);
+        this->as.write_divsd(this->float_target_register, tmp_xmm_mem);
+
+      } else if (left_float && right_float) {
+        this->as.write_movsd(this->float_target_register, left_mem);
+        this->as.write_divsd(this->float_target_register, right_mem);
+
+      } else {
+        throw compile_error("Division not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+      }
+
+      this->current_type = Variable(ValueType::Float);
+      break;
+    }
+
     case BinaryOperator::Modulus:
-      // TODO
-      throw compile_error("Modulus not yet implemented", this->file_offset);
-    case BinaryOperator::IntegerDivision:
-      // TODO
-      throw compile_error("IntegerDivision not yet implemented", this->file_offset);
+      // TODO: deduplicate this with IntegerDivision below. the only difference
+      // is that here we take rdx instead of rax (remainder instead of quotient)
+      if (left_int && right_int) {
+        // x86 has a reasonable imul opcode, but no reasonable idiv; we have to
+        // use rdx and rax
+        if (!this->register_is_available(Register::RAX)) {
+          this->write_push(Register::RAX);
+        }
+        if (!this->register_is_available(Register::RDX)) {
+          this->write_push(Register::RDX);
+        }
+
+        this->as.write_mov(rax, left_mem);
+        this->as.write_xor(rdx, rdx);
+        this->as.write_idiv(right_mem);
+        if (this->target_register != Register::RDX) {
+          this->as.write_mov(target_mem, rdx);
+        }
+
+        if (!this->register_is_available(Register::RDX)) {
+          this->write_pop(Register::RDX);
+        }
+        if (!this->register_is_available(Register::RAX)) {
+          this->write_pop(Register::RAX);
+        }
+
+      } else {
+        throw compile_error("Modulus not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+      }
+      break;
+
+    case BinaryOperator::IntegerDivision: {
+      // we'll need a temp reg for all cases except Int // Int
+      Register tmp_xmm = this->available_register(Register::None, true);
+      MemoryReference tmp_xmm_mem(tmp_xmm);
+
+      // if right is an int, we'll use the idiv opcode
+      if (right_int) {
+        // x86 has a reasonable imul opcode, but no reasonable idiv; we have to
+        // use rdx and rax
+        if (!this->register_is_available(Register::RAX)) {
+          this->write_push(Register::RAX);
+        }
+        if (!this->register_is_available(Register::RDX)) {
+          this->write_push(Register::RDX);
+        }
+
+        if (left_int) {
+          this->as.write_mov(rax, left_mem);
+        } else if (left_float) {
+          this->as.write_movsd(tmp_xmm, left_mem);
+          this->as.write_cvtsd2si(Register::RAX, tmp_xmm);
+        } else {
+          throw compile_error("IntegerDivision left type is not Int or Float",
+              this->file_offset);
+        }
+
+        this->as.write_xor(rdx, rdx);
+        this->as.write_idiv(right_mem);
+        if (this->target_register != Register::RAX) {
+          this->as.write_mov(target_mem, rax);
+        }
+
+        if (!this->register_is_available(Register::RDX)) {
+          this->write_pop(Register::RDX);
+        }
+        if (!this->register_is_available(Register::RAX)) {
+          this->write_pop(Register::RAX);
+        }
+
+      // if right is a float, we'll do the division in float-land and truncate
+      } else if (right_float) {
+        if (left_int) {
+          this->as.write_mov(target_mem, left_mem);
+          this->as.write_cvtsi2sd(tmp_xmm, this->target_register);
+        } else if (left_float) {
+          this->as.write_movsd(tmp_xmm, left_mem);
+        } else {
+          throw compile_error("IntegerDivision not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+        }
+        this->as.write_divsd(tmp_xmm, right_mem);
+        this->as.write_cvtsd2si(this->target_register, tmp_xmm);
+
+      } else {
+        throw compile_error("IntegerDivision not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+      }
+      this->current_type = Variable(ValueType::Int);
+      break;
+    }
 
     case BinaryOperator::Exponentiation:
-      if (((left_type.type == ValueType::Int) ||
-           (left_type.type == ValueType::Bool)) &&
-          ((right_type.type == ValueType::Int) ||
-           (right_type.type == ValueType::Bool))) {
+      if (left_int && right_int) {
         // TODO: deal with negative exponents (currently we just do nothing)
 
         // implementation mirrors notes/pow.s except that we load the base value
@@ -707,7 +896,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       }
 
       // TODO
-      throw compile_error("Exponentiation not yet implemented", this->file_offset);
+      throw compile_error("Exponentiation not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     default:
       throw compile_error("unhandled binary operator", this->file_offset);
@@ -726,7 +915,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     this->as.write_label(string_printf("__BinaryOperation_%p_destroy_right", a));
     this->write_delete_reference(MemoryReference(Register::RSP, 16), right_type);
 
-    // now load the result again and clean up the stack
+    // load the result again and clean up the stack
     this->as.write_mov(MemoryReference(this->target_register),
         MemoryReference(Register::RSP, 0));
     this->adjust_stack(0x18);
@@ -977,7 +1166,10 @@ void CompilationVisitor::visit(FunctionCall* a) {
     shared_ptr<Expression> passed_value;
     Variable default_value; // Indeterminate for positional args
     Variable type;
+
+    Register target_register; // if the type is Float, this is an xmm register
     ssize_t stack_offset; // if < 0, this argument isn't stored on the stack
+
     bool evaluate_instance_pointer;
 
     ArgumentValue(const std::string& name) : name(name), passed_value(NULL),
@@ -1032,7 +1224,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
     arg_values.back().default_value = Variable(ValueType::Indeterminate);
   }
 
-  // now push remaining args, in the order the function defines them
+  // push remaining args, in the order the function defines them
   for (; callee_arg_index < fn->args.size(); callee_arg_index++) {
     const auto& callee_arg = fn->args[callee_arg_index];
 
@@ -1056,31 +1248,54 @@ void CompilationVisitor::visit(FunctionCall* a) {
         arg_values.size(), fn->args.size()), this->file_offset);
   }
 
-  // now start writing code
-
   // push all reserved registers
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
 
   // reserve stack space as needed
   ssize_t arg_stack_bytes = write_function_call_stack_prep(arg_values.size());
 
-  // now generate code for the arguments
+  // generate the register/stack assignments for the args
+  {
+    size_t int_arg_index = 0;
+    size_t float_arg_index = 0;
+    for (auto& arg : arg_values) {
+      if (arg.type.type == ValueType::Float) {
+        if (float_arg_index >= floating_argument_register_order.size()) {
+          throw compile_error("too many floating arguments to function call",
+              this->file_offset);
+        }
+        arg.target_register = floating_argument_register_order[float_arg_index++];
+
+      } else {
+        if (int_arg_index < argument_register_order.size()) {
+          arg.target_register = argument_register_order[int_arg_index++];
+          arg.stack_offset = -1; // passed through register only
+        } else {
+          arg.target_register = Register::None;
+          arg.stack_offset = sizeof(int64_t) * ((int_arg_index++) - argument_register_order.size());
+        }
+      }
+
+      if (arg.stack_offset >= arg_stack_bytes) {
+        throw compile_error(string_printf(
+            "argument stack overflow at function call time (0x%zX vs 0x%zX)",
+            arg.stack_offset, arg_stack_bytes), this->file_offset);
+      }
+    }
+  }
+
+  // generate code for the arguments
   Register original_target_register = this->target_register;
   for (size_t arg_index = 0; arg_index < arg_values.size(); arg_index++) {
     auto& arg = arg_values[arg_index];
 
     // figure out where to construct it into
-    if (arg_index < argument_register_order.size()) {
-      this->target_register = argument_register_order[arg_index];
-      arg.stack_offset = -1; // passed through register only
+    if (arg.type.type == ValueType::Float) {
+      this->float_target_register = arg.target_register;
+    } else if (arg.stack_offset < 0) {
+      this->target_register = arg.target_register;
     } else {
       this->target_register = this->available_register();
-      arg.stack_offset = sizeof(int64_t) * (arg_index - argument_register_order.size());
-    }
-    if (arg.stack_offset >= arg_stack_bytes) {
-      throw compile_error(string_printf(
-          "argument stack overflow at function call time (0x%zX vs 0x%zX)",
-          arg.stack_offset, arg_stack_bytes), this->file_offset);
     }
 
     // generate code for the argument's value
@@ -1153,6 +1368,14 @@ void CompilationVisitor::visit(FunctionCall* a) {
       arg.type = arg.default_value;
     }
 
+    // TODO: make float argument passing actually work. the problem is that we
+    // don't know the correct type until after we generate the code, but we
+    // allocate registers and stack space before generating any code. probably
+    // a bit of refactoring will be necessary to get this to work
+    if (arg.type.type == ValueType::Float) {
+      throw compile_error("passing floats as function arguments is not yet supported", this->file_offset);
+    }
+
     // store the value on the stack if needed; otherwise, mark the regsiter as
     // reserved
     if (arg.stack_offset < 0) {
@@ -1174,9 +1397,10 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
   // any remaining reserved registers will need to be saved
   // TODO: for now, just assert that there are no reserved registers (I'm lazy)
-  if (this->available_registers != default_available_registers) {
-    throw compile_error(string_printf("some registers were reserved at function call (%" PRIX64 " available, %" PRIX64 " expected)",
-        this->available_registers, default_available_registers), this->file_offset);
+  if ((this->available_int_registers != default_available_int_registers) ||
+      (this->available_float_registers != default_available_float_registers)) {
+    throw compile_error(string_printf("some registers were reserved at function call (%" PRIX64 " available)",
+        this->available_registers), this->file_offset);
   }
 
   // figure out which fragment to call
@@ -1305,6 +1529,8 @@ void CompilationVisitor::visit(FloatConstant* a) {
   this->assert_not_evaluating_instance_pointer();
 
   this->write_load_double(this->float_target_register, a->value);
+  this->current_type = Variable(ValueType::Float);
+  this->holding_reference = false;
 }
 
 void CompilationVisitor::visit(BytesConstant* a) {
@@ -1366,9 +1592,13 @@ void CompilationVisitor::visit(VariableLookup* a) {
   bool has_refcount = type_has_refcount(loc.type.type);
 
   // if this is an object, add a reference to it; otherwise just load it
-  this->as.write_mov(MemoryReference(this->target_register), loc.mem);
-  if (has_refcount) {
-    this->write_add_reference(this->target_register);
+  if (loc.type.type == ValueType::Float) {
+    this->as.write_movq_to_xmm(this->float_target_register, loc.mem);
+  } else {
+    this->as.write_mov(MemoryReference(this->target_register), loc.mem);
+    if (has_refcount) {
+      this->write_add_reference(this->target_register);
+    }
   }
 
   this->current_type = loc.type;
@@ -1578,7 +1808,7 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     }
     this->release_register(this->target_register);
 
-    // now save the value to the appropriate slot
+    // save the value to the appropriate slot
     if (target_variable->type == ValueType::Float) {
       this->as.write_movsd(loc.mem, MemoryReference(this->float_target_register));
     } else {
@@ -1662,7 +1892,7 @@ void CompilationVisitor::visit(AssignmentStatement* a) {
         this->file_offset);
   }
 
-  // now write the value into the appropriate slot
+  // write the value into the appropriate slot
   this->as.write_label(string_printf("__AssignmentStatement_%p_write_value", a));
   a->target->accept(this);
 
@@ -1918,7 +2148,7 @@ void CompilationVisitor::visit(ForStatement* a) {
     this->current_type = collection_type.extension_types[0];
     a->variable->accept(this);
 
-    // now do the loop body
+    // do the loop body
     this->as.write_label(string_printf("__ForStatement_%p_body", a));
     this->visit_list(a->items);
     this->as.write_jmp(next_label);
@@ -1965,7 +2195,7 @@ void CompilationVisitor::visit(ForStatement* a) {
     this->current_type = collection_type.extension_types[0];
     a->variable->accept(this);
 
-    // now do the loop body
+    // do the loop body
     this->as.write_label(string_printf("__ForStatement_%p_body", a));
     this->visit_list(a->items);
     this->as.write_jmp(next_label);
@@ -2179,6 +2409,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
           fragment = &fn->fragments.at(fragment_id);
         } catch (const std::out_of_range& e) {
           unordered_map<string, Variable> local_overrides;
+          local_overrides.emplace("self", Variable(ValueType::Instance, a->class_id, NULL));
           auto new_fragment = this->global->compile_scope(fn->module, fn,
               &local_overrides);
           fragment = &fn->fragments.emplace(fragment_id, move(new_fragment)).first->second;
@@ -2494,30 +2725,59 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
   this->as.write_mov(rbp, rsp);
 
   // reserve space for locals and write args into the right places
-  unordered_map<string, Register> arg_to_register;
-  unordered_map<string, int64_t> arg_to_stack_offset;
+  unordered_map<string, Register> int_arg_to_register;
+  unordered_map<string, int64_t> int_arg_to_stack_offset;
+  unordered_map<string, Register> float_arg_to_register;
   for (size_t arg_index = 0; arg_index < this->target_function->args.size(); arg_index++) {
     const auto& arg = this->target_function->args[arg_index];
-    if (arg_index < argument_register_order.size()) {
-      arg_to_register.emplace(arg.name, argument_register_order[arg_index]);
+
+    bool is_float;
+    try {
+      is_float = this->local_overrides.at(arg.name).type == ValueType::Float;
+    } catch (const out_of_range&) {
+      throw compile_error(string_printf("argument %s not present in local_overrides",
+          arg.name.c_str()), this->file_offset);
+    }
+
+    if (is_float) {
+      if (float_arg_to_register.size() >= floating_argument_register_order.size()) {
+        throw compile_error("function accepts too many float args", this->file_offset);
+      }
+      float_arg_to_register.emplace(arg.name,
+          floating_argument_register_order[float_arg_to_register.size()]);
+
+    } else if (int_arg_to_register.size() < argument_register_order.size()) {
+      int_arg_to_register.emplace(arg.name,
+          argument_register_order[int_arg_to_register.size()]);
+
     } else {
       // add 2, since at this point we've called the function and pushed RBP
-      arg_to_stack_offset.emplace(arg.name,
+      int_arg_to_stack_offset.emplace(arg.name,
           sizeof(int64_t) * (arg_index - argument_register_order.size() + 2));
     }
   }
 
   // set up the local space
   for (const auto& local : this->target_function->locals) {
+
+    // if it's a float arg, reserve stack space and write it from the xmm reg
+    try {
+      Register xmm_reg = float_arg_to_register.at(local.first);
+      this->adjust_stack(-8);
+      this->as.write_movsd(MemoryReference(Register::RSP, 0), xmm_reg);
+      continue;
+    } catch (const out_of_range&) { }
+
     // if it's a register arg, push it drectly
     try {
-      this->write_push(arg_to_register.at(local.first));
+      this->write_push(int_arg_to_register.at(local.first));
       continue;
     } catch (const out_of_range&) { }
 
     // if it's a stack arg, push it via r/m push
     try {
-      this->write_push(MemoryReference(Register::RBP, arg_to_stack_offset.at(local.first)));
+      this->write_push(MemoryReference(Register::RBP,
+          int_arg_to_stack_offset.at(local.first)));
       continue;
     } catch (const out_of_range&) { }
 
