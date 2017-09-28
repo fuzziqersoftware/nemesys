@@ -109,6 +109,8 @@ void create_builtin_name(const char* name, const Variable& value) {
 static void create_default_builtin_functions() {
   Variable None(ValueType::None);
   Variable Bool(ValueType::Bool);
+  Variable Bool_True(ValueType::Bool, true);
+  Variable Bool_False(ValueType::Bool, false);
   Variable Int(ValueType::Int);
   Variable Int_Zero(ValueType::Int, 0LL);
   Variable Float(ValueType::Float);
@@ -170,6 +172,42 @@ static void create_default_builtin_functions() {
     }
     return unicode_new(NULL, data.data(), data.size());
   }), true);
+
+  // Bool bool(Bool=False)
+  // Bool bool(Int)
+  // Bool bool(Float)
+  // Bool bool(Bytes)
+  // Bool bool(Unicode)
+  // Bool bool(List[Any])
+  // Bool bool(Tuple[...]) // unimplemented
+  // Bool bool(Set[Any]) // unimplemented
+  // Bool bool(Dict[Any, Any]) // unimplemented
+  // probably more that I'm forgetting right now
+  create_builtin_function("bool", {
+      FragDef({Bool_False}, Bool, reinterpret_cast<const void*>(+[](bool b) -> bool {
+    return b;
+
+  })), FragDef({Int}, Bool, reinterpret_cast<const void*>(+[](int64_t i) -> bool {
+    return static_cast<bool>(i);
+
+  })), FragDef({Float}, Bool, reinterpret_cast<const void*>(+[](double f) -> bool {
+    return (f != 0.0) && (f != -0.0);
+
+  })), FragDef({Bytes}, Bool, reinterpret_cast<const void*>(+[](BytesObject* b) -> bool {
+    bool ret = b->count != 0;
+    delete_reference(b);
+    return ret;
+
+  })), FragDef({Unicode}, Bool, reinterpret_cast<const void*>(+[](UnicodeObject* u) -> bool {
+    bool ret = u->count != 0;
+    delete_reference(u);
+    return ret;
+
+  })), FragDef({List_Any}, Int, reinterpret_cast<const void*>(+[](ListObject* l) -> bool {
+    bool ret = l->count != 0;
+    delete_reference(l);
+    return ret;
+  }))}, true);
 
   // Int int(Int=0, Int=0)
   // Int int(Bytes, Int=0)
@@ -369,65 +407,6 @@ static void create_default_builtin_functions() {
     s->count = swprintf(s->data, 19, L"%s0x%x", (i < 0) ? "-" : "", (i < 0) ? -i : i);
     return s;
   }), true);
-
-  // unimplemented:
-  //   __import__()
-  //   all()
-  //   any()
-  //   ascii()
-  //   bool()
-  //   bytearray()
-  //   bytes()
-  //   callable()
-  //   classmethod() // won't be implemented here (will be done statically)
-  //   compile()
-  //   complex()
-  //   delattr()
-  //   dict()
-  //   dir()
-  //   divmod()
-  //   enumerate()
-  //   eval()
-  //   exec()
-  //   filter()
-  //   format()
-  //   frozenset()
-  //   getattr()
-  //   globals()
-  //   hasattr()
-  //   hash()
-  //   help()
-  //   id()
-  //   isinstance()
-  //   issubclass()
-  //   iter()
-  //   list()
-  //   locals()
-  //   map()
-  //   max()
-  //   memoryview()
-  //   min()
-  //   next()
-  //   object()
-  //   oct()
-  //   open()
-  //   pow()
-  //   property()
-  //   range()
-  //   reversed()
-  //   round()
-  //   set()
-  //   setattr()
-  //   slice()
-  //   sorted()
-  //   staticmethod() // won't be implemented here (will be done statically)
-  //   str()
-  //   sum()
-  //   super()
-  //   tuple()
-  //   type()
-  //   vars()
-  //   zip()
 }
 
 
@@ -601,16 +580,13 @@ void create_default_builtin_names() {
   create_builtin_name("ValueError",                Variable(ValueType::Function));
   create_builtin_name("Warning",                   Variable(ValueType::Function));
   create_builtin_name("ZeroDivisionError",         Variable(ValueType::Function));
-  create_builtin_name("abs",                       Variable(ValueType::Function));
   create_builtin_name("all",                       Variable(ValueType::Function));
   create_builtin_name("any",                       Variable(ValueType::Function));
   create_builtin_name("ascii",                     Variable(ValueType::Function));
-  create_builtin_name("bin",                       Variable(ValueType::Function));
   create_builtin_name("bool",                      Variable(ValueType::Function));
   create_builtin_name("bytearray",                 Variable(ValueType::Function));
   create_builtin_name("bytes",                     Variable(ValueType::Function));
   create_builtin_name("callable",                  Variable(ValueType::Function));
-  create_builtin_name("chr",                       Variable(ValueType::Function));
   create_builtin_name("classmethod",               Variable(ValueType::Function));
   create_builtin_name("compile",                   Variable(ValueType::Function));
   create_builtin_name("complex",                   Variable(ValueType::Function));
