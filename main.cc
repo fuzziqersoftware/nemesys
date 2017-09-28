@@ -25,9 +25,15 @@ void print_usage(const char* argv0) {
 Usage:\n\
   %s [options] filename [arguments ...]\n\
   %s [options] -c\"code\" [arguments ...]\n\
+  %s [options] -m\"module.name\" [arguments ...]\n\
 \n\
 Options:\n\
-  -h, -?, --help: print this text and exit.\n\
+  -?, -h, --help: print this text and exit.\n\
+  -c: run the given code instead of loading from a file. All arguments passed\n\
+      after this option are passed to the program in sys.argv.\n\
+  -m: find the given module on the search paths and load it instead of an\n\
+      explicitly-specified file. All arguments passed after this option are\n\
+      passed to the program in sys.argv.\n\
   -X<debug>: enable debug flags.\n\
       Flags which print extra messages but don\'t modify behavior:\n\
         ShowSearchDebug - show actions when looking for source files\n\
@@ -46,9 +52,12 @@ Options:\n\
         All - enable all behavior flags and debug info\n\
       -X may be used multiple times to enable multiple flags.\n\
 \n\
-All arguments after a filename or -c option are not parsed by nemesys; instead,\n\
-they are available to the program in sys.argv.\n\
-", argv0, argv0);
+All arguments after a filename or -c option are not parsed; instead, they are\n\
+available to the program in sys.argv.\n\
+\n\
+The interactive shell is not yet implemented. Either a filename or the -c\n\
+option must be given.\n\
+", argv0, argv0, argv0);
 }
 
 int main(int argc, char* argv[]) {
@@ -60,8 +69,10 @@ int main(int argc, char* argv[]) {
   }
 
   // parse command line options
+  const char* module_spec = NULL;
   vector<const char*> sys_argv;
   bool module_is_code = false;
+  bool module_is_filename = true;
   size_t x;
   for (x = 1; x < argc; x++) {
     if (!strncmp(argv[x], "-X", 2)) {
@@ -75,10 +86,19 @@ int main(int argc, char* argv[]) {
       return 0;
 
     } else if (!strncmp(argv[x], "-c", 2)) {
-      sys_argv.emplace_back(&argv[x][2]);
+      module_spec = &argv[x][2];
+      sys_argv.emplace_back("-c");
       module_is_code = true;
       break;
+
+    } else if (!strncmp(argv[x], "-m", 2)) {
+      module_spec = &argv[x][2];
+      sys_argv.emplace_back("-m"); // this gets overwritten later
+      module_is_filename = false;
+      break;
+
     } else {
+      module_spec = argv[x];
       break;
     }
   }
@@ -89,7 +109,7 @@ int main(int argc, char* argv[]) {
   }
 
   // need a script or code to run
-  if (sys_argv.empty()) {
+  if (!module_spec || sys_argv.empty()) {
     fprintf(stderr, "nemesys does not yet implement an interactive shell\n");
     return 1;
   }
@@ -107,8 +127,15 @@ int main(int argc, char* argv[]) {
   }
   sys_set_argv(sys_argv);
 
+  // find the module if necessary
+  string found_filename;
+  if (!module_is_filename) {
+    found_filename = global->find_source_file(module_spec);
+    sys_argv[0] = found_filename.c_str();
+  }
+
   // run the specified script/code
-  global->get_or_create_module("__main__", sys_argv[0], module_is_code);
+  global->get_or_create_module("__main__", module_spec, module_is_code);
   global->get_module_at_phase("__main__", ModuleAnalysis::Phase::Imported);
 
   return 0;
