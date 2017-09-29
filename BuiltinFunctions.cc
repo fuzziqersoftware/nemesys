@@ -379,10 +379,10 @@ static void create_default_builtin_functions() {
     size_t x = 0;
     if (i < 0) {
       i = -i;
-      s->data[x++] = '-';
+      s->data[x++] = L'-';
     }
-    s->data[x++] = '0';
-    s->data[x++] = 'b';
+    s->data[x++] = L'0';
+    s->data[x++] = L'b';
 
     bool should_write = false;
     for (size_t y = 0; y < sizeof(int64_t) * 8; y++) {
@@ -391,9 +391,48 @@ static void create_default_builtin_functions() {
         should_write = true;
       }
       if (should_write) {
-        s->data[x++] = bit_set ? '1' : '0';
+        s->data[x++] = bit_set ? L'1' : L'0';
       }
       i <<= 1;
+    }
+    s->data[x] = 0;
+    s->count = x;
+    return s;
+  }), true);
+
+  // Unicode oct(Int)
+  create_builtin_function("oct", {Int}, Unicode,
+      reinterpret_cast<const void*>(+[](int64_t i) -> UnicodeObject* {
+    if (!i) {
+      return unicode_new(NULL, L"0o0", 3);
+    }
+
+    // this value is its own negative, so special-case it here so we can assume
+    // below that the sign bit is never set
+    if (i == 0x8000000000000000) {
+      return unicode_new(NULL, L"-0o1000000000000000000000", 25);
+    }
+
+    UnicodeObject* s = unicode_new(NULL, NULL, 25);
+    size_t x = 0;
+    if (i < 0) {
+      i = -i;
+      s->data[x++] = '-';
+    }
+    s->data[x++] = L'0';
+    s->data[x++] = L'o';
+
+    i <<= 1;
+    bool should_write = false;
+    for (ssize_t y = 63; y > 0; y -= 3) {
+      uint8_t value = ((i >> 61) & 7);
+      if (value != 0) {
+        should_write = true;
+      }
+      if (should_write) {
+        s->data[x++] = L'0' + value;
+      }
+      i <<= 3;
     }
     s->data[x] = 0;
     s->count = x;
@@ -506,10 +545,8 @@ void create_default_builtin_names() {
   create_builtin_name("__annotations__",           empty_dict);
   create_builtin_name("__build_class__",           Variable(ValueType::Function));
   create_builtin_name("__debug__",                 Variable(ValueType::Bool, true));
-  create_builtin_name("__doc__",                   Variable(ValueType::None));
   create_builtin_name("__import__",                Variable(ValueType::Function));
   create_builtin_name("__loader__",                Variable(ValueType::None));
-  create_builtin_name("__name__",                  Variable(ValueType::Unicode));
   create_builtin_name("__package__",               Variable(ValueType::None));
   create_builtin_name("__spec__",                  Variable(ValueType::None));
   create_builtin_name("ArithmeticError",           Variable(ValueType::Function));
@@ -623,7 +660,6 @@ void create_default_builtin_names() {
   create_builtin_name("min",                       Variable(ValueType::Function));
   create_builtin_name("next",                      Variable(ValueType::Function));
   create_builtin_name("object",                    Variable(ValueType::Function));
-  create_builtin_name("oct",                       Variable(ValueType::Function));
   create_builtin_name("open",                      Variable(ValueType::Function));
   create_builtin_name("ord",                       Variable(ValueType::Function));
   create_builtin_name("pow",                       Variable(ValueType::Function));

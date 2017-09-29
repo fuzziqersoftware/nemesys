@@ -7,3 +7,7 @@ a + b should be 1544: 1544
 a - b should be -512: -512
 a * b should be 530448: 530448
 b // a should be 1: 1
+bin(a) should be 0b1000000100: 0b1000000100
+bin(b) should be 0b10000000100: 0b10000000100
+oct(a) should be 0b1004: 0o1004
+oct(b) should be 0b2004: 0o2004
