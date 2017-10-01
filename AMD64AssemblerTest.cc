@@ -11,10 +11,25 @@
 using namespace std;
 
 
+static void* assemble(CodeBuffer& code, AMD64Assembler& as) {
+  multimap<size_t, string> compiled_labels;
+  unordered_set<size_t> patch_offsets;
+  string data = as.assemble(patch_offsets, &compiled_labels);
+  void* ret = code.append(data, &patch_offsets);
+
+  //print_data(stderr, ret, data.size(), reinterpret_cast<uint64_t>(ret));
+  //string disassembly = AMD64Assembler::disassemble(ret, data.size());
+  //fprintf(stderr, "%s\n", disassembly.c_str());
+
+  return ret;
+}
+
+
 void test_trivial_function() {
   printf("-- trivial function\n");
 
   AMD64Assembler as;
+  CodeBuffer code;
 
   as.write_push(Register::RBP);
   as.write_mov(rbp, rsp);
@@ -42,14 +57,7 @@ void test_trivial_function() {
   as.write_pop(Register::RBP);
   as.write_ret();
 
-  string code = as.assemble();
-  //print_data(stderr, code);
-
-  //string disassembly = AMD64Assembler::disassemble(code.data(), code.size());
-  //fprintf(stderr, "%s\n", disassembly.c_str());
-
-  CodeBuffer buf;
-  void* function = buf.append(code);
+  void* function = assemble(code, as);
 
   int64_t data = 0x0102030405060708;
   int64_t (*fn)(int64_t*) = reinterpret_cast<int64_t (*)(int64_t*)>(function);
@@ -65,6 +73,7 @@ void test_pow() {
   printf("-- pow\n");
 
   AMD64Assembler as;
+  CodeBuffer code;
 
   // this mirrors the implementation in notes/pow.s
   as.write_mov(rax, 1);
@@ -78,14 +87,7 @@ void test_pow() {
   as.write_jnz("_pow_again");
   as.write_ret();
 
-  string code = as.assemble();
-  //print_data(stderr, code);
-
-  //string disassembly = AMD64Assembler::disassemble(code.data(), code.size());
-  //fprintf(stderr, "%s\n", disassembly.c_str());
-
-  CodeBuffer buf;
-  void* function = buf.append(code);
+  void* function = assemble(code, as);
   int64_t (*pow)(int64_t, int64_t) = reinterpret_cast<int64_t (*)(int64_t, int64_t)>(function);
 
   assert(pow(0, 0) == 1);
@@ -128,6 +130,7 @@ void test_quicksort() {
   printf("-- quicksort\n");
 
   AMD64Assembler as;
+  CodeBuffer code;
 
   // this mirrors the implementation in notes/quicksort.s
   as.write_mov(rdx, rdi);
@@ -168,14 +171,7 @@ void test_quicksort() {
   as.write_pop(Register::RSI);
   as.write_jmp("0");
 
-  string code = as.assemble();
-  //print_data(stderr, code);
-
-  //string disassembly = AMD64Assembler::disassemble(code.data(), code.size());
-  //fprintf(stderr, "%s\n", disassembly.c_str());
-
-  CodeBuffer buf;
-  void* function = buf.append(code);
+  void* function = assemble(code, as);
   int64_t (*quicksort)(int64_t*, int64_t) = reinterpret_cast<int64_t (*)(int64_t*, int64_t)>(function);
 
   vector<vector<int64_t>> cases = {
@@ -204,9 +200,10 @@ void test_quicksort() {
 
 
 void test_float_move_load_multiply() {
-  printf("-- floating move + load + multiple\n");
+  printf("-- floating move + load + multiply\n");
 
   AMD64Assembler as;
+  CodeBuffer code;
 
   as.write_movq_from_xmm(rax, Register::XMM0);
   as.write_movq_to_xmm(Register::XMM0, rax);
@@ -214,14 +211,7 @@ void test_float_move_load_multiply() {
   as.write_mulsd(Register::XMM0, xmm1);
   as.write_ret();
 
-  string code = as.assemble();
-  //print_data(stderr, code);
-
-  //string disassembly = AMD64Assembler::disassemble(code.data(), code.size());
-  //fprintf(stderr, "%s\n", disassembly.c_str());
-
-  CodeBuffer buf;
-  void* function = buf.append(code);
+  void* function = assemble(code, as);
   double (*mul)(double*, double) = reinterpret_cast<double (*)(double*, double)>(function);
 
   double x = 1.5;
@@ -233,6 +223,7 @@ void test_float_neg() {
   printf("-- floating negative\n");
 
   AMD64Assembler as;
+  CodeBuffer code;
 
   as.write_movq_from_xmm(rax, Register::XMM0);
   as.write_rol(rax, 1);
@@ -241,34 +232,38 @@ void test_float_neg() {
   as.write_movq_to_xmm(Register::XMM0, rax);
   as.write_ret();
 
-  string code = as.assemble();
-  //print_data(stderr, code);
-
-  //string disassembly = AMD64Assembler::disassemble(code.data(), code.size());
-  //fprintf(stderr, "%s\n", disassembly.c_str());
-
-  CodeBuffer buf;
-  void* function = buf.append(code);
+  void* function = assemble(code, as);
   double (*neg)(double) = reinterpret_cast<double (*)(double)>(function);
 
   assert(neg(1.5) == -1.5);
 }
 
 
-double test_lolz() {
-  double x = 3.5;
-  x = -x;
-  return x;
+void test_absolute_patches() {
+  printf("-- absolute patches\n");
+
+  AMD64Assembler as;
+  CodeBuffer code;
+
+  as.write_mov(Register::RAX, "label1");
+  as.write_label("label1");
+  as.write_ret();
+
+  void* function = assemble(code, as);
+  size_t (*fn)() = reinterpret_cast<size_t (*)()>(function);
+
+  // the movabs opcode is 10 bytes long
+  assert(fn() == reinterpret_cast<size_t>(function) + 10);
 }
 
 
 int main(int argc, char** argv) {
-  test_lolz();
   test_trivial_function();
   test_pow();
   test_quicksort();
   test_float_move_load_multiply();
   test_float_neg();
+  test_absolute_patches();
 
   printf("-- all tests passed\n");
   return 0;

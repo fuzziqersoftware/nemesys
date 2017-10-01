@@ -424,6 +424,7 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
   // create the compilation visitor
   string scope_name;
   multimap<size_t, string> compiled_labels;
+  unordered_set<size_t> patch_offsets;
   unique_ptr<CompilationVisitor> v;
   if (fn) {
     auto* cls = this->context_for_class(fn->class_id);
@@ -452,6 +453,11 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
     fputc('\n', stderr);
   }
 
+  static unordered_set<string> scopes_in_progress;
+  if (!scopes_in_progress.emplace(scope_name).second) {
+    throw compile_error("recursive compilation attempt");
+  }
+
   // compile it
   try {
     if (fn) {
@@ -461,17 +467,21 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
     }
 
   } catch (const compile_error& e) {
+    scopes_in_progress.erase(scope_name);
+
     this->print_compile_error(stderr, module, e);
 
     fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
         scope_name.c_str());
-    const string& compiled = v->assembler().assemble(&compiled_labels, true);
+    const string& compiled = v->assembler().assemble(patch_offsets,
+        &compiled_labels, true);
     string disassembly = AMD64Assembler::disassemble(compiled.data(),
         compiled.size(), 0, &compiled_labels);
     fprintf(stderr, "\n%s\n", disassembly.c_str());
 
     throw;
   }
+  scopes_in_progress.erase(scope_name);
 
   if (debug_flags & DebugFlag::ShowCompileDebug) {
     fprintf(stderr, "[%s] ======== scope compiled\n\n",
@@ -487,14 +497,14 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
     return_type = *v->return_types().begin();
   }
 
-  string compiled = v->assembler().assemble(&compiled_labels);
-  const void* executable = this->code.append(compiled);
+  string compiled = v->assembler().assemble(patch_offsets, &compiled_labels);
+  const void* executable = this->code.append(compiled, &patch_offsets);
   module->compiled_size += compiled.size();
 
   if (debug_flags & DebugFlag::ShowAssembly) {
     fprintf(stderr, "[%s] ======== scope assembled\n", scope_name.c_str());
     uint64_t addr = reinterpret_cast<uint64_t>(executable);
-    string disassembly = AMD64Assembler::disassemble(compiled.data(),
+    string disassembly = AMD64Assembler::disassemble(executable,
         compiled.size(), addr, &compiled_labels);
     fprintf(stderr, "\n%s\n", disassembly.c_str());
   }

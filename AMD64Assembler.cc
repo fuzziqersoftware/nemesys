@@ -733,6 +733,15 @@ void AMD64Assembler::write_mov(Register reg, int64_t value, OperandSize size) {
   this->write(data);
 }
 
+void AMD64Assembler::write_mov(Register reg, const string& label_name) {
+  string data;
+  data += 0x48 | (is_extension_register(reg) ? 0x01 : 0);
+  data += 0xB8 | (reg & 7);
+  data.append("\0\0\0\0\0\0\0\0", 8);
+
+  this->stream.emplace_back(data, label_name, data.size() - 8, 8, true);
+}
+
 void AMD64Assembler::write_mov(const MemoryReference& mem, int64_t value,
     OperandSize size) {
   Operation op = (size == OperandSize::Byte) ? Operation::MOV_MEM8_IMM : Operation::MOV_MEM_IMM;
@@ -1440,8 +1449,8 @@ void AMD64Assembler::write(const string& data) {
   this->stream.emplace_back(data);
 }
 
-string AMD64Assembler::assemble(multimap<size_t, string>* label_offsets,
-    bool skip_missing_labels) {
+string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
+    multimap<size_t, string>* label_offsets, bool skip_missing_labels) {
   string code;
 
   // general strategy: assemble everything in order. for backward jumps, we know
@@ -1449,6 +1458,44 @@ string AMD64Assembler::assemble(multimap<size_t, string>* label_offsets,
   // jumps, compute the offset as if all intervening jumps are 32-bit jumps, and
   // then backpatch the offset appropriately. this will waste space in some edge
   // cases but I'm lazy
+
+  auto apply_patch = [&code, &patch_offsets](const Label& l, const Patch& p) {
+    int64_t value = static_cast<int64_t>(l.byte_location);
+    if (!p.absolute) {
+      value -= (static_cast<int64_t>(p.where) + p.size);
+    }
+
+    // 8-bit patch
+    if (p.size == 1) {
+      if (p.absolute) {
+        throw runtime_error("8-bit patches must be relative");
+      }
+      if ((value < -0x80) || (value > 0x7F)) {
+        throw runtime_error("8-bit patch location too far away");
+      }
+      *reinterpret_cast<int8_t*>(&code[p.where]) = static_cast<int8_t>(value);
+
+    // 32-bit patch
+    } else if (p.size == 4) {
+      if (p.absolute) {
+        throw runtime_error("32-bit patches must be relative");
+      }
+      if ((value < -0x80000000LL) || (value > 0x7FFFFFFFLL)) {
+        throw runtime_error("32-bit patch location too far away");
+      }
+      *reinterpret_cast<int32_t*>(&code[p.where]) = static_cast<int32_t>(value);
+
+    // 64-bit patch
+    } else if (p.size == 8) {
+      if (p.absolute) {
+        patch_offsets.emplace(p.where);
+      }
+      *reinterpret_cast<int64_t*>(&code[p.where]) = value;
+
+    } else {
+      throw invalid_argument("patch size is not 1, 4, or 8 bytes");
+    }
+  };
 
   size_t stream_location = 0;
   auto label_it = this->labels.begin();
@@ -1466,24 +1513,7 @@ string AMD64Assembler::assemble(multimap<size_t, string>* label_offsets,
       // if there are patches waiting, perform them now that the label's
       // location is determined
       for (const auto& patch : label_it->patches) {
-        // 8-bit patch
-        if (!patch.is_32bit) {
-          int64_t offset = static_cast<int64_t>(label_it->byte_location)
-              - (static_cast<int64_t>(patch.where) + 1);
-          if ((offset < -0x80) || (offset > 0x7F)) {
-            throw runtime_error("8-bit patch location too far away");
-          }
-          *reinterpret_cast<int8_t*>(&code[patch.where]) = static_cast<int8_t>(offset);
-
-        // 32-bit patch
-        } else {
-          int64_t offset = static_cast<int64_t>(label_it->byte_location)
-              - (static_cast<int64_t>(patch.where) + 4);
-          if ((offset < -0x80000000LL) || (offset > 0x7FFFFFFFLL)) {
-            throw runtime_error("32-bit patch location too far away");
-          }
-          *reinterpret_cast<int32_t*>(&code[patch.where]) = static_cast<int32_t>(offset);
-        }
+        apply_patch(*label_it, patch);
       }
       label_it->patches.clear();
       label_it++;
@@ -1511,16 +1541,7 @@ string AMD64Assembler::assemble(multimap<size_t, string>* label_offsets,
         } else {
 
           // find the target label
-          auto target_label_it = label_it;
-          for (; target_label_it != this->labels.end(); target_label_it++) {
-            if (target_label_it->name == item.data) {
-              break;
-            }
-          }
-          if (target_label_it == this->labels.end()) {
-            throw runtime_error("label not found in forward stream: " + item.data);
-          }
-          size_t target_stream_location = target_label_it->stream_location;
+          size_t target_stream_location = label->stream_location;
 
           // find the maximum number of bytes between here and there
           int64_t max_displacement = 0;
@@ -1541,16 +1562,42 @@ string AMD64Assembler::assemble(multimap<size_t, string>* label_offsets,
               item.relative_jump_opcode32, code.size(),
               code.size() + max_displacement);
           if ((max_displacement < 0x80) && item.relative_jump_opcode8) {
-            target_label_it->patches.emplace_back(code.size() - 1, false);
+            label->patches.emplace_back(code.size() - 1, 1, false);
           } else {
-            target_label_it->patches.emplace_back(code.size() - 4, true);
+            label->patches.emplace_back(code.size() - 4, 4, false);
           }
         }
       }
 
-    // this item is not a jump opcode; just stick it in the buffer
+    // this item is not a jump opcode; stick it in the buffer
     } else {
       code += item.data;
+    }
+
+    // if this stream item has a patch, apply it from the appropriate label
+    if (item.patch.size) {
+      // get the label that the patch refers to
+      Label* label = NULL;
+      try {
+        label = this->name_to_label.at(item.patch_label_name);
+      } catch (const out_of_range& e) {
+        if (!skip_missing_labels) {
+          throw runtime_error("nonexistent label: " + item.patch_label_name);
+        }
+      }
+
+      if (label) {
+        // if we know the label's location already, apply the patch now
+        if (label->byte_location <= code.size()) {
+          apply_patch(*label, item.patch);
+
+        // if we don't know the label's location, make the patch pending
+        } else {
+          label->patches.emplace_back(
+              code.size() - item.data.size() + item.patch.where,
+              item.patch.size, item.patch.absolute);
+        }
+      }
     }
 
     stream_location++;
@@ -1570,17 +1617,27 @@ string AMD64Assembler::assemble(multimap<size_t, string>* label_offsets,
   return code;
 }
 
+AMD64Assembler::StreamItem::StreamItem(const std::string& data) : data(data),
+    relative_jump_opcode8(Operation::ADD_STORE8),
+    relative_jump_opcode32(Operation::ADD_STORE8), patch(0, 0, false) { }
+
 AMD64Assembler::StreamItem::StreamItem(const std::string& data,
     Operation opcode8, Operation opcode32) : data(data),
-    relative_jump_opcode8(opcode8), relative_jump_opcode32(opcode32) { }
+    relative_jump_opcode8(opcode8), relative_jump_opcode32(opcode32),
+    patch(0, 0, false) { }
 
-AMD64Assembler::Label::Patch::Patch(size_t where, bool is_32bit) : where(where),
-    is_32bit(is_32bit) { }
+AMD64Assembler::StreamItem::StreamItem(const std::string& data,
+    const string& patch_label_name, size_t where, uint8_t size, bool absolute) :
+    data(data), relative_jump_opcode8(Operation::ADD_STORE8),
+    relative_jump_opcode32(Operation::ADD_STORE8),
+    patch_label_name(patch_label_name), patch(where, size, absolute) { }
+
+AMD64Assembler::Patch::Patch(size_t where, uint8_t size, bool absolute) :
+    where(where), size(size), absolute(absolute) { }
 
 AMD64Assembler::Label::Label(const std::string& name, size_t stream_location) :
     name(name), stream_location(stream_location),
     byte_location(0xFFFFFFFFFFFFFFFF) { }
-
 
 
 

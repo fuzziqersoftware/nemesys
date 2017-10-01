@@ -504,21 +504,15 @@ struct FileObject {
     block->count = bytes_read;
     return block;
   }
-};
+}; */
 
 void create_default_builtin_classes() {
-  const map<string, Variable> file_attributes({
-    // {"__enter__", Variable()},
-    // {"__exit__", Variable()},
-    // {"__iter__", Variable()},
-    // {"__next__", Variable()},
-    // {"__repr__", Variable()},
-    // {"_checkClosed", Variable()},
-    // {"_checkReadable", Variable()},
-    // {"_checkSeekable", Variable()},
-    // {"_checkWritable", Variable()},
-    // {"_dealloc_warn", Variable()},
-    // {"_finalizing", Variable()},
+  /* const map<string, Variable> file_attributes({
+    {"__enter__", Variable()},
+    {"__exit__", Variable()},
+    {"__iter__", Variable()},
+    {"__next__", Variable()},
+    {"__repr__", Variable()},
     {"close", Variable()},
     {"closed", Variable()},
     {"fileno", Variable()},
@@ -533,10 +527,11 @@ void create_default_builtin_classes() {
     {"tell", Variable()},
     {"truncate", Variable()},
     {"write", Variable()},
-  });
-} */
+  }); */
 
-void create_default_builtin_classes() { }
+  //int64_t MemoryError_class_id = create_builtin_class("MemoryError", {}, {},
+  //    NULL, free, true);
+}
 
 void create_default_builtin_names() {
   static const unordered_map<Variable, shared_ptr<Variable>> empty_dict_contents;

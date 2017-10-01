@@ -963,8 +963,10 @@ void AnalysisVisitor::visit(WithStatement* a) {
 void AnalysisVisitor::visit(FunctionDefinition* a) {
   // TODO: reduce code duplication between here and LambdaDefinition
 
-  // assign all the arguments as Indeterminate for now; we'll come back and
-  // fix them later
+  // record the assignment of the function object to the function's name first
+  // in order to handle recursion properly
+  this->record_assignment(a->name,
+      Variable(ValueType::Function, a->function_id), a->file_offset);
 
   if (!a->decorators.empty()) {
     throw compile_error("decorators not yet supported", a->file_offset);
@@ -974,6 +976,8 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
   this->in_function_id = a->function_id;
   auto* fn = this->current_function();
 
+  // assign all the arguments as Indeterminate for now; we'll come back and
+  // fix them later
   for (size_t x = 0; x < a->args.args.size(); x++) {
     auto& arg = a->args.args[x];
 
@@ -1040,9 +1044,6 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
   }
 
   this->in_function_id = prev_function_id;
-
-  this->record_assignment(a->name,
-      Variable(ValueType::Function, a->function_id), a->file_offset);
 }
 
 void AnalysisVisitor::visit(ClassDefinition* a) {

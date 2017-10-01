@@ -362,7 +362,8 @@ public:
 
   // skip_missing_labels should only be used when debugging callers; it may
   // cause assemble() to return incorrect offsets for jmp/call opcodes
-  std::string assemble(std::multimap<size_t, std::string>* label_offsets = NULL,
+  std::string assemble(std::unordered_set<size_t>& patch_offsets,
+      std::multimap<size_t, std::string>* label_offsets = NULL,
       bool skip_missing_labels = false);
 
   static std::string disassemble(const void* vdata, size_t size,
@@ -386,6 +387,7 @@ public:
       OperandSize size = OperandSize::QuadWord);
   void write_mov(Register reg, int64_t value,
       OperandSize size = OperandSize::QuadWord);
+  void write_mov(Register reg, const std::string& label_name);
   void write_mov(const MemoryReference& mem, int64_t value,
       OperandSize size = OperandSize::QuadWord);
   void write_xchg(Register r, const MemoryReference& mem,
@@ -590,16 +592,25 @@ private:
 
   void write(const std::string& opcode);
 
+  struct Patch {
+    size_t where;
+    uint8_t size; // 1, 4, or 8
+    bool absolute;
+    Patch(size_t where, uint8_t size, bool absolute);
+  };
+
   struct StreamItem {
     std::string data;
-    Operation relative_jump_opcode8; // 0 if not relative jump
-    Operation relative_jump_opcode32; // 0 if not relative jump
+    Operation relative_jump_opcode8; // 0 if not a relative jump
+    Operation relative_jump_opcode32; // 0 if not a relative jump
 
-    StreamItem(const std::string& data,
-        Operation opcode8 = Operation::ADD_STORE8,
-        Operation opcode32 = Operation::ADD_STORE8);
-    StreamItem(const StreamItem&) = delete;
-    StreamItem(StreamItem&&) = default;
+    std::string patch_label_name; // blank for no patch
+    Patch patch; // relative to start of data string
+
+    StreamItem(const std::string& data);
+    StreamItem(const std::string& data, Operation opcode8, Operation opcode32);
+    StreamItem(const std::string& data, const std::string& patch_label_name,
+        size_t where, uint8_t size, bool absolute);
   };
   std::deque<StreamItem> stream;
 
@@ -607,12 +618,6 @@ private:
     std::string name;
     size_t stream_location;
     size_t byte_location;
-
-    struct Patch {
-      size_t where;
-      bool is_32bit;
-      Patch(size_t where, bool is_32bit);
-    };
     std::deque<Patch> patches;
 
     Label(const std::string& name, size_t stream_location);

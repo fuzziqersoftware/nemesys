@@ -2495,15 +2495,16 @@ void CompilationVisitor::visit(ClassDefinition* a) {
 
       // assemble it
       multimap<size_t, string> compiled_labels;
-      string compiled = dtor_as.assemble(&compiled_labels);
-      cls->destructor = this->global->code.append(compiled);
+      unordered_set<size_t> patch_offsets;
+      string compiled = dtor_as.assemble(patch_offsets, &compiled_labels);
+      cls->destructor = this->global->code.append(compiled, &patch_offsets);
       this->module->compiled_size += compiled.size();
 
       if (debug_flags & DebugFlag::ShowAssembly) {
         fprintf(stderr, "[%s:%" PRId64 "] class destructor assembled\n",
             a->name.c_str(), a->class_id);
         uint64_t addr = reinterpret_cast<uint64_t>(cls->destructor);
-        string disassembly = AMD64Assembler::disassemble(compiled.data(),
+        string disassembly = AMD64Assembler::disassemble(cls->destructor,
             compiled.size(), addr, &compiled_labels);
         fprintf(stderr, "\n%s\n", disassembly.c_str());
       }
@@ -2768,7 +2769,7 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
       continue;
     } catch (const out_of_range&) { }
 
-    // if it's a register arg, push it drectly
+    // if it's a register arg, push it directly
     try {
       this->write_push(int_arg_to_register.at(local.first));
       continue;

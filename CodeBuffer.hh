@@ -2,6 +2,7 @@
 
 #include <map>
 #include <string>
+#include <unordered_set>
 
 
 class CodeBuffer {
@@ -9,8 +10,13 @@ public:
   CodeBuffer(size_t block_size = 64 * 1024);
   ~CodeBuffer() = default;
 
-  void* append(const std::string& data);
-  void* append(const void* data, size_t size);
+  // note: these don't return const void* because the c++ compiler complains
+  // about casting away constness when you reinterpret_cast them. if you're dumb
+  // enough to try to write to this pointer then you deserve your segfault
+  void* append(const std::string& data,
+      const std::unordered_set<size_t>* patch_offsets = NULL);
+  void* append(const void* data, size_t size,
+      const std::unordered_set<size_t>* patch_offsets = NULL);
 
   size_t total_size() const;
   size_t total_used_bytes() const;
@@ -28,7 +34,8 @@ private:
     Block& operator=(Block&&) = delete; // this could be implemented but I'm lazy
     ~Block();
 
-    void* append(const void* data, size_t size);
+    void* append(const void* data, size_t size,
+        const std::unordered_set<size_t>* patch_offsets = NULL);
   };
 
   size_t size;
