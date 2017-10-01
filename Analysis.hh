@@ -52,6 +52,8 @@ struct ClassContext {
   int64_t offset_for_attribute(const char* attribute) const;
   int64_t offset_for_attribute(size_t index) const;
   void set_attribute(void* instance, const char* attribute, int64_t value) const;
+
+  static const size_t attribute_offset;
 };
 
 struct FunctionContext {

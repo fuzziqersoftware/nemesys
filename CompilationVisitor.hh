@@ -118,6 +118,7 @@ private:
   int64_t stack_bytes_used;
 
   std::string return_label;
+  std::string exception_return_label;
   // TODO: break_label and continue_label stacks
 
   struct VariableLocation {
@@ -132,6 +133,7 @@ private:
   bool holding_reference;
 
   bool evaluating_instance_pointer;
+  bool in_finally_block;
 
   // output manager
   AMD64Assembler as;
@@ -157,7 +159,7 @@ private:
 
   void assert_not_evaluating_instance_pointer();
 
-  ssize_t write_function_call_stack_prep(size_t arg_count);
+  ssize_t write_function_call_stack_prep(size_t arg_count = 0);
   void write_function_call(const void* function,
       const MemoryReference* function_loc,
       const std::vector<const MemoryReference>& args,
@@ -168,13 +170,18 @@ private:
 
   void write_add_reference(Register addr_reg);
   void write_delete_held_reference(const MemoryReference& mem);
-  void write_delete_reference(const MemoryReference& mem, const Variable& type);
+  void write_delete_reference(const MemoryReference& mem, ValueType type);
+
+  void write_create_exception_block(
+    const std::vector<std::pair<std::string, std::unordered_set<int64_t>>>& label_to_class_ids,
+    const std::string& exception_return_label);
 
   void write_push(Register reg);
   void write_push(const MemoryReference& mem);
   void write_push(int64_t value);
   void write_pop(Register reg);
-  void adjust_stack(ssize_t bytes);
+  void adjust_stack(ssize_t bytes, bool write_opcode = true);
+  void adjust_stack_to(ssize_t bytes, bool write_opcode = true);
 
   void write_load_double(Register reg, double value);
 

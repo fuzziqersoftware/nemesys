@@ -77,7 +77,8 @@ void* CodeBuffer::Block::append(const void* data, size_t size,
   if (patch_offsets) {
     size_t delta = reinterpret_cast<ssize_t>(dest);
     for (size_t offset : *patch_offsets) {
-      *reinterpret_cast<size_t*>(reinterpret_cast<uint8_t*>(this->data) + offset) += delta;
+      *reinterpret_cast<size_t*>(reinterpret_cast<uint8_t*>(dest) + offset) +=
+          delta;
     }
   }
   mprotect(this->data, this->size, PROT_READ | PROT_EXEC);

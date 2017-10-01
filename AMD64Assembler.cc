@@ -1824,9 +1824,10 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
       if (offset >= size) {
         opcode_text += ", <<incomplete>>";
       } else {
-        bool negative = data[offset] < 0;
+        int8_t signed_data = static_cast<int8_t>(data[offset]);
+        bool negative = signed_data < 0;
         opcode_text = string_printf("push     %s0x%02X",
-            negative ? "-" : "", negative ? data[offset] : -data[offset]);
+            negative ? "-" : "", negative ? -signed_data : signed_data);
         offset += 1;
       }
 

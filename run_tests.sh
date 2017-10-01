@@ -34,5 +34,17 @@ echo "-- tests.classes"
 ./nemesys tests/classes.py | diff -U3 tests/classes.expected_output -
 echo "-- tests.static_analysis"
 ./nemesys tests/static_analysis.py | diff -U3 tests/static_analysis.expected_output -
+echo "-- tests.exceptions_basic (no y)"
+echo "ok" | ./nemesys tests/exceptions_basic.py | diff -U3 tests/exceptions_basic.no_y.expected_output -
+echo "-- tests.exceptions_basic (y)"
+echo "yep" | ./nemesys tests/exceptions_basic.py | diff -U3 tests/exceptions_basic.y.expected_output -
+echo "-- tests.exceptions_nested (no y)"
+echo "ok" | ./nemesys tests/exceptions_nested.py | diff -U3 tests/exceptions_nested.no_y.expected_output -
+echo "-- tests.exceptions_nested (y)"
+echo "yep" | ./nemesys tests/exceptions_nested.py | diff -U3 tests/exceptions_nested.y.expected_output -
+echo "-- tests.exceptions_functions (no y)"
+echo "ok" | ./nemesys tests/exceptions_functions.py | diff -U3 tests/exceptions_functions.no_y.expected_output -
+echo "-- tests.exceptions_functions (y)"
+echo "yep" | ./nemesys tests/exceptions_functions.py | diff -U3 tests/exceptions_functions.y.expected_output -
 
 echo "-- all tests passed"

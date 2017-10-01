@@ -672,6 +672,11 @@ void AnalysisVisitor::visit(AssertStatement* a) {
   if ((!this->current_value.value_known || !this->current_value.truth_value()) &&
       a->failure_message.get()) {
     a->failure_message->accept(this);
+
+    // the message must be a unicode object
+    if (this->current_value.type != ValueType::Unicode) {
+      throw compile_error("assertion failure message is not Unicode", a->file_offset);
+    }
   }
 }
 
@@ -925,8 +930,37 @@ void AnalysisVisitor::visit(ExceptStatement* a) {
   if (a->types.get()) {
     a->types->accept(this);
   }
+
+  // parse the types value
+  // TODO: currently we only support exception handling where the types are
+  // statically resolvable, and the types must be either a single class or a
+  // tuple of classes
+  if (this->current_value.type == ValueType::Class) {
+    a->class_ids.emplace(this->current_value.class_id);
+
+  } else if (this->current_value.type == ValueType::Tuple) {
+    for (const auto& type : *this->current_value.list_value) {
+      if (type->type != ValueType::Class) {
+        throw compile_error("invalid exception type: " + type->str(),
+            a->file_offset);
+      }
+      a->class_ids.emplace(type->class_id);
+    }
+
+  } else {
+    throw compile_error("invalid exception type: " + this->current_value.str(),
+        a->file_offset);
+  }
+
+  // TODO: support catching multiple exception types in one statement
+  if (a->class_ids.size() != 1) {
+    throw compile_error("except statement does not catch exactly one type",
+        a->file_offset);
+  }
+
   if (!a->name.empty()) {
-    this->record_assignment(a->name, Variable(ValueType::Class), a->file_offset);
+    this->record_assignment(a->name, Variable(ValueType::Instance,
+        *a->class_ids.begin(), NULL), a->file_offset);
   }
 
   this->visit_list(a->items);

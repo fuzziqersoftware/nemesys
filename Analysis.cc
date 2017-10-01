@@ -52,7 +52,7 @@ void ClassContext::populate_dynamic_attributes() {
 }
 
 int64_t ClassContext::instance_size() const {
-  return sizeof(int64_t) * (this->dynamic_attribute_indexes.size() + 2);
+  return sizeof(int64_t) * (this->dynamic_attribute_indexes.size() + 3);
 }
 
 void* ClassContext::allocate_object() const {
@@ -63,19 +63,21 @@ void* ClassContext::allocate_object() const {
 }
 
 int64_t ClassContext::offset_for_attribute(const char* attribute) const {
-  // attributes are stored at [instance + 8 * which + 16]
+  // attributes are stored at [instance + 8 * which + attribute_offset]
   return this->offset_for_attribute(this->dynamic_attribute_indexes.at(attribute));
 }
 
 int64_t ClassContext::offset_for_attribute(size_t index) const {
-  // attributes are stored at [instance + 8 * which + 16]
-  return sizeof(int64_t) * (2 + index);
+  // attributes are stored at [instance + 8 * which + attribute_offset]
+  return (sizeof(int64_t) * index) + attribute_offset;
 }
 
 void ClassContext::set_attribute(void* instance, const char* attribute, int64_t value) const {
   uint8_t* p = reinterpret_cast<uint8_t*>(instance);
   *reinterpret_cast<int64_t*>(p + this->offset_for_attribute(attribute)) = value;
 }
+
+const size_t ClassContext::attribute_offset = 3 * sizeof(int64_t);
 
 
 
@@ -387,6 +389,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
                 module->name.c_str());
           }
 
+          // TODO: do something with the return value (it's the exception ptr)
           module->compiled(this->global_space);
         }
 

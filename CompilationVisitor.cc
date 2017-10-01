@@ -7,6 +7,8 @@
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
 
+#include "CompilationVisitorFunctions.hh"
+#include "BuiltinFunctions.hh"
 #include "Debug.hh"
 #include "PythonLexer.hh"
 #include "PythonParser.hh"
@@ -91,6 +93,35 @@ static const int64_t default_available_float_registers = 0xFFFF; // all of them
 
 
 
+// this structure is only here for reference. don't actually use it because it
+// contains two levels of variable-size data; using it in C++ doesn't make sense
+struct ExceptionBlock {
+  // pointer to the next exception block
+  ExceptionBlock* next;
+
+  // stack and frame pointers to start the except block with (should be the same
+  // as when the function or try block was entered)
+  void* resume_rbp;
+  void* resume_rsp;
+
+  struct ExceptionBlockSpec {
+    // start of the relevant except block's code
+    const void* resume_rip;
+
+    // class ids of exception type specified in except block. if none are given,
+    // this block matches any exception, but doesn't clear r15 (this is used to
+    // jump to function teardown/local destructor calls and finally blocks)
+    int64_t num_classes;
+    int64_t exc_class_ids[0];
+  };
+  ExceptionBlockSpec spec[0];
+};
+
+const size_t return_exception_block_size =
+    sizeof(ExceptionBlock) + sizeof(ExceptionBlock::ExceptionBlockSpec);
+
+
+
 CompilationVisitor::CompilationVisitor(GlobalAnalysis* global,
     ModuleAnalysis* module, int64_t target_function_id, int64_t target_split_id,
     const unordered_map<string, Variable>* local_overrides) : file_offset(-1),
@@ -101,7 +132,7 @@ CompilationVisitor::CompilationVisitor(GlobalAnalysis* global,
     available_float_registers(default_available_float_registers),
     target_register(Register::None), float_target_register(Register::XMM0),
     stack_bytes_used(0), holding_reference(false),
-    evaluating_instance_pointer(false) {
+    evaluating_instance_pointer(false), in_finally_block(false) {
 
   if (target_function_id) {
 
@@ -608,6 +639,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_xor(this->target_register, 1);
       }
       this->current_type = Variable(ValueType::Bool);
+      this->holding_reference = false;
       break;
 
     case BinaryOperator::Is:
@@ -911,9 +943,9 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
     // destroy the temp values
     this->as.write_label(string_printf("__BinaryOperation_%p_destroy_left", a));
-    this->write_delete_reference(MemoryReference(Register::RSP, 8), left_type);
+    this->write_delete_reference(MemoryReference(Register::RSP, 8), left_type.type);
     this->as.write_label(string_printf("__BinaryOperation_%p_destroy_right", a));
-    this->write_delete_reference(MemoryReference(Register::RSP, 16), right_type);
+    this->write_delete_reference(MemoryReference(Register::RSP, 16), right_type.type);
 
     // load the result again and clean up the stack
     this->as.write_mov(MemoryReference(this->target_register),
@@ -1125,6 +1157,22 @@ void CompilationVisitor::visit(LambdaDefinition* a) {
   this->write_function_cleanup(base_label);
 }
 
+struct FunctionCallArgumentValue {
+  string name;
+  shared_ptr<Expression> passed_value;
+  Variable default_value; // Indeterminate for positional args
+  Variable type;
+
+  Register target_register; // if the type is Float, this is an xmm register
+  ssize_t stack_offset; // if < 0, this argument isn't stored on the stack
+
+  bool evaluate_instance_pointer;
+
+  FunctionCallArgumentValue(const std::string& name) : name(name),
+      passed_value(NULL), default_value(), type(), stack_offset(0),
+      evaluate_instance_pointer(false) { }
+};
+
 void CompilationVisitor::visit(FunctionCall* a) {
   this->file_offset = a->file_offset;
 
@@ -1160,23 +1208,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
   // separate out the positional and keyword args from the call args
   const vector<shared_ptr<Expression>>& positional_call_args = a->args;
   const unordered_map<string, shared_ptr<Expression>> keyword_call_args = a->kwargs;
-
-  struct ArgumentValue {
-    string name;
-    shared_ptr<Expression> passed_value;
-    Variable default_value; // Indeterminate for positional args
-    Variable type;
-
-    Register target_register; // if the type is Float, this is an xmm register
-    ssize_t stack_offset; // if < 0, this argument isn't stored on the stack
-
-    bool evaluate_instance_pointer;
-
-    ArgumentValue(const std::string& name) : name(name), passed_value(NULL),
-        default_value(), type(), stack_offset(0),
-        evaluate_instance_pointer(false) { }
-  };
-  vector<ArgumentValue> arg_values;
+  vector<FunctionCallArgumentValue> arg_values;
 
   // for class member functions, the first argument is automatically populated
   // and is the instance object
@@ -1252,7 +1284,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
 
   // reserve stack space as needed
-  ssize_t arg_stack_bytes = write_function_call_stack_prep(arg_values.size());
+  ssize_t arg_stack_bytes = this->write_function_call_stack_prep(arg_values.size());
 
   // generate the register/stack assignments for the args
   {
@@ -1331,7 +1363,8 @@ void CompilationVisitor::visit(FunctionCall* a) {
         throw compile_error("__init__ call does not have an associated class");
       }
 
-      // call malloc to create the class object
+      // call malloc to create the class object. note that the stack is already
+      // adjusted to the right alignment here
       // note: this is a semi-ugly hack, but we ignore reserved registers here
       // because this can only be the first argument - no registers can be
       // reserved at this point
@@ -1342,15 +1375,16 @@ void CompilationVisitor::visit(FunctionCall* a) {
       this->as.write_call(rax);
       this->as.write_mov(this->target_register, rax);
 
-      // fill in the refcount and destructor function
+      // fill in the refcount, destructor function and class id
       this->as.write_mov(MemoryReference(this->target_register, 0), 1);
       this->as.write_mov(Register::RAX,
           reinterpret_cast<int64_t>(cls->destructor));
       this->as.write_mov(MemoryReference(this->target_register, 8), rax);
+      this->as.write_mov(MemoryReference(this->target_register, 16), cls->id);
 
       // zero everything else in the class
       this->as.write_xor(rax, rax);
-      for (size_t x = 16; x < cls->instance_size(); x += 8) {
+      for (size_t x = cls->attribute_offset; x < cls->instance_size(); x += 8) {
         this->as.write_mov(MemoryReference(this->target_register, x), rax);
       }
 
@@ -1471,9 +1505,19 @@ void CompilationVisitor::visit(FunctionCall* a) {
   this->as.write_label(string_printf("__FunctionCall_%p_call_fragment_%" PRId64 "_%" PRId64 "_%s",
       a, a->callee_function_id, fragment_id, arg_signature.c_str()));
 
-  // call the fragment
+  // call the fragment. note that the stack is already properly aligned here
   this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(fragment->compiled));
   this->as.write_call(rax);
+
+  // if the function raised an exception, the return value is meaningless;
+  // instead we should continue unwinding the stack
+  string no_exc_label = string_printf("__FunctionCall_%p_no_exception", a);
+  this->as.write_test(r15, r15);
+  this->as.write_jz(no_exc_label);
+  this->as.write_mov(Register::RAX,
+      reinterpret_cast<int64_t>(&_unwind_exception_internal));
+  this->as.write_jmp(rax);
+  this->as.write_label(no_exc_label);
 
   // put the return value into the target register
   if (this->target_register != Register::RAX) {
@@ -1490,8 +1534,8 @@ void CompilationVisitor::visit(FunctionCall* a) {
   // responsible for deleting those references
 
   // unreserve the argument stack space
+  this->as.write_label(string_printf("__FunctionCall_%p_restore_stack", a));
   if (arg_stack_bytes) {
-    this->as.write_label(string_printf("__FunctionCall_%p_restore_stack", a));
     this->adjust_stack(arg_stack_bytes);
   }
 
@@ -1753,7 +1797,7 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     // if the attribute type has a refcount, delete the old value
     this->reserve_register(this->target_register);
     if (type_has_refcount(loc.type.type)) {
-      this->write_delete_reference(loc.mem, loc.type);
+      this->write_delete_reference(loc.mem, loc.type.type);
     }
     this->release_register(this->target_register);
 
@@ -1804,7 +1848,7 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     // if the variable has a refcount, delete the old value
     this->reserve_register(this->target_register);
     if (type_has_refcount(loc.type.type)) {
-      this->write_delete_reference(loc.mem, loc.type);
+      this->write_delete_reference(loc.mem, loc.type.type);
     }
     this->release_register(this->target_register);
 
@@ -1834,21 +1878,32 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   this->write_push(Register::RBP);
   this->as.write_mov(rbp, rsp);
   this->write_push(Register::R12);
-  this->as.write_mov(r12, 0);
+  this->as.write_xor(r12, r12);
   this->write_push(Register::R13);
   this->as.write_mov(r13, rdi);
   this->write_push(Register::R14);
-  this->as.write_mov(r14, 0);
+  this->as.write_xor(r14, r14);
   this->write_push(Register::R15);
-  this->as.write_mov(r15, 0);
+  this->as.write_xor(r15, r15);
+
+  // create an exception block for the root scope
+  // this exception block just returns from the module scope - but the calling
+  // code checks for a nonzero return value (which means an exception is active)
+  // and will handle it appropriately
+  string exc_label = string_printf("__ModuleStatement_%p_exc", a);
+  this->as.write_label(string_printf("__ModuleStatement_%p_create_exc_block", a));
+  this->write_create_exception_block({}, exc_label);
 
   // generate the function's code
   this->target_register = Register::RAX;
+  this->as.write_label(string_printf("__ModuleStatement_%p_body", a));
   this->RecursiveASTVisitor::visit(a);
 
   // hooray we're done
   this->as.write_label(string_printf("__ModuleStatement_%p_return", a));
+  this->adjust_stack(return_exception_block_size);
   this->as.write_mov(rax, r15);
+  this->as.write_label(exc_label);
   this->write_pop(Register::R15);
   this->write_pop(Register::R14);
   this->write_pop(Register::R13);
@@ -1968,8 +2023,81 @@ void CompilationVisitor::visit(ExecStatement* a) {
 void CompilationVisitor::visit(AssertStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("AssertStatement not yet implemented", this->file_offset);
+  string pass_label = string_printf("__AssertStatement_%p_pass", a);
+
+  // evaluate the check expression
+  this->as.write_label(string_printf("__AssertStatement_%p_check", a));
+  this->target_register = this->available_register();
+  a->check->accept(this);
+
+  // check if the result is truthy
+  this->as.write_label(string_printf("__AssertStatement_%p_test", a));
+  this->write_current_truth_value_test();
+  this->as.write_jnz(pass_label);
+
+  // save the result value type so we can destroy it later
+  Variable truth_value_type = this->current_type;
+  bool was_holding_reference = this->holding_reference;
+
+  // if we get here, then the result was falsey. evaluate the message and save
+  // it on the stack so we can move it to the AssertionError object later. (we
+  // do this before allocating the AssertionError in case the message evaluation
+  // raises an exception)
+  this->write_delete_held_reference(MemoryReference(this->target_register));
+  if (a->failure_message.get()) {
+    this->as.write_label(string_printf("__AssertStatement_%p_evaluate_message", a));
+    a->failure_message->accept(this);
+  } else {
+    this->as.write_label(string_printf("__AssertStatement_%p_generate_message", a));
+
+    // if no message is given, use a blank message
+    const UnicodeObject* message = this->global->get_or_create_constant(L"");
+    this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(message));
+  }
+  this->write_push(this->target_register);
+
+  // create an AssertionError object. note that we bypass __init__ here
+  auto* cls = this->global->context_for_class(AssertionError_class_id);
+  if (!cls) {
+    throw compile_error("AssertionError class does not exist",
+        this->file_offset);
+  }
+
+  // call malloc to create the class object
+  this->as.write_label(string_printf("__AssertStatement_%p_allocate_instance", a));
+  int64_t stack_bytes_used = this->write_function_call_stack_prep();
+  this->as.write_mov(rdi, cls->instance_size());
+  this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(&malloc));
+  this->as.write_call(rax);
+  this->as.write_mov(r15, rax);
+  this->adjust_stack(stack_bytes_used);
+
+  // fill in the refcount, destructor function, class id, and message
+  this->as.write_mov(MemoryReference(Register::R15, 0), 1);
+  this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(cls->destructor));
+  this->as.write_mov(MemoryReference(Register::R15, 8), rax);
+  this->as.write_mov(MemoryReference(Register::R15, 16), cls->id);
+  this->write_pop(Register::RAX);
+  this->as.write_mov(MemoryReference(Register::R15, 24), rax);
+
+  // we should have filled everything in
+  if (cls->instance_size() != 32) {
+    throw compile_error("did not fill in entire AssertionError structure",
+        this->file_offset);
+  }
+
+  // now jump to unwind_exception
+  this->as.write_label(string_printf("__AssertStatement_%p_unwind", a));
+  this->as.write_mov(Register::RAX,
+      reinterpret_cast<int64_t>(&_unwind_exception_internal));
+  this->as.write_jmp(rax);
+
+  // if we get here, then the expression was truthy, but we may still need to
+  // destroy it if it has a refcount
+  this->as.write_label(pass_label);
+  this->current_type = truth_value_type;
+  this->holding_reference = was_holding_reference;
+  this->write_delete_held_reference(MemoryReference(this->target_register));
 }
 
 void CompilationVisitor::visit(BreakStatement* a) {
@@ -2007,6 +2135,14 @@ void CompilationVisitor::visit(ReturnStatement* a) {
   // record this return type
   this->function_return_types.emplace(this->current_type);
 
+  // if we're inside a finally block, there may be an active exception. but a
+  // return statement inside a finally block should cause the exception to be
+  // suppressed - for now we don't support this
+  // TODO: implement this case
+  if (this->in_finally_block) {
+    throw compile_error("return statement inside finally block", this->file_offset);
+  }
+
   // generate a jump to the end of the function (this is right before the
   // relevant destructor calls)
   this->as.write_label(string_printf("__ReturnStatement_%p_return", a));
@@ -2016,8 +2152,24 @@ void CompilationVisitor::visit(ReturnStatement* a) {
 void CompilationVisitor::visit(RaiseStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("RaiseStatement not yet implemented", this->file_offset);
+  // we only support the one-argument form of the raise statement
+  if (a->value.get() || a->traceback.get()) {
+    throw compile_error("raise statement may only take one argument",
+        this->file_offset);
+  }
+
+  // we'll construct the exception object into r15
+  this->as.write_label(string_printf("__RaiseStatement_%p_evaluate_object", a));
+  Register original_target_register = this->target_register;
+  this->target_register = Register::R15;
+  a->type->accept(this);
+  this->target_register = original_target_register;
+
+  // now jump to unwind_exception
+  this->as.write_label(string_printf("__RaiseStatement_%p_unwind", a));
+  this->as.write_mov(Register::RAX,
+      reinterpret_cast<int64_t>(&_unwind_exception_internal));
+  this->as.write_jmp(rax);
 }
 
 void CompilationVisitor::visit(YieldStatement* a) {
@@ -2029,8 +2181,8 @@ void CompilationVisitor::visit(YieldStatement* a) {
 
 void CompilationVisitor::visit(SingleIfStatement* a) {
   this->file_offset = a->file_offset;
-
-  throw logic_error("SingleIfStatement used instead of subclass");
+  throw compile_error("SingleIfStatement used instead of subclass",
+      this->file_offset);
 }
 
 void CompilationVisitor::visit(IfStatement* a) {
@@ -2087,7 +2239,9 @@ void CompilationVisitor::visit(IfStatement* a) {
 void CompilationVisitor::visit(ElseStatement* a) {
   this->file_offset = a->file_offset;
 
-  // uhhhh we don't have to do anything here except visit each statement, right?
+  // just do the sub-statements; the encapsulating logic is all in TryStatement
+  // or IfStatement
+  this->as.write_label(string_printf("__ElseStatement_%p", a));
   this->visit_list(a->items);
 }
 
@@ -2223,7 +2377,7 @@ void CompilationVisitor::visit(ForStatement* a) {
   if (type_has_refcount(collection_type.type)) {
     this->write_pop(this->target_register);
     this->write_delete_reference(MemoryReference(this->target_register),
-        collection_type);
+        collection_type.type);
   } else {
     this->as.write_add(rsp, 8);
   }
@@ -2266,22 +2420,214 @@ void CompilationVisitor::visit(WhileStatement* a) {
 void CompilationVisitor::visit(ExceptStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("ExceptStatement not yet implemented", this->file_offset);
+  // just do the sub-statements; the encapsulating logic is all in TryStatement
+  this->as.write_label(string_printf("__FinallyStatement_%p", a));
+  this->visit_list(a->items);
 }
 
 void CompilationVisitor::visit(FinallyStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("FinallyStatement not yet implemented", this->file_offset);
+  bool prev_in_finally_block = this->in_finally_block;
+  this->in_finally_block = true;
+
+  // we save the active exception and clear it, so the finally block can contain
+  // further try/except blocks without clobbering the active exception
+  this->as.write_label(string_printf("__FinallyStatement_%p_save_exc", a));
+  this->write_push(Register::R15);
+  this->as.write_xor(r15, r15);
+
+  this->as.write_label(string_printf("__FinallyStatement_%p_body", a));
+  this->visit_list(a->items);
+
+  // if there's now an active exception, then the finally block raised an
+  // exception of its own. if there was a saved exception object, destroy it;
+  // then start unwinding the new exception
+  // TODO: is this even possible? shouldn't an active exception have already
+  // been unwound, so we would never get here with r15 != 0?
+  string no_exc_label = string_printf("__FinallyStatement_%p_no_exc", a);
+  string end_label = string_printf("__FinallyStatement_%p_end", a);
+  this->as.write_label(string_printf("__FinallyStatement_%p_restore_exc", a));
+  this->as.write_test(r15, r15);
+  this->as.write_jz(no_exc_label);
+  this->write_delete_reference(MemoryReference(Register::R15, 0), ValueType::Instance);
+  this->as.write_mov(Register::RAX,
+      reinterpret_cast<int64_t>(&_unwind_exception_internal));
+  this->as.write_jmp(rax);
+
+  // the finally block did not raise an exception, but there may be a saved
+  // exception. if so, unwind it now
+  this->as.write_label(no_exc_label);
+  this->write_pop(Register::R15);
+  this->as.write_test(r15, r15);
+  this->as.write_jz(end_label);
+  this->as.write_mov(Register::RAX,
+      reinterpret_cast<int64_t>(&_unwind_exception_internal));
+  this->as.write_jmp(rax);
+  this->as.write_label(end_label);
+
+  this->in_finally_block = prev_in_finally_block;
 }
 
 void CompilationVisitor::visit(TryStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("TryStatement not yet implemented", this->file_offset);
+  // here's how we implement exception handling:
+
+  // TODO: update this for the new exception block format
+  // # all try blocks have a finally block, even if it's not defined in the code
+  // # let N be the number of except clauses on the try block
+  // try:
+  //   # stack-allocate one exception block on the stack with exc_class_id = 0,
+  //   #     pointing to the finally block
+  //   # stack-allocate N exception blocks for except clauses in reverse order
+  //   if should_raise:
+  //     raise KeyError()  # allocate object, set r15, call unwind_exception
+  //   # remove the exception block structs from the stack
+  //   # if there's an else block, jump there
+  //   # if there's a finally block, jump there
+  //   # jump to end of suite chain
+  // except KeyError as e:
+  //   # let this exception block's index be I
+  //   # write r15 to e (local variable), clear r15
+  //   # remove (N - I) exception blocks (note that unwind_exception already
+  //   #     removed the block for this clause, but there's an extra block for
+  //   #     the finally clause. we manually jump to the finally block so we
+  //   #     don't need that)
+  //   print('caught KeyError')
+  //   # if there's a finally block, jump there
+  //   # jump to end of suite chain
+  // else:
+  //   print('did not catch KeyError')
+  //   # if there's a finally block, jump there
+  //   # jump to end of suite chain
+  // finally:
+  //   print('executed finally block')
+  //   # if r15 is nonzero, call unwind_exception again
+
+  // TODO: figure out a way to support raising exceptions from c extension
+  // functions
+
+  this->as.write_label(string_printf("__TryStatement_%p_create_exc_block", a));
+
+  // we jump here from other functions, so don't let any registers be reserved
+  int64_t previously_reserved_registers = this->write_push_reserved_registers();
+
+  // generate the exception block
+  string finally_label = string_printf("__TryStatement_%p_finally", a);
+  vector<pair<string, unordered_set<int64_t>>> label_to_class_ids;
+  for (size_t x = 0; x < a->excepts.size(); x++) {
+    string label = string_printf("__TryStatement_%p_except_%zd", a, x);
+    label_to_class_ids.emplace_back(make_pair(label, a->excepts[x]->class_ids));
+  }
+  size_t stack_bytes_used_on_restore = this->stack_bytes_used;
+  this->write_create_exception_block(label_to_class_ids, finally_label);
+
+  // generate the try block body
+  this->as.write_label(string_printf("__TryStatement_%p_body", a));
+  this->visit_list(a->items);
+
+  // remove the exception block from the stack
+  // the previous exception block pointer is the first field in the exception
+  // block, so load r14 from there
+  this->as.write_label(string_printf("__TryStatement_%p_remove_exc_blocks", a));
+  this->as.write_mov(r14, MemoryReference(Register::RSP, 0));
+  this->adjust_stack_to(stack_bytes_used_on_restore);
+
+  // generate the else block if there is one. the exc block is already gone, so
+  // this code isn't covered by the except clauses, but we need to generate a
+  // new exc block to make this be covered by the finally clause
+  if (a->else_suite.get()) {
+    this->as.write_label(string_printf("__TryStatement_%p_create_else_exc_block", a));
+    this->write_create_exception_block({}, finally_label);
+    a->else_suite->accept(this);
+    this->as.write_label(string_printf("__TryStatement_%p_delete_else_exc_block", a));
+    this->as.write_mov(r14, MemoryReference(Register::RSP, 0));
+    this->adjust_stack_to(stack_bytes_used_on_restore);
+  }
+
+  // go to the finally block
+  this->as.write_jmp(finally_label);
+
+  // generate the except blocks
+  for (size_t except_index = 0; except_index < a->excepts.size(); except_index++) {
+    const auto& except = a->excepts[except_index];
+
+    this->as.write_label(string_printf("__TryStatement_%p_except_%zd", a,
+        except_index));
+
+    // adjust our stack offset tracking appropriately. we don't write the opcode
+    // because the stack has already been set to this offset by
+    // _unwind_exception_internal; we just need to keep track of it so we can
+    // avoid unaligned function calls
+    this->adjust_stack_to(stack_bytes_used_on_restore, false);
+
+    // if the exception object isn't assigned to a name, destroy it now
+    if (except->name.empty()) {
+      this->write_delete_reference(r15, ValueType::Instance);
+
+    // else, assign the exception object to the appropriate name
+    } else {
+      this->as.write_label(string_printf("__TryStatement_%p_except_%zd_write_value",
+          a, except_index));
+
+      VariableLocation loc = this->location_for_variable(except->name);
+
+      // typecheck the result
+      // TODO: deduplicate some of this with AttributeLValueReference
+      Variable* target_variable = NULL;
+      if (loc.is_global) {
+        target_variable = &this->module->globals.at(loc.name);
+      } else {
+        try {
+          target_variable = &this->local_overrides.at(loc.name);
+        } catch (const out_of_range&) {
+          target_variable = &this->target_function->locals.at(loc.name);
+        }
+      }
+      if (!target_variable) {
+        throw compile_error("target variable not found in exception block");
+      }
+
+      if ((target_variable->type != ValueType::Instance) ||
+          !except->class_ids.count(target_variable->class_id)) {
+        throw compile_error(string_printf("variable %s is not an exception instance type",
+            loc.name.c_str()));
+      }
+
+      // delete the old value if present, save the new value, and clear the active
+      // exception pointer
+      this->write_delete_reference(loc.mem, loc.type.type);
+      this->as.write_mov(loc.mem, r15);
+    }
+
+    // clear the active exception
+    this->as.write_xor(r15, r15);
+
+    // generate the except block code
+    this->as.write_label(string_printf("__TryStatement_%p_except_%zd_body",
+        a, except_index));
+    except->accept(this);
+
+    // we're done here; go to the finally block
+    // for the last except block, don't bother jumping; just fall through
+    if (except_index != a->excepts.size() - 1) {
+      this->as.write_label(string_printf("__TryStatement_%p_except_%zd_end", a,
+          except_index));
+      this->as.write_jmp(string_printf("__TryStatement_%p_finally", a));
+    }
+  }
+
+  // now we're back to the initial stack offset
+  this->adjust_stack_to(stack_bytes_used_on_restore, false);
+
+  // generate the finally block, if any
+  this->as.write_label(string_printf("__TryStatement_%p_finally", a));
+  if (a->finally_suite.get()) {
+    a->finally_suite->accept(this);
+  }
+
+  this->write_pop_reserved_registers(previously_reserved_registers);
 }
 
 void CompilationVisitor::visit(WithStatement* a) {
@@ -2380,7 +2726,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       dtor_as.write_push(Register::RBP);
       dtor_as.write_mov(rbp, rsp);
 
-      // we'll keep the object ptr in rbx since it's callee-save
+      // we'll keep the object pointer in rbx since it's callee-save
       dtor_as.write_push(Register::RBX);
       dtor_as.write_mov(rbx, rdi);
 
@@ -2596,6 +2942,8 @@ void CompilationVisitor::write_function_call(const void* function,
         this->file_offset);
   }
 
+  int64_t previously_reserved_registers = this->write_push_reserved_registers();
+
   size_t rsp_adjustment = 0;
   if (arg_stack_bytes < 0) {
     arg_stack_bytes = this->write_function_call_stack_prep(args.size());
@@ -2694,7 +3042,8 @@ void CompilationVisitor::write_function_call(const void* function,
     }
   }
 
-  // finally, call the function
+  // finally, call the function. note the stack is already adjusted to be
+  // 16-byte aligned here
   if (function) {
     this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(function));
     this->as.write_call(rax);
@@ -2714,6 +3063,8 @@ void CompilationVisitor::write_function_call(const void* function,
   if (arg_stack_bytes) {
     this->adjust_stack(arg_stack_bytes);
   }
+
+  this->write_pop_reserved_registers(previously_reserved_registers);
 }
 
 void CompilationVisitor::write_function_setup(const string& base_label) {
@@ -2786,13 +3137,29 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
     this->write_push(0);
   }
 
-  this->return_label = string_printf("__%s_destroy_locals", base_label.c_str());
+  // set up the exception block
+  this->return_label = string_printf("__%s_return", base_label.c_str());
+  this->exception_return_label = string_printf(
+      "__%s_exception_return", base_label.c_str());
+  this->as.write_label(string_printf(
+      "__%s_create_except_block", base_label.c_str()));
+  this->write_create_exception_block({}, this->exception_return_label);
 }
 
 void CompilationVisitor::write_function_cleanup(const string& base_label) {
-  // call destructors for all the local variables that have refcounts
   this->as.write_label(this->return_label);
+
+  // clean up the exception block. note that this is after the return label but
+  // before the destroy locals label - the latter is used when an exception
+  // occurs, since _unwind_exception_internal already removes the exc block from
+  // the stack
+  this->write_pop(Register::R14);
+  this->adjust_stack(return_exception_block_size - sizeof(int64_t));
+
+  // call destructors for all the local variables that have refcounts
+  this->as.write_label(this->exception_return_label);
   this->return_label.clear();
+  this->exception_return_label.clear();
   for (auto it = this->target_function->locals.crbegin();
        it != this->target_function->locals.crend(); it++) {
     if (type_has_refcount(it->second.type)) {
@@ -2800,7 +3167,7 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
       // memory accesses here. we have to preserve the value in rax somehow but
       // we can't easily use the stack since we're popping locals off of it
       this->as.write_xchg(Register::RAX, MemoryReference(Register::RSP, 0));
-      this->write_delete_reference(rax, it->second);
+      this->write_delete_reference(rax, it->second.type);
       this->write_pop(Register::RAX);
     } else {
       // no destructor; just skip it
@@ -2810,7 +3177,7 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
   }
 
   // hooray we're done
-  this->as.write_label(string_printf("__%s_return", base_label.c_str()));
+  this->as.write_label(string_printf("__%s_leave_frame", base_label.c_str()));
   this->write_pop(Register::RBP);
 
   if (this->stack_bytes_used != 8) {
@@ -2841,18 +3208,18 @@ void CompilationVisitor::write_delete_held_reference(const MemoryReference& mem)
     if (!type_has_refcount(this->current_type.type)) {
       throw compile_error("holding a reference to a trivial type: " + this->current_type.str(), this->file_offset);
     }
-    this->write_delete_reference(mem, this->current_type);
+    this->write_delete_reference(mem, this->current_type.type);
     this->holding_reference = false;
   }
 }
 
 void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
-    const Variable& type) {
-  if (type.type == ValueType::Indeterminate) {
+    ValueType type) {
+  if (type == ValueType::Indeterminate) {
     throw compile_error("can\'t call destructor for Indeterminate value", this->file_offset);
   }
 
-  if (type_has_refcount(type.type)) {
+  if (type_has_refcount(type)) {
     if (debug_flags & DebugFlag::NoInlineRefcounting) {
       this->write_function_call(reinterpret_cast<const void*>(delete_reference),
           NULL, {mem}, {});
@@ -2886,6 +3253,45 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
   }
 }
 
+void CompilationVisitor::write_create_exception_block(
+    const vector<pair<string, unordered_set<int64_t>>>& label_to_class_ids,
+    const string& exception_return_label) {
+  Register tmp_rsp = this->available_register();
+  Register tmp = this->available_register_except({tmp_rsp});
+  MemoryReference tmp_mem(tmp);
+
+  this->as.write_mov(MemoryReference(tmp_rsp), rsp);
+
+  this->write_push(0);
+  this->as.write_mov(tmp, exception_return_label);
+  this->write_push(tmp);
+
+  // label_to_class_ids is in the order that the except blocks are declared in
+  // the file, so we need to push them in the opposite order (so the first one
+  // appears earliest in memory and will match first)
+  for (auto it = label_to_class_ids.rbegin(); it != label_to_class_ids.rend(); it++) {
+    const string& target_label = it->first;
+    const auto& class_ids = it->second;
+
+    if (class_ids.size() == 0) {
+      throw compile_error("non-finally block contained zero class ids",
+          this->file_offset);
+    }
+
+    for (int64_t class_id : class_ids) {
+      this->write_push(class_id);
+    }
+    this->write_push(class_ids.size());
+    this->as.write_mov(tmp, target_label);
+    this->write_push(tmp);
+  }
+
+  this->write_push(Register::RBP);
+  this->write_push(tmp_rsp);
+  this->write_push(Register::R14);
+  this->as.write_mov(r14, rsp);
+}
+
 void CompilationVisitor::write_push(Register reg) {
   this->as.write_push(reg);
   this->stack_bytes_used += 8;
@@ -2906,13 +3312,24 @@ void CompilationVisitor::write_pop(Register reg) {
   this->as.write_pop(reg);
 }
 
-void CompilationVisitor::adjust_stack(ssize_t bytes) {
-  if (bytes < 0) {
-    this->as.write_sub(rsp, -bytes);
-  } else {
-    this->as.write_add(rsp, bytes);
+void CompilationVisitor::adjust_stack(ssize_t bytes, bool write_opcode) {
+  if (!bytes) {
+    return;
   }
+
+  if (write_opcode) {
+    if (bytes < 0) {
+      this->as.write_sub(rsp, -bytes);
+    } else {
+      this->as.write_add(rsp, bytes);
+    }
+  }
+
   this->stack_bytes_used -= bytes;
+}
+
+void CompilationVisitor::adjust_stack_to(ssize_t bytes, bool write_opcode) {
+  this->adjust_stack(this->stack_bytes_used - bytes, write_opcode);
 }
 
 void CompilationVisitor::write_load_double(Register reg, double value) {

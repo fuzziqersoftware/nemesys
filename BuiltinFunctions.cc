@@ -27,14 +27,28 @@ using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
 
 
 
-static BytesObject* empty_bytes = bytes_new(NULL, NULL, 0);
-static UnicodeObject* empty_unicode = unicode_new(NULL, NULL, 0);
-
-
-
 unordered_map<int64_t, FunctionContext> builtin_function_definitions;
 unordered_map<int64_t, ClassContext> builtin_class_definitions;
 unordered_map<string, Variable> builtin_names;
+int64_t AssertionError_class_id;
+int64_t MemoryError_class_id;
+
+
+
+static BytesObject* empty_bytes = bytes_new(NULL, NULL, 0);
+static UnicodeObject* empty_unicode = unicode_new(NULL, NULL, 0);
+static Variable None(ValueType::None);
+static Variable Bool(ValueType::Bool);
+static Variable Bool_True(ValueType::Bool, true);
+static Variable Bool_False(ValueType::Bool, false);
+static Variable Int(ValueType::Int);
+static Variable Int_Zero(ValueType::Int, 0LL);
+static Variable Float(ValueType::Float);
+static Variable Float_Zero(ValueType::Float, 0.0);
+static Variable Bytes(ValueType::Bytes);
+static Variable Unicode(ValueType::Unicode);
+static Variable Unicode_Blank(ValueType::Unicode, L"");
+static Variable List_Any(ValueType::List, vector<Variable>({Variable()}));
 
 
 
@@ -87,14 +101,22 @@ int64_t create_builtin_class(const char* name,
   // nemesys internals, not by python code
   if (init_compiled) {
     Variable return_type(ValueType::Instance, class_id, NULL);
-    vector<FragDef> defs({{init_arg_types, return_type, init_compiled}});
-    FunctionContext& fn = builtin_function_definitions.emplace(piecewise_construct,
-        forward_as_tuple(class_id), forward_as_tuple(nullptr, class_id, name, defs)).first->second;
-    fn.class_id = class_id;
 
-    if (register_globally) {
-      create_builtin_name(name, Variable(ValueType::Class, class_id));
-    }
+    // the first argument to __init__ is the class object, but we don't expect
+    // the caller to provide this (they don't know the class id yet)
+    auto modified_init_args = init_arg_types;
+    modified_init_args.emplace(modified_init_args.begin(), return_type);
+
+    // create the fragment definition
+    vector<FragDef> defs({{modified_init_args, return_type, init_compiled}});
+    FunctionContext& fn = builtin_function_definitions.emplace(piecewise_construct,
+        forward_as_tuple(class_id),
+        forward_as_tuple(nullptr, class_id, name, defs)).first->second;
+    fn.class_id = class_id;
+  }
+
+  if (register_globally) {
+    create_builtin_name(name, Variable(ValueType::Class, class_id));
   }
 
   return class_id;
@@ -107,19 +129,6 @@ void create_builtin_name(const char* name, const Variable& value) {
 
 
 static void create_default_builtin_functions() {
-  Variable None(ValueType::None);
-  Variable Bool(ValueType::Bool);
-  Variable Bool_True(ValueType::Bool, true);
-  Variable Bool_False(ValueType::Bool, false);
-  Variable Int(ValueType::Int);
-  Variable Int_Zero(ValueType::Int, 0LL);
-  Variable Float(ValueType::Float);
-  Variable Float_Zero(ValueType::Float, 0.0);
-  Variable Bytes(ValueType::Bytes);
-  Variable Unicode(ValueType::Unicode);
-  Variable Unicode_Blank(ValueType::Unicode, L"");
-  Variable List_Any(ValueType::List, vector<Variable>({Variable()}));
-
   // None print(Unicode)
   create_builtin_function("print", {Unicode}, None,
       reinterpret_cast<const void*>(+[](UnicodeObject* str) {
@@ -529,8 +538,25 @@ void create_default_builtin_classes() {
     {"write", Variable()},
   }); */
 
-  //int64_t MemoryError_class_id = create_builtin_class("MemoryError", {}, {},
-  //    NULL, free, true);
+  auto one_field_constructor = reinterpret_cast<const void*>(
+    +[](uint8_t* o, int64_t value) -> void* {
+      // no need to deal with references; the reference passed to this function
+      // becomes owned by the instance object
+      *reinterpret_cast<int64_t*>(o + ClassContext::attribute_offset) = value;
+      return o;
+    });
+  auto one_field_reference_destructor = reinterpret_cast<const void*>(
+    +[](uint8_t* o) {
+      delete_reference(*reinterpret_cast<void**>(o + ClassContext::attribute_offset));
+      delete_reference(o);
+    });
+
+  AssertionError_class_id = create_builtin_class("AssertionError",
+    {{"message", Unicode_Blank}}, {Unicode_Blank}, one_field_constructor,
+    one_field_reference_destructor, true);
+
+  MemoryError_class_id = create_builtin_class("MemoryError", {}, {}, NULL,
+      reinterpret_cast<const void*>(&free), true);
 }
 
 void create_default_builtin_names() {
@@ -545,7 +571,6 @@ void create_default_builtin_names() {
   create_builtin_name("__package__",               Variable(ValueType::None));
   create_builtin_name("__spec__",                  Variable(ValueType::None));
   create_builtin_name("ArithmeticError",           Variable(ValueType::Function));
-  create_builtin_name("AssertionError",            Variable(ValueType::Function));
   create_builtin_name("AttributeError",            Variable(ValueType::Function));
   create_builtin_name("BaseException",             Variable(ValueType::Function));
   create_builtin_name("BlockingIOError",           Variable(ValueType::Function));
@@ -577,7 +602,6 @@ void create_default_builtin_names() {
   create_builtin_name("KeyError",                  Variable(ValueType::Function));
   create_builtin_name("KeyboardInterrupt",         Variable(ValueType::Function));
   create_builtin_name("LookupError",               Variable(ValueType::Function));
-  create_builtin_name("MemoryError",               Variable(ValueType::Function));
   create_builtin_name("ModuleNotFoundError",       Variable(ValueType::Function));
   create_builtin_name("NameError",                 Variable(ValueType::Function));
   create_builtin_name("NotADirectoryError",        Variable(ValueType::Function));

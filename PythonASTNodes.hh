@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 
@@ -725,6 +726,9 @@ struct WhileStatement : CompoundStatement {
 struct ExceptStatement : CompoundStatement {
   std::shared_ptr<Expression> types; // can be NULL for default except clause
   std::string name;
+
+  // annotations
+  std::unordered_set<int64_t> class_ids;
 
   ExceptStatement(std::shared_ptr<Expression> types, const std::string& name,
       std::vector<std::shared_ptr<Statement>>&& items, size_t file_offset);
