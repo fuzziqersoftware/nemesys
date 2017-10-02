@@ -381,7 +381,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
       case ModuleAnalysis::Phase::Analyzed: {
         if (module->ast_root.get()) {
           auto fragment = this->compile_scope(module.get());
-          module->compiled = reinterpret_cast<void(*)(int64_t*)>(const_cast<void*>(fragment.compiled));
+          module->compiled = reinterpret_cast<void*(*)(int64_t*)>(const_cast<void*>(fragment.compiled));
           module->compiled_labels = move(fragment.compiled_labels);
 
           if (debug_flags & DebugFlag::ShowCompileDebug) {
@@ -389,8 +389,14 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
                 module->name.c_str());
           }
 
-          // TODO: do something with the return value (it's the exception ptr)
-          module->compiled(this->global_space);
+          // all imports are done statically, so we can't translate this to a
+          // python exception - just fail
+          void* exc = module->compiled(this->global_space);
+          if (exc) {
+            int64_t class_id = *reinterpret_cast<int64_t*>(reinterpret_cast<int64_t*>(exc) + 2);
+            throw compile_error(string_printf(
+                "module root scope raised exception of class %" PRId64, class_id));
+          }
         }
 
         if (debug_flags & DebugFlag::ShowCompileDebug) {
@@ -438,6 +444,21 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
       scope_name = string_printf("%s.%s+%" PRId64, module->name.c_str(),
           fn->name.c_str(), fn->id);
     }
+    if (local_overrides) {
+      scope_name += '(';
+      bool is_first = true;
+      for (const auto& override : *local_overrides) {
+        if (!is_first) {
+          scope_name += ',';
+        } else {
+          is_first = false;
+        }
+        scope_name += override.first;
+        scope_name += '=';
+        scope_name += override.second.str();
+      }
+      scope_name += ')';
+    }
     v.reset(new CompilationVisitor(this, module, fn->id, 0, local_overrides));
   } else {
     scope_name = module->name;
@@ -471,17 +492,7 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
 
   } catch (const compile_error& e) {
     scopes_in_progress.erase(scope_name);
-
     this->print_compile_error(stderr, module, e);
-
-    fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
-        scope_name.c_str());
-    const string& compiled = v->assembler().assemble(patch_offsets,
-        &compiled_labels, true);
-    string disassembly = AMD64Assembler::disassemble(compiled.data(),
-        compiled.size(), 0, &compiled_labels);
-    fprintf(stderr, "\n%s\n", disassembly.c_str());
-
     throw;
   }
   scopes_in_progress.erase(scope_name);

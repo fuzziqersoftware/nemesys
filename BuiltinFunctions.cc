@@ -129,12 +129,63 @@ void create_builtin_name(const char* name, const Variable& value) {
 
 
 static void create_default_builtin_functions() {
+  // None print(None)
+  // None print(Bool)
+  // None print(Int)
+  // None print(Float)
+  // None print(Bytes)
   // None print(Unicode)
-  create_builtin_function("print", {Unicode}, None,
-      reinterpret_cast<const void*>(+[](UnicodeObject* str) {
+  create_builtin_function("print", {
+      FragDef({None}, None, reinterpret_cast<const void*>(+[](void*) {
+    fwrite("None\n", 5, 1, stdout);
+
+  })), FragDef({Bool}, None, reinterpret_cast<const void*>(+[](bool v) {
+    if (v) {
+      fwrite("True\n", 5, 1, stdout);
+    } else {
+      fwrite("False\n", 6, 1, stdout);
+    }
+
+  })), FragDef({Int}, None, reinterpret_cast<const void*>(+[](int64_t v) {
+    fprintf(stdout, "%" PRId64 "\n", v);
+
+  })), FragDef({Float}, None, reinterpret_cast<const void*>(+[](double v) {
+    fprintf(stdout, "%lf\n", v);
+
+  })), FragDef({Bytes}, None, reinterpret_cast<const void*>(+[](BytesObject* str) {
+    fprintf(stdout, "%.*s\n", static_cast<int>(str->count), str->data);
+    delete_reference(str);
+
+  })), FragDef({Unicode}, None, reinterpret_cast<const void*>(+[](UnicodeObject* str) {
     fprintf(stdout, "%.*ls\n", static_cast<int>(str->count), str->data);
     delete_reference(str);
-  }), true);
+  }))}, true);
+
+  create_builtin_function("bool", {
+      FragDef({Bool_False}, Bool, reinterpret_cast<const void*>(+[](bool b) -> bool {
+    return b;
+
+  })), FragDef({Int}, Bool, reinterpret_cast<const void*>(+[](int64_t i) -> bool {
+    return static_cast<bool>(i);
+
+  })), FragDef({Float}, Bool, reinterpret_cast<const void*>(+[](double f) -> bool {
+    return (f != 0.0) && (f != -0.0);
+
+  })), FragDef({Bytes}, Bool, reinterpret_cast<const void*>(+[](BytesObject* b) -> bool {
+    bool ret = b->count != 0;
+    delete_reference(b);
+    return ret;
+
+  })), FragDef({Unicode}, Bool, reinterpret_cast<const void*>(+[](UnicodeObject* u) -> bool {
+    bool ret = u->count != 0;
+    delete_reference(u);
+    return ret;
+
+  })), FragDef({List_Any}, Int, reinterpret_cast<const void*>(+[](ListObject* l) -> bool {
+    bool ret = l->count != 0;
+    delete_reference(l);
+    return ret;
+  }))}, true);
 
   // Unicode input(Unicode='')
   create_builtin_function("input", {Unicode_Blank}, Unicode,
@@ -551,12 +602,80 @@ void create_default_builtin_classes() {
       delete_reference(o);
     });
 
+  auto declare_unimplemented_exception = +[](const char* name) -> int64_t {
+    return create_builtin_class(name, {}, {}, NULL,
+        reinterpret_cast<const void*>(&free), true);
+  };
+
   AssertionError_class_id = create_builtin_class("AssertionError",
     {{"message", Unicode_Blank}}, {Unicode_Blank}, one_field_constructor,
     one_field_reference_destructor, true);
 
-  MemoryError_class_id = create_builtin_class("MemoryError", {}, {}, NULL,
-      reinterpret_cast<const void*>(&free), true);
+  declare_unimplemented_exception("ArithmeticError");
+  declare_unimplemented_exception("AttributeError");
+  declare_unimplemented_exception("BaseException");
+  declare_unimplemented_exception("BlockingIOError");
+  declare_unimplemented_exception("BrokenPipeError");
+  declare_unimplemented_exception("BufferError");
+  declare_unimplemented_exception("BytesWarning");
+  declare_unimplemented_exception("ChildProcessError");
+  declare_unimplemented_exception("ConnectionAbortedError");
+  declare_unimplemented_exception("ConnectionError");
+  declare_unimplemented_exception("ConnectionRefusedError");
+  declare_unimplemented_exception("ConnectionResetError");
+  declare_unimplemented_exception("DeprecationWarning");
+  declare_unimplemented_exception("EOFError");
+  declare_unimplemented_exception("EnvironmentError");
+  declare_unimplemented_exception("Exception");
+  declare_unimplemented_exception("FileExistsError");
+  declare_unimplemented_exception("FileNotFoundError");
+  declare_unimplemented_exception("FloatingPointError");
+  declare_unimplemented_exception("FutureWarning");
+  declare_unimplemented_exception("GeneratorExit");
+  declare_unimplemented_exception("IOError");
+  declare_unimplemented_exception("ImportError");
+  declare_unimplemented_exception("ImportWarning");
+  declare_unimplemented_exception("IndentationError");
+  declare_unimplemented_exception("IndexError");
+  declare_unimplemented_exception("InterruptedError");
+  declare_unimplemented_exception("IsADirectoryError");
+  declare_unimplemented_exception("KeyError");
+  declare_unimplemented_exception("KeyboardInterrupt");
+  declare_unimplemented_exception("LookupError");
+  declare_unimplemented_exception("MemoryError");
+  declare_unimplemented_exception("ModuleNotFoundError");
+  declare_unimplemented_exception("NameError");
+  declare_unimplemented_exception("NotADirectoryError");
+  declare_unimplemented_exception("NotImplementedError");
+  declare_unimplemented_exception("OSError");
+  declare_unimplemented_exception("OverflowError");
+  declare_unimplemented_exception("PendingDeprecationWarning");
+  declare_unimplemented_exception("PermissionError");
+  declare_unimplemented_exception("ProcessLookupError");
+  declare_unimplemented_exception("RecursionError");
+  declare_unimplemented_exception("ReferenceError");
+  declare_unimplemented_exception("ResourceWarning");
+  declare_unimplemented_exception("RuntimeError");
+  declare_unimplemented_exception("RuntimeWarning");
+  declare_unimplemented_exception("StopAsyncIteration");
+  declare_unimplemented_exception("StopIteration");
+  declare_unimplemented_exception("SyntaxError");
+  declare_unimplemented_exception("SyntaxWarning");
+  declare_unimplemented_exception("SystemError");
+  declare_unimplemented_exception("SystemExit");
+  declare_unimplemented_exception("TabError");
+  declare_unimplemented_exception("TimeoutError");
+  declare_unimplemented_exception("TypeError");
+  declare_unimplemented_exception("UnboundLocalError");
+  declare_unimplemented_exception("UnicodeEncodeError");
+  declare_unimplemented_exception("UnicodeTranslateError");
+  declare_unimplemented_exception("UserWarning");
+  declare_unimplemented_exception("UnicodeDecodeError");
+  declare_unimplemented_exception("UnicodeError");
+  declare_unimplemented_exception("UnicodeWarning");
+  declare_unimplemented_exception("ValueError");
+  declare_unimplemented_exception("Warning");
+  declare_unimplemented_exception("ZeroDivisionError");
 }
 
 void create_default_builtin_names() {
@@ -570,72 +689,8 @@ void create_default_builtin_names() {
   create_builtin_name("__loader__",                Variable(ValueType::None));
   create_builtin_name("__package__",               Variable(ValueType::None));
   create_builtin_name("__spec__",                  Variable(ValueType::None));
-  create_builtin_name("ArithmeticError",           Variable(ValueType::Function));
-  create_builtin_name("AttributeError",            Variable(ValueType::Function));
-  create_builtin_name("BaseException",             Variable(ValueType::Function));
-  create_builtin_name("BlockingIOError",           Variable(ValueType::Function));
-  create_builtin_name("BrokenPipeError",           Variable(ValueType::Function));
-  create_builtin_name("BufferError",               Variable(ValueType::Function));
-  create_builtin_name("BytesWarning",              Variable(ValueType::Function));
-  create_builtin_name("ChildProcessError",         Variable(ValueType::Function));
-  create_builtin_name("ConnectionAbortedError",    Variable(ValueType::Function));
-  create_builtin_name("ConnectionError",           Variable(ValueType::Function));
-  create_builtin_name("ConnectionRefusedError",    Variable(ValueType::Function));
-  create_builtin_name("ConnectionResetError",      Variable(ValueType::Function));
-  create_builtin_name("DeprecationWarning",        Variable(ValueType::Function));
-  create_builtin_name("EOFError",                  Variable(ValueType::Function));
   create_builtin_name("Ellipsis",                  Variable());
-  create_builtin_name("EnvironmentError",          Variable(ValueType::Function));
-  create_builtin_name("Exception",                 Variable(ValueType::Function));
-  create_builtin_name("FileExistsError",           Variable(ValueType::Function));
-  create_builtin_name("FileNotFoundError",         Variable(ValueType::Function));
-  create_builtin_name("FloatingPointError",        Variable(ValueType::Function));
-  create_builtin_name("FutureWarning",             Variable(ValueType::Function));
-  create_builtin_name("GeneratorExit",             Variable(ValueType::Function));
-  create_builtin_name("IOError",                   Variable(ValueType::Function));
-  create_builtin_name("ImportError",               Variable(ValueType::Function));
-  create_builtin_name("ImportWarning",             Variable(ValueType::Function));
-  create_builtin_name("IndentationError",          Variable(ValueType::Function));
-  create_builtin_name("IndexError",                Variable(ValueType::Function));
-  create_builtin_name("InterruptedError",          Variable(ValueType::Function));
-  create_builtin_name("IsADirectoryError",         Variable(ValueType::Function));
-  create_builtin_name("KeyError",                  Variable(ValueType::Function));
-  create_builtin_name("KeyboardInterrupt",         Variable(ValueType::Function));
-  create_builtin_name("LookupError",               Variable(ValueType::Function));
-  create_builtin_name("ModuleNotFoundError",       Variable(ValueType::Function));
-  create_builtin_name("NameError",                 Variable(ValueType::Function));
-  create_builtin_name("NotADirectoryError",        Variable(ValueType::Function));
   create_builtin_name("NotImplemented",            Variable());
-  create_builtin_name("NotImplementedError",       Variable(ValueType::Function));
-  create_builtin_name("OSError",                   Variable(ValueType::Function));
-  create_builtin_name("OverflowError",             Variable(ValueType::Function));
-  create_builtin_name("PendingDeprecationWarning", Variable(ValueType::Function));
-  create_builtin_name("PermissionError",           Variable(ValueType::Function));
-  create_builtin_name("ProcessLookupError",        Variable(ValueType::Function));
-  create_builtin_name("RecursionError",            Variable(ValueType::Function));
-  create_builtin_name("ReferenceError",            Variable(ValueType::Function));
-  create_builtin_name("ResourceWarning",           Variable(ValueType::Function));
-  create_builtin_name("RuntimeError",              Variable(ValueType::Function));
-  create_builtin_name("RuntimeWarning",            Variable(ValueType::Function));
-  create_builtin_name("StopAsyncIteration",        Variable(ValueType::Function));
-  create_builtin_name("StopIteration",             Variable(ValueType::Function));
-  create_builtin_name("SyntaxError",               Variable(ValueType::Function));
-  create_builtin_name("SyntaxWarning",             Variable(ValueType::Function));
-  create_builtin_name("SystemError",               Variable(ValueType::Function));
-  create_builtin_name("SystemExit",                Variable(ValueType::Function));
-  create_builtin_name("TabError",                  Variable(ValueType::Function));
-  create_builtin_name("TimeoutError",              Variable(ValueType::Function));
-  create_builtin_name("TypeError",                 Variable(ValueType::Function));
-  create_builtin_name("UnboundLocalError",         Variable(ValueType::Function));
-  create_builtin_name("UnicodeEncodeError",        Variable(ValueType::Function));
-  create_builtin_name("UnicodeTranslateError",     Variable(ValueType::Function));
-  create_builtin_name("UserWarning",               Variable(ValueType::Function));
-  create_builtin_name("UnicodeDecodeError",        Variable(ValueType::Function));
-  create_builtin_name("UnicodeError",              Variable(ValueType::Function));
-  create_builtin_name("UnicodeWarning",            Variable(ValueType::Function));
-  create_builtin_name("ValueError",                Variable(ValueType::Function));
-  create_builtin_name("Warning",                   Variable(ValueType::Function));
-  create_builtin_name("ZeroDivisionError",         Variable(ValueType::Function));
   create_builtin_name("all",                       Variable(ValueType::Function));
   create_builtin_name("any",                       Variable(ValueType::Function));
   create_builtin_name("ascii",                     Variable(ValueType::Function));

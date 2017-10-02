@@ -351,7 +351,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         // check if the value is zero
         this->as.write_test(target_mem, target_mem);
         this->as.write_mov(this->target_register, 0);
-        this->as.write_setz(this->target_register);
+        this->as.write_setz(byte_register_for_register(this->target_register));
 
       } else if (this->current_type == ValueType::Float) {
         // 0.0 and -0.0 are falsey, everything else is truthy
@@ -361,7 +361,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         this->as.write_shl(target_mem, 1);
         this->as.write_test(target_mem, target_mem);
         this->as.write_mov(this->target_register, 0);
-        this->as.write_setz(this->target_register);
+        this->as.write_setz(byte_register_for_register(this->target_register));
 
       } else if ((this->current_type == ValueType::Bytes) ||
                  (this->current_type == ValueType::Unicode) ||
@@ -370,18 +370,16 @@ void CompilationVisitor::visit(UnaryOperation* a) {
                  (this->current_type == ValueType::Set) ||
                  (this->current_type == ValueType::Dict)) {
         // load the size field, check if it's zero
-        Register size_reg = this->available_register_except(
-            {this->target_register});
-        this->reserve_register(size_reg);
-        this->as.write_mov(MemoryReference(size_reg),
-            MemoryReference(this->target_register, 0x08));
+        Register reg = this->available_register_except({this->target_register});
+        MemoryReference mem(reg);
+        this->reserve_register(reg);
+        this->as.write_mov(mem, MemoryReference(this->target_register, 0x10));
         // if we're holding a reference to the object, release it
         this->write_delete_held_reference(target_mem);
-        this->as.write_test(MemoryReference(size_reg),
-            MemoryReference(size_reg));
+        this->as.write_test(mem, mem);
         this->as.write_mov(this->target_register, 0);
-        this->as.write_setz(this->target_register);
-        this->release_register(size_reg);
+        this->as.write_setz(byte_register_for_register(this->target_register));
+        this->release_register(reg);
 
       } else {
         // other types cannot be falsey
@@ -403,9 +401,11 @@ void CompilationVisitor::visit(UnaryOperation* a) {
       break;
 
     case UnaryOperator::Positive:
-      if ((this->current_type.type == ValueType::Int) ||
-          (this->current_type.type == ValueType::Bool) ||
-          (this->current_type.type == ValueType::Float)) {
+      // the + operator converts bools into ints; leaves ints and floats alone
+      if (this->current_type.type == ValueType::Bool) {
+        this->current_type = Variable(ValueType::Int);
+      } else if ((this->current_type.type != ValueType::Int) &&
+                 (this->current_type.type != ValueType::Float)) {
         throw compile_error("arithmetic positive can only be applied to numeric values", this->file_offset);
       }
       break;
@@ -414,6 +414,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
       if ((this->current_type.type == ValueType::Bool) ||
           (this->current_type.type == ValueType::Int)) {
         this->as.write_neg(target_mem);
+        this->current_type = Variable(ValueType::Int);
 
       } else if (this->current_type == ValueType::Float) {
         // this is totally cheating. here we manually flip the sign bit
@@ -525,8 +526,6 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       return;
     }
 
-    Variable left_type = move(this->current_type);
-
     // for LogicalOr, use the left value if it's nonzero and use the right value
     // otherwise; for LogicalAnd, do the opposite
     string label_name = string_printf("BinaryOperation_%p_evaluate_right", a);
@@ -542,6 +541,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     this->write_delete_held_reference(MemoryReference(this->target_register));
 
     // generate code for the right value
+    Variable left_type = move(this->current_type);
     a->right->accept(this);
     this->as.write_label(label_name);
 
@@ -585,6 +585,10 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       (right_type.type == ValueType::Bool));
   bool left_float = (left_type.type == ValueType::Float);
   bool right_float = (right_type.type == ValueType::Float);
+  bool left_bytes = (left_type.type == ValueType::Bytes);
+  bool right_bytes = (right_type.type == ValueType::Bytes);
+  bool left_unicode = (left_type.type == ValueType::Unicode);
+  bool right_unicode = (right_type.type == ValueType::Unicode);
 
   this->as.write_label(string_printf("__BinaryOperation_%p_combine", a));
   switch (a->oper) {
@@ -622,11 +626,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
     case BinaryOperator::In:
     case BinaryOperator::NotIn:
-      if (((left_type.type == ValueType::Bytes) &&
-           (right_type.type == ValueType::Bytes)) ||
-          ((left_type.type == ValueType::Unicode) &&
-           (right_type.type == ValueType::Unicode))) {
-        const void* target_function = (left_type.type == ValueType::Bytes) ?
+      if ((left_bytes && right_bytes) || (left_unicode && right_unicode)) {
+        const void* target_function = left_bytes ?
             reinterpret_cast<const void*>(&bytes_contains) :
             reinterpret_cast<const void*>(&unicode_contains);
         this->write_function_call(target_function, NULL, {target_mem, left_mem},
@@ -1710,7 +1711,8 @@ void CompilationVisitor::visit(AttributeLookup* a) {
     // get the attribute value
     this->as.write_label(string_printf("__AttributeLookup_%p_get_value", a));
     this->as.write_mov(MemoryReference(attr_register), loc.mem);
-    if (type_has_refcount(loc.type.type)) {
+    bool attr_has_refcount = type_has_refcount(loc.type.type);
+    if (attr_has_refcount) {
       this->write_add_reference(attr_register);
     }
 
@@ -1723,7 +1725,7 @@ void CompilationVisitor::visit(AttributeLookup* a) {
 
     this->target_register = attr_register;
     this->current_type = loc.type;
-    this->holding_reference = true;
+    this->holding_reference = attr_has_refcount;
     return;
   }
 
@@ -3227,16 +3229,17 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
     } else {
       static uint64_t skip_label_id = 0;
       Register r = this->available_register();
+      MemoryReference r_mem(r);
       string skip_label = string_printf("__delete_reference_skip_%" PRIu64,
           skip_label_id++);
 
       // get the object pointer
       if (mem.field_size || (r != mem.base_register)) {
-        this->as.write_mov(MemoryReference(r), mem);
+        this->as.write_mov(r_mem, mem);
       }
 
       // if the pointer is NULL, do nothing
-      this->as.write_test(MemoryReference(r), MemoryReference(r));
+      this->as.write_test(r_mem, r_mem);
       this->as.write_je(skip_label);
 
       // decrement the refcount; if it's not zero, skip the destructor call
@@ -3246,7 +3249,7 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
 
       // call the destructor
       MemoryReference function_loc(r, 8);
-      this->write_function_call(NULL, &function_loc, {MemoryReference(r)}, {});
+      this->write_function_call(NULL, &function_loc, {r_mem}, {});
 
       this->as.write_label(skip_label);
     }

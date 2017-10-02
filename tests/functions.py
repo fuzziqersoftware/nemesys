@@ -1,7 +1,6 @@
-import tests.functions  # modules can import themselves
 from tests.globals import y, z
 
-z: Int = 10
+z = 10
 
 # this checks if argument passing and global references within functions work
 def g(v):

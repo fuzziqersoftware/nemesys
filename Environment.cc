@@ -838,7 +838,7 @@ Variable execute_unary_operator(UnaryOperator oper, const Variable& var) {
         }
       }
 
-      if (var.type != ValueType::Int) {
+      if (var.type == ValueType::Int) {
         if (var.value_known) {
           return Variable(ValueType::Int, ~var.int_value);
         } else {

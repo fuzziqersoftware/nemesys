@@ -6,7 +6,7 @@ try:
 
 except AssertionError as e1:
   print('nooooo you monster! what have you done!')
-  print(e1.message)
+  #print(e1.message)  # works in nemesys, not in python
 
 except MemoryError as e2:
   print('something went horribly horribly wrong')

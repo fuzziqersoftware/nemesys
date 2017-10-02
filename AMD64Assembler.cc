@@ -684,13 +684,6 @@ void AMD64Assembler::write_mov(const MemoryReference& to, const MemoryReference&
 }
 
 void AMD64Assembler::write_mov(Register reg, int64_t value, OperandSize size) {
-  if (value == 0) {
-    // xor reg, reg
-    MemoryReference r(reg);
-    this->write_xor(r, r, size);
-    return;
-  }
-
   string data;
   if (size == OperandSize::QuadWord) {
     // if the value can fit in a standard mov, use that instead

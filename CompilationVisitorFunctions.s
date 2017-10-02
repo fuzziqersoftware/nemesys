@@ -1,51 +1,11 @@
 .intel_syntax noprefix
 
-// # all try blocks have a finally block, even if it's not defined in the code
-// # let N be the number of except clauses on the try block
-// try:
-//   # stack-allocate one exception block on the stack with exc_class_id = 0,
-//   #     pointing to the finally block
-//   # stack-allocate N exception blocks for except clauses in reverse order
-//   if should_raise:
-//     raise KeyError()  # allocate object, set r15, call unwind_exception
-//   # remove the exception block structs from the stack
-//   # if there's an else block, jump there
-//   # if there's a finally block, jump there
-//   # jump to end of suite chain
-// except KeyError as e:
-//   # let this exception block's index be I
-//   # write r15 to e (local variable), clear r15
-//   # remove (N - I) exception blocks (note that unwind_exception already
-//   #     removed the block for this clause, but there's an extra block for
-//   #     the finally clause. we manually jump to the finally block so we
-//   #     don't need that)
-//   print('caught KeyError')
-//   # if there's a finally block, jump there
-//   # jump to end of suite chain
-// else:
-//   print('did not catch KeyError')
-//   # if there's a finally block, jump there
-//   # jump to end of suite chain
-// finally:
-//   print('executed finally block')
-//   # if r15 is nonzero, call unwind_exception again
-
-// struct ExceptionBlock {
-//   ExceptionBlock* next;
-//   const void* resume_rip;
-//   void* resume_rsp; // stack pointer to start except block with
-//   void* resume_rbp; // frame pointer to start except block with
-//   int64_t num_classes;
-//   int64_t exc_class_ids[0];
-// };
-
 // this function searches the exception blocks for one that matches the active
 // exception (in r15) and rewinds the stack to that point. that this function
 // does not follow the system v calling convention that we adhere to in the rest
 // of this project! it expects its arguments in r14 (the exception block chain)
 // and r15 (the active exception), and it never returns to the point where it
 // was called - it returns to somewhere further up the call stack.
-
 .globl __unwind_exception_internal
 __unwind_exception_internal:
   // get the exception class id

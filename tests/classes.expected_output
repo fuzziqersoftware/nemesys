@@ -1,9 +1,0 @@
-there are 0 BoringTestClass objects
-creating BoringTestClass object with name=x, value=30
-x == 30
-x == 50
-destroying BoringTestClass object with name=x, value=50
-there are 0 BoringTestClass objects
-creating BoringTestClass object with name=y, value=40
-y == 40
-there are 1 BoringTestClass objects

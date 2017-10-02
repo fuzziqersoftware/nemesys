@@ -1,5 +1,3 @@
-import __nemesys__
-
 def test_while():
   z = 10
   while z > 0:

@@ -16,7 +16,7 @@ try:
 
 except AssertionError as e1:
   print('nooooo you monster! what have you done!')
-  print(e1.message)
+  #print(e1.message)  # works in nemesys, not in python
 
 else:
   print('the string did not contain y - all is still well')
