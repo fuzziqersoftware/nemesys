@@ -10,6 +10,7 @@
 using namespace std;
 
 
+BasicObject::BasicObject() : refcount(1), destructor(NULL) { }
 BasicObject::BasicObject(void (*destructor)(void*)) : refcount(1),
     destructor(destructor) { }
 
@@ -24,7 +25,7 @@ void* add_reference(void* o) {
   return o;
 }
 
-void delete_reference(void* o) {
+void delete_reference(void* o, ExceptionBlock* exc_block) {
   BasicObject* obj = reinterpret_cast<BasicObject*>(o);
   if (!obj) {
     return;
@@ -37,6 +38,7 @@ void delete_reference(void* o) {
   }
 
   if (count == 0) {
+    // TODO: pass the exception block into the destructor somehow
     obj->destructor(o);
   }
 }

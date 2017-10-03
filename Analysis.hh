@@ -47,13 +47,11 @@ struct ClassContext {
 
   void populate_dynamic_attributes();
 
+  int64_t attribute_count() const;
   int64_t instance_size() const;
-  void* allocate_object() const;
   int64_t offset_for_attribute(const char* attribute) const;
   int64_t offset_for_attribute(size_t index) const;
   void set_attribute(void* instance, const char* attribute, int64_t value) const;
-
-  static const size_t attribute_offset;
 };
 
 struct FunctionContext {
@@ -72,6 +70,7 @@ struct FunctionContext {
   std::string varargs_name; // Annotated
   std::string varkwargs_name; // Annotated
   int64_t num_splits; // Annotated
+  bool pass_exception_block; // Initial (always false for Python functions)
 
   std::unordered_set<std::string> explicit_globals; // Annotated
   std::map<std::string, Variable> locals; // keys Annotated, values Analyzed
@@ -112,10 +111,11 @@ struct FunctionContext {
   // built-in single-fragment constructor
   FunctionContext(ModuleAnalysis* module, int64_t id, const char* name,
       const std::vector<Variable>& arg_types, Variable return_type,
-      const void* compiled);
+      const void* compiled, bool pass_exception_block);
   // built-in multiple-fragment constructor
   FunctionContext(ModuleAnalysis* module, int64_t id, const char* name,
-      const std::vector<BuiltinFunctionFragmentDefinition>& fragments);
+      const std::vector<BuiltinFunctionFragmentDefinition>& fragments,
+      bool pass_exception_block);
 
   bool is_class_init() const;
 };
@@ -164,9 +164,10 @@ public:
 
   int64_t create_builtin_function(const char* name,
       const std::vector<Variable>& arg_types, const Variable& return_type,
-      const void* compiled);
+      const void* compiled, bool pass_exception_block);
   int64_t create_builtin_function(const char* name,
-      const std::vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments);
+      const std::vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments,
+      bool pass_exception_block);
   int64_t create_builtin_class(const char* name,
     const std::map<std::string, Variable>& attributes,
     const std::vector<Variable>& init_arg_types, const void* init_compiled,

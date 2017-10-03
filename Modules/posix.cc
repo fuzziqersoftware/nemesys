@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -274,64 +275,69 @@ void posix_initialize() {
   Variable None(ValueType::None);
 
   posix_module->create_builtin_function("getpid", {}, Int,
-      reinterpret_cast<const void*>(&getpid));
+      reinterpret_cast<const void*>(&getpid), false);
   posix_module->create_builtin_function("getppid", {}, Int,
-      reinterpret_cast<const void*>(&getppid));
+      reinterpret_cast<const void*>(&getppid), false);
   posix_module->create_builtin_function("getpgid", {Int}, Int,
-      reinterpret_cast<const void*>(&getpgid));
+      reinterpret_cast<const void*>(&getpgid), false);
   posix_module->create_builtin_function("getpgrp", {}, Int,
-      reinterpret_cast<const void*>(&getpgrp));
+      reinterpret_cast<const void*>(&getpgrp), false);
   posix_module->create_builtin_function("getsid", {Int}, Int,
-      reinterpret_cast<const void*>(&getsid));
+      reinterpret_cast<const void*>(&getsid), false);
 
   posix_module->create_builtin_function("getuid", {}, Int,
-      reinterpret_cast<const void*>(&getuid));
+      reinterpret_cast<const void*>(&getuid), false);
   posix_module->create_builtin_function("getgid", {}, Int,
-      reinterpret_cast<const void*>(&getgid));
+      reinterpret_cast<const void*>(&getgid), false);
   posix_module->create_builtin_function("geteuid", {}, Int,
-      reinterpret_cast<const void*>(&geteuid));
+      reinterpret_cast<const void*>(&geteuid), false);
   posix_module->create_builtin_function("getegid", {}, Int,
-      reinterpret_cast<const void*>(&getegid));
+      reinterpret_cast<const void*>(&getegid), false);
 
   // these functions never return, so return type is technically unused
   posix_module->create_builtin_function("_exit", {Int}, Int,
-      reinterpret_cast<const void*>(&_exit));
+      reinterpret_cast<const void*>(&_exit), false);
   posix_module->create_builtin_function("abort", {}, Int,
-      reinterpret_cast<const void*>(&abort));
+      reinterpret_cast<const void*>(&abort), false);
 
-  // TODO: close should raise OSError on failure when exceptions are implemented
   posix_module->create_builtin_function("close", {Int}, None,
-      reinterpret_cast<const void*>(&close));
+      reinterpret_cast<const void*>(+[](int64_t fd, ExceptionBlock* exc_block) {
+    if (close(fd)) {
+      raise_python_exception(exc_block, create_single_attr_instance(
+          OSError_class_id, static_cast<int64_t>(errno)));
+    }
+  }), true);
   posix_module->create_builtin_function("closerange", {Int, Int}, None,
       reinterpret_cast<const void*>(+[](int64_t fd, int64_t end_fd) {
     for (; fd < end_fd; fd++) {
       close(fd);
     }
-  }));
+  }), false);
 
+  // TODO: most functions below here should raise OSError on failure
   posix_module->create_builtin_function("dup", {Int}, Int,
-      reinterpret_cast<const void*>(&dup));
+      reinterpret_cast<const void*>(&dup), false);
   posix_module->create_builtin_function("dup2", {Int, Int}, Int,
-      reinterpret_cast<const void*>(&dup2));
+      reinterpret_cast<const void*>(&dup2), false);
 
   posix_module->create_builtin_function("fork", {}, Int,
-      reinterpret_cast<const void*>(&fork));
+      reinterpret_cast<const void*>(&fork), false);
 
   posix_module->create_builtin_function("kill", {Int, Int}, Int,
-      reinterpret_cast<const void*>(&kill));
+      reinterpret_cast<const void*>(&kill), false);
   posix_module->create_builtin_function("killpg", {Int, Int}, Int,
-      reinterpret_cast<const void*>(&killpg));
+      reinterpret_cast<const void*>(&killpg), false);
 
   posix_module->create_builtin_function("open",
       {Unicode, Int, Variable(ValueType::Int, 0777LL)}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path, int64_t flags, int64_t mode) -> int64_t {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     int64_t ret = open(path_bytes->data, flags, mode);
     delete_reference(path_bytes);
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("read", {Int, Int}, Bytes,
       reinterpret_cast<const void*>(+[](int64_t fd, int64_t buffer_size) -> BytesObject* {
@@ -343,23 +349,23 @@ void posix_initialize() {
       ret->count = 0;
     }
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("write", {Int, Bytes}, Int,
       reinterpret_cast<const void*>(+[](int64_t fd, BytesObject* data) -> int64_t {
     return write(fd, data->data, data->count);
-  }));
+  }), false);
 
   posix_module->create_builtin_function("execv",
       {Unicode, List_Unicode}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path, ListObject* args) -> int64_t {
 
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
 
     vector<BytesObject*> args_objects;
     vector<char*> args_pointers;
     for (size_t x = 0; x < args->count; x++) {
-      args_objects.emplace_back(encode_ascii(reinterpret_cast<UnicodeObject*>(args->items[x])));
+      args_objects.emplace_back(unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(args->items[x])));
       args_pointers.emplace_back(args_objects.back()->data);
     }
     args_pointers.emplace_back(nullptr);
@@ -374,19 +380,19 @@ void posix_initialize() {
     }
 
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("execve",
       {Unicode, List_Unicode, Dict_Unicode_Unicode}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path, ListObject* args,
         DictionaryObject* env) -> int64_t {
 
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
 
     vector<BytesObject*> args_objects;
     vector<char*> args_pointers;
     for (size_t x = 0; x < args->count; x++) {
-      args_objects.emplace_back(encode_ascii(reinterpret_cast<UnicodeObject*>(args->items[x])));
+      args_objects.emplace_back(unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(args->items[x])));
       args_pointers.emplace_back(args_objects.back()->data);
     }
     args_pointers.emplace_back(nullptr);
@@ -394,8 +400,8 @@ void posix_initialize() {
     vector<char*> envs_pointers;
     DictionaryObject::SlotContents dsc;
     while (dictionary_next_item(env, &dsc)) {
-      BytesObject* key_bytes = encode_ascii(reinterpret_cast<UnicodeObject*>(dsc.key));
-      BytesObject* value_bytes = encode_ascii(reinterpret_cast<UnicodeObject*>(dsc.value));
+      BytesObject* key_bytes = unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(dsc.key));
+      BytesObject* value_bytes = unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(dsc.value));
 
       char* env_item = reinterpret_cast<char*>(malloc(key_bytes->count + value_bytes->count + 2));
       memcpy(env_item, key_bytes->data, key_bytes->count);
@@ -424,111 +430,111 @@ void posix_initialize() {
     }
 
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("strerror", {Int}, Unicode,
       reinterpret_cast<const void*>(+[](int64_t code) -> UnicodeObject* {
     char buf[128];
     strerror_r(code, buf, sizeof(buf));
-    return decode_ascii(buf);
-  }));
+    return bytes_decode_ascii(buf);
+  }), false);
 
   posix_module->create_builtin_function("access", {Unicode, Int}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path, int64_t mode) -> int64_t {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     int64_t ret = access(path_bytes->data, mode);
     delete_reference(path_bytes);
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("chdir", {Unicode}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path) -> int64_t {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     int64_t ret = chdir(path_bytes->data);
     delete_reference(path_bytes);
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("fchdir", {Int}, Int,
-      reinterpret_cast<const void*>(&fchdir));
+      reinterpret_cast<const void*>(&fchdir), false);
 
   posix_module->create_builtin_function("chmod", {Unicode, Int}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path, int64_t mode) -> int64_t {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     int64_t ret = chmod(path_bytes->data, mode);
     delete_reference(path_bytes);
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("fchmod", {Int, Int}, Int,
-      reinterpret_cast<const void*>(&fchmod));
+      reinterpret_cast<const void*>(&fchmod), false);
 
 #ifdef MACOSX
   posix_module->create_builtin_function("chflags", {Unicode, Int}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path, int64_t flags) -> int64_t {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     int64_t ret = chflags(path_bytes->data, flags);
     delete_reference(path_bytes);
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("fchflags", {Int, Int}, Int,
-      reinterpret_cast<const void*>(&fchflags));
+      reinterpret_cast<const void*>(&fchflags), false);
 #endif
 
   posix_module->create_builtin_function("chown", {Unicode, Int, Int}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path, int64_t uid, int64_t gid) -> int64_t {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     int64_t ret = chown(path_bytes->data, uid, gid);
     delete_reference(path_bytes);
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("lchown", {Unicode, Int, Int}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path, int64_t uid, int64_t gid) -> int64_t {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     int64_t ret = lchown(path_bytes->data, uid, gid);
     delete_reference(path_bytes);
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("fchown", {Int, Int, Int}, Int,
-      reinterpret_cast<const void*>(&fchown));
+      reinterpret_cast<const void*>(&fchown), false);
 
   posix_module->create_builtin_function("chroot", {Unicode}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path) -> int64_t {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     int64_t ret = chroot(path_bytes->data);
     delete_reference(path_bytes);
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("ctermid", {}, Unicode,
       reinterpret_cast<const void*>(+[]() -> UnicodeObject* {
     char result[L_ctermid];
     ctermid(result);
-    return decode_ascii(result);
-  }));
+    return bytes_decode_ascii(result);
+  }), false);
 
   posix_module->create_builtin_function("cpu_count", {}, Int,
       reinterpret_cast<const void*>(+[]() -> int64_t {
     // TODO: should we use procfs here instead?
     return sysconf(_SC_NPROCESSORS_ONLN);
-  }));
+  }), false);
 
   static int64_t stat_result_class_id = create_builtin_class("stat_result", {
         {"st_mode", Int},
@@ -553,7 +559,7 @@ void posix_initialize() {
 
   static auto convert_stat_result = +[](int64_t ret, const struct stat* st) -> void* {
     // TODO: this can be optimized to avoid all the map lookups
-    void* res = stat_result_class->allocate_object();
+    InstanceObject* res = create_instance(stat_result_class_id, stat_result_class->attribute_count());
     if (!ret) {
       stat_result_class->set_attribute(res, "st_mode", st->st_mode);
       stat_result_class->set_attribute(res, "st_ino", st->st_ino);
@@ -603,33 +609,33 @@ void posix_initialize() {
   // TODO: support dir_fd
   posix_module->create_builtin_function("stat", {Unicode, Bool_True}, StatResult,
       reinterpret_cast<const void*>(+[](UnicodeObject* path, bool follow_symlinks) -> void* {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     struct stat st;
     int64_t ret = follow_symlinks ? stat(path_bytes->data, &st) : lstat(path_bytes->data, &st);
     delete_reference(path_bytes);
     return convert_stat_result(ret, &st);
-  }));
+  }), false);
 
   posix_module->create_builtin_function("fstat", {Int}, StatResult,
       reinterpret_cast<const void*>(+[](int64_t fd) -> void* {
     struct stat st;
     return convert_stat_result(fstat(fd, &st), &st);
-  }));
+  }), false);
 
   posix_module->create_builtin_function("truncate", {Unicode, Int}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* path, int64_t size) -> int64_t {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     int64_t ret = truncate(path_bytes->data, size);
     delete_reference(path_bytes);
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("ftruncate", {Int, Int}, Int,
-      reinterpret_cast<const void*>(&ftruncate));
+      reinterpret_cast<const void*>(&ftruncate), false);
 
   posix_module->create_builtin_function("getcwd", {}, Unicode,
       reinterpret_cast<const void*>(+[]() -> UnicodeObject* {
@@ -637,8 +643,8 @@ void posix_initialize() {
     if (!getcwd(path, MAXPATHLEN)) {
       return unicode_new(NULL, NULL, 0);
     }
-    return decode_ascii(path);
-  }));
+    return bytes_decode_ascii(path);
+  }), false);
 
   posix_module->create_builtin_function("getcwdb", {}, Bytes,
       reinterpret_cast<const void*>(+[]() -> BytesObject* {
@@ -650,20 +656,20 @@ void posix_initialize() {
       ret->count = strlen(ret->data);
     }
     return ret;
-  }));
+  }), false);
 
   posix_module->create_builtin_function("lseek", {Int, Int, Int}, Int,
-      reinterpret_cast<const void*>(&lseek));
+      reinterpret_cast<const void*>(&lseek), false);
 
   posix_module->create_builtin_function("fsync", {Int}, Int,
-      reinterpret_cast<const void*>(&fsync));
+      reinterpret_cast<const void*>(&fsync), false);
 
   posix_module->create_builtin_function("isatty", {Int}, Bool,
-      reinterpret_cast<const void*>(&isatty));
+      reinterpret_cast<const void*>(&isatty), false);
 
   posix_module->create_builtin_function("listdir", {Variable(ValueType::Unicode, L".")}, List_Unicode,
       reinterpret_cast<const void*>(+[](UnicodeObject* path) -> void* {
-    BytesObject* path_bytes = encode_ascii(path);
+    BytesObject* path_bytes = unicode_encode_ascii(path);
     delete_reference(path);
 
     auto items = list_directory(path_bytes->data);
@@ -671,16 +677,16 @@ void posix_initialize() {
     ListObject* l = list_new(NULL, items.size(), true);
     size_t x = 0;
     for (const auto& item : items) {
-      l->items[x++] = decode_ascii(item.c_str());
+      l->items[x++] = bytes_decode_ascii(item.c_str());
     }
 
     delete_reference(path_bytes);
     return l;
-  }));
+  }), false);
 
   // TODO: support passing names as strings
   posix_module->create_builtin_function("sysconf", {Int}, Int,
-      reinterpret_cast<const void*>(&sysconf));
+      reinterpret_cast<const void*>(&sysconf), false);
 
   // {"confstr", Variable()},
   // {"confstr_names", Variable()},

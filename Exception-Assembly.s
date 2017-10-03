@@ -1,11 +1,24 @@
 .intel_syntax noprefix
 
-// this function searches the exception blocks for one that matches the active
-// exception (in r15) and rewinds the stack to that point. that this function
-// does not follow the system v calling convention that we adhere to in the rest
-// of this project! it expects its arguments in r14 (the exception block chain)
-// and r15 (the active exception), and it never returns to the point where it
-// was called - it returns to somewhere further up the call stack.
+// exception unwinding entry point from c code. this function searches the
+// exception blocks for one that matches the active exception and rewinds the
+// stack to that point. this function never returns to the point where it was
+// called - it returns to somewhere further up the call stack.
+.globl _raise_python_exception
+_raise_python_exception:
+  // exc block ptr is rdi, exc object is rsi
+  // just move them into the right places and go to __unwind_exception_internal
+  test rdi, rdi
+  jnz 1f // _raise_python_exception__continue
+  ret
+1: _raise_python_exception__continue:
+  mov r14, rdi
+  mov r15, rsi
+
+// exception unwinding entry point when called from nemesys code. note that this
+// function does not follow the system v calling convention that we adhere to in
+// the rest of this project! it expects its arguments in r14 (the exception
+// block chain) and r15 (the active exception).
 .globl __unwind_exception_internal
 __unwind_exception_internal:
   // get the exception class id

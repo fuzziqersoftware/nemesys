@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "../Exception.hh"
 #include "Reference.hh"
 
 
@@ -68,7 +69,8 @@ struct DictionaryObject {
     std::vector<Node*> nodes;
   };
 
-  Traversal traverse(void* k, bool with_nodes, bool create);
+  Traversal traverse(void* k, bool with_nodes, bool create,
+      ExceptionBlock* exc_block = NULL);
   Traversal traverse(void* k, bool with_nodes) const;
 
   std::string structure_for_node(const Node* n) const;
@@ -76,14 +78,17 @@ struct DictionaryObject {
 
 DictionaryObject* dictionary_new(DictionaryObject* d,
     size_t (*key_length)(const void* k),
-    uint8_t (*key_char)(const void* k, size_t which), uint64_t flags);
+    uint8_t (*key_char)(const void* k, size_t which), uint64_t flags,
+    ExceptionBlock* exc_block = NULL);
 
-void dictionary_insert(DictionaryObject* d, void* k, void* v);
+void dictionary_insert(DictionaryObject* d, void* k, void* v,
+    ExceptionBlock* exc_block = NULL);
 bool dictionary_erase(DictionaryObject* d, void* k);
 void dictionary_clear(DictionaryObject* d);
 
 bool dictionary_exists(const DictionaryObject* d, void* k);
-void* dictionary_at(const DictionaryObject* d, void* k);
+void* dictionary_at(const DictionaryObject* d, void* k,
+    ExceptionBlock* exc_block = NULL);
 bool dictionary_next_item(const DictionaryObject* d,
     DictionaryObject::SlotContents* item);
 size_t dictionary_size(const DictionaryObject* d);

@@ -51,33 +51,27 @@ void ClassContext::populate_dynamic_attributes() {
   }
 }
 
-int64_t ClassContext::instance_size() const {
-  return sizeof(int64_t) * (this->dynamic_attribute_indexes.size() + 3);
+int64_t ClassContext::attribute_count() const {
+  return this->dynamic_attribute_indexes.size();
 }
 
-void* ClassContext::allocate_object() const {
-  uint8_t* instance = reinterpret_cast<uint8_t*>(malloc(this->instance_size()));
-  *reinterpret_cast<int64_t*>(instance) = 1; // refcount
-  *reinterpret_cast<const void**>(instance + 8) = this->destructor;
-  return instance;
+int64_t ClassContext::instance_size() const {
+  return sizeof(int64_t) * this->attribute_count() + sizeof(InstanceObject);
 }
 
 int64_t ClassContext::offset_for_attribute(const char* attribute) const {
-  // attributes are stored at [instance + 8 * which + attribute_offset]
   return this->offset_for_attribute(this->dynamic_attribute_indexes.at(attribute));
 }
 
 int64_t ClassContext::offset_for_attribute(size_t index) const {
-  // attributes are stored at [instance + 8 * which + attribute_offset]
-  return (sizeof(int64_t) * index) + attribute_offset;
+  // attributes are stored at [instance + 8 * which + attribute_start_offset]
+  return (sizeof(int64_t) * index) + sizeof(InstanceObject);
 }
 
 void ClassContext::set_attribute(void* instance, const char* attribute, int64_t value) const {
   uint8_t* p = reinterpret_cast<uint8_t*>(instance);
   *reinterpret_cast<int64_t*>(p + this->offset_for_attribute(attribute)) = value;
 }
-
-const size_t ClassContext::attribute_offset = 3 * sizeof(int64_t);
 
 
 
@@ -95,18 +89,21 @@ FunctionContext::BuiltinFunctionFragmentDefinition::BuiltinFunctionFragmentDefin
     compiled(compiled) { }
 
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id) :
-    module(module), id(id), class_id(0), ast_root(NULL), num_splits(0) { }
+    module(module), id(id), class_id(0), ast_root(NULL), num_splits(0),
+    pass_exception_block(false) { }
 
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
     const char* name, const vector<Variable>& arg_types, Variable return_type,
-    const void* compiled) : FunctionContext(module, id, name,
-      {BuiltinFunctionFragmentDefinition(arg_types, return_type, compiled)}) { }
+    const void* compiled, bool pass_exception_block) : FunctionContext(
+      module, id, name, {BuiltinFunctionFragmentDefinition(
+        arg_types, return_type, compiled)}, pass_exception_block) { }
 
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
     const char* name,
-    const vector<BuiltinFunctionFragmentDefinition>& fragments) :
-    module(module), id(id), class_id(0), name(name), ast_root(NULL),
-    num_splits(0) {
+    const vector<BuiltinFunctionFragmentDefinition>& fragments,
+    bool pass_exception_block) : module(module), id(id), class_id(0),
+    name(name), ast_root(NULL), num_splits(0),
+    pass_exception_block(pass_exception_block) {
 
   // populate the arguments from the first fragment definition
   for (const auto& arg : fragments[0].arg_types) {
@@ -184,16 +181,18 @@ ModuleAnalysis::ModuleAnalysis(const string& name,
 
 int64_t ModuleAnalysis::create_builtin_function(const char* name,
     const vector<Variable>& arg_types, const Variable& return_type,
-    const void* compiled) {
+    const void* compiled, bool pass_exception_block) {
   int64_t function_id = ::create_builtin_function(name, arg_types, return_type,
-      compiled, false);
+      compiled, pass_exception_block, false);
   this->globals.emplace(name, Variable(ValueType::Function, function_id));
   return function_id;
 }
 
 int64_t ModuleAnalysis::create_builtin_function(const char* name,
-    const vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments) {
-  int64_t function_id = ::create_builtin_function(name, fragments, false);
+    const vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments,
+    bool pass_exception_block) {
+  int64_t function_id = ::create_builtin_function(name, fragments,
+      pass_exception_block, false);
   this->globals.emplace(name, Variable(ValueType::Function, function_id));
   return function_id;
 }

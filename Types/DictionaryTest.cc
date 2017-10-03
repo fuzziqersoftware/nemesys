@@ -12,8 +12,15 @@
 
 #include "Dictionary.hh"
 #include "Strings.hh"
+#include "Instance.hh"
 
 using namespace std;
+
+// Dictionary.cc needs these to exist, but they don't need to be correct since
+// we never pass an exc_block in the unit tests
+InstanceObject MemoryError_instance;
+int64_t IndexError_class_id = 0;
+int64_t KeyError_class_id = 0;
 
 
 void expect_key_missing(const DictionaryObject* d, void* k) {

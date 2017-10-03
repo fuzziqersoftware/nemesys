@@ -6,6 +6,8 @@
 #include <phosg/Strings.hh>
 
 #include "../Debug.hh"
+#include "../Exception.hh"
+#include "../BuiltinFunctions.hh"
 
 using namespace std;
 
@@ -13,7 +15,8 @@ using namespace std;
 
 BytesObject::BytesObject() : basic(free), count(0) { }
 
-BytesObject* bytes_new(BytesObject* s, const char* data, ssize_t count) {
+BytesObject* bytes_new(BytesObject* s, const char* data, ssize_t count,
+    ExceptionBlock* exc_block) {
   if (count < 0) {
     count = strlen(data);
   }
@@ -21,7 +24,8 @@ BytesObject* bytes_new(BytesObject* s, const char* data, ssize_t count) {
     size_t size = sizeof(BytesObject) + sizeof(char) * (count + 1);
     s = reinterpret_cast<BytesObject*>(malloc(size));
     if (!s) {
-      return NULL;
+      raise_python_exception(exc_block, &MemoryError_instance);
+      throw bad_alloc();
     }
   }
   s->basic.refcount = 1;
@@ -41,21 +45,21 @@ BytesObject* bytes_new(BytesObject* s, const char* data, ssize_t count) {
   return s;
 }
 
-BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b) {
+BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b,
+    ExceptionBlock* exc_block) {
   uint64_t count = a->count + b->count;
-  BytesObject* s = bytes_new(NULL, NULL, count);
-  if (!s) {
-    return NULL;
-  }
+  BytesObject* s = bytes_new(NULL, NULL, count, exc_block);
   memcpy(s->data, a->data, sizeof(char) * a->count);
   memcpy(&s->data[a->count], b->data, sizeof(char) * b->count);
   s->data[s->count] = 0;
   return s;
 }
 
-char bytes_at(const BytesObject* s, size_t which) {
+char bytes_at(const BytesObject* s, size_t which,
+    ExceptionBlock* exc_block) {
   if (which >= s->count) {
-    return 0;
+    raise_python_exception(exc_block, create_instance(IndexError_class_id));
+    throw out_of_range("index out of range for bytes object");
   }
   return s->data[which];
 }
@@ -80,7 +84,8 @@ string bytes_to_cxx_string(const BytesObject* s) {
 
 UnicodeObject::UnicodeObject() : basic(free), count(0) { }
 
-UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count) {
+UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count,
+    ExceptionBlock* exc_block) {
   if (count < 0) {
     count = wcslen(data);
   }
@@ -88,7 +93,8 @@ UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count)
     size_t size = sizeof(UnicodeObject) + sizeof(wchar_t) * (count + 1);
     s = reinterpret_cast<UnicodeObject*>(malloc(size));
     if (!s) {
-      return NULL;
+      raise_python_exception(exc_block, &MemoryError_instance);
+      throw bad_alloc();
     }
   }
   s->basic.refcount = 1;
@@ -109,21 +115,21 @@ UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count)
   return s;
 }
 
-UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b) {
+UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b,
+    ExceptionBlock* exc_block) {
   uint64_t count = a->count + b->count;
-  UnicodeObject* s = unicode_new(NULL, NULL, count);
-  if (!s) {
-    return NULL;
-  }
+  UnicodeObject* s = unicode_new(NULL, NULL, count, exc_block);
   memcpy(s->data, a->data, sizeof(wchar_t) * a->count);
   memcpy(&s->data[a->count], b->data, sizeof(wchar_t) * b->count);
   s->data[s->count] = 0;
   return s;
 }
 
-wchar_t unicode_at(const UnicodeObject* s, size_t which) {
+wchar_t unicode_at(const UnicodeObject* s, size_t which,
+    ExceptionBlock* exc_block) {
   if (which >= s->count) {
-    return 0;
+    raise_python_exception(exc_block, create_instance(IndexError_class_id));
+    throw out_of_range("index out of range for unicode object");
   }
   return s->data[which];
 }
@@ -146,11 +152,11 @@ wstring unicode_to_cxx_wstring(const UnicodeObject* s) {
 
 
 
-BytesObject* encode_ascii(const UnicodeObject* s) {
-  return encode_ascii(s->data, s->count);
+BytesObject* unicode_encode_ascii(const UnicodeObject* s) {
+  return unicode_encode_ascii(s->data, s->count);
 }
 
-BytesObject* encode_ascii(const wchar_t* s, ssize_t count) {
+BytesObject* unicode_encode_ascii(const wchar_t* s, ssize_t count) {
   if (count < 0) {
     count = wcslen(s);
   }
@@ -162,11 +168,11 @@ BytesObject* encode_ascii(const wchar_t* s, ssize_t count) {
   return ret;
 }
 
-UnicodeObject* decode_ascii(const BytesObject* s) {
-  return decode_ascii(s->data, s->count);
+UnicodeObject* bytes_decode_ascii(const BytesObject* s) {
+  return bytes_decode_ascii(s->data, s->count);
 }
 
-UnicodeObject* decode_ascii(const char* s, ssize_t count) {
+UnicodeObject* bytes_decode_ascii(const char* s, ssize_t count) {
   if (count < 0) {
     count = strlen(s);
   }

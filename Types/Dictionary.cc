@@ -4,7 +4,12 @@
 
 #include <phosg/Strings.hh>
 
+#include "Instance.hh"
+
 using namespace std;
+
+extern InstanceObject MemoryError_instance;
+extern int64_t KeyError_class_id;
 
 
 static size_t dictionary_default_key_length(const void* k) {
@@ -30,12 +35,14 @@ static void dictionary_delete(void* d) {
 
 DictionaryObject* dictionary_new(DictionaryObject* d,
     size_t (*key_length)(const void* k),
-    uint8_t (*key_char)(const void* k, size_t offset), uint64_t flags) {
+    uint8_t (*key_char)(const void* k, size_t offset), uint64_t flags,
+    ExceptionBlock* exc_block) {
   if (!d) {
     d = reinterpret_cast<DictionaryObject*>(malloc(sizeof(DictionaryObject)));
   }
   if (!d) {
-    return NULL;
+    raise_python_exception(exc_block, &MemoryError_instance);
+    throw bad_alloc();
   }
   d->basic.refcount = 1;
   d->basic.destructor = dictionary_delete;
@@ -50,16 +57,19 @@ DictionaryObject* dictionary_new(DictionaryObject* d,
 
 
 
-void dictionary_insert(DictionaryObject* d, void* k, void* v) {
+void dictionary_insert(DictionaryObject* d, void* k, void* v,
+    ExceptionBlock* exc_block) {
   // find and clear the slot offset for the key, creating it if necessary
-  auto t = d->traverse(k, false, true);
+  auto t = d->traverse(k, false, true, exc_block);
   if (!t.node) {
+    // TODO: raise a python exception
     throw logic_error("creation traversal did not yield a node");
   }
 
   // replace the value in the value slot
   auto slot_contents = t.node->get_slot(t.ch);
   if (slot_contents.is_subnode) {
+    // TODO: raise a python exception
     throw logic_error("creation traversal yielded a slot containing a node");
   }
   if (slot_contents.occupied) {
@@ -85,7 +95,7 @@ void dictionary_insert(DictionaryObject* d, void* k, void* v) {
 
 bool dictionary_erase(DictionaryObject* d, void* k) {
   // find the value slot for this key, tracking the node path as we go
-  auto t = d->traverse(k, true, false);
+  auto t = d->traverse(k, true);
   if (!t.node) {
     return false; // slot doesn't exist, so the key doesn't exist
   }
@@ -208,17 +218,20 @@ bool dictionary_exists(const DictionaryObject* d, void* k) {
 }
 
 
-void* dictionary_at(const DictionaryObject* d, void* k) {
+void* dictionary_at(const DictionaryObject* d, void* k,
+    ExceptionBlock* exc_block) {
   // find the value slot for this key
   auto t = d->traverse(k, false);
   if (!t.node) {
-    throw out_of_range("no such key");
+    raise_python_exception(exc_block, create_instance(KeyError_class_id));
+    throw out_of_range("key does not exist in dictionary");
   }
 
   // get the contents and convert them into something we can return
   auto slot_contents = t.node->get_slot(t.ch);
   if (!slot_contents.occupied || slot_contents.is_subnode) {
-    throw out_of_range("no such key");
+    raise_python_exception(exc_block, create_instance(KeyError_class_id));
+    throw out_of_range("key does not exist in dictionary");
   }
   return slot_contents.value;
 }
@@ -369,7 +382,7 @@ bool DictionaryObject::Node::has_children() const {
 
 
 DictionaryObject::Traversal DictionaryObject::traverse(void* k, bool with_nodes,
-    bool create) {
+    bool create, ExceptionBlock* exc_block) {
   size_t k_len = this->key_length(k);
 
   Traversal t;
@@ -383,6 +396,10 @@ DictionaryObject::Traversal DictionaryObject::traverse(void* k, bool with_nodes,
 
     if (k_len == 0) {
       this->root = reinterpret_cast<Node*>(malloc(Node::size_for_range(1, 0)));
+      if (!this->root) {
+        raise_python_exception(exc_block, &MemoryError_instance);
+        throw bad_alloc();
+      }
       new (this->root) Node(1, 0, 0, NULL, NULL, false);
       t.node = this->root;
       t.ch = 0x100;
@@ -394,6 +411,10 @@ DictionaryObject::Traversal DictionaryObject::traverse(void* k, bool with_nodes,
 
     uint8_t ch = this->key_char(k, 0);
     this->root = reinterpret_cast<Node*>(malloc(Node::size_for_range(ch, ch)));
+    if (!this->root) {
+      raise_python_exception(exc_block, &MemoryError_instance);
+      throw bad_alloc();
+    }
     new (this->root) Node(ch, ch, 0, NULL, NULL, false);
   }
 
@@ -466,6 +487,10 @@ DictionaryObject::Traversal DictionaryObject::traverse(void* k, bool with_nodes,
       uint8_t new_end = (!extend_start) ? t.ch : t.node->end;
       Node* new_node = reinterpret_cast<Node*>(malloc(
           Node::size_for_range(new_start, new_end)));
+      if (!new_node) {
+        raise_python_exception(exc_block, &MemoryError_instance);
+        throw bad_alloc();
+      }
       new (new_node) Node(new_start, new_end, t.node->parent_slot, t.node->key,
           t.node->value, t.node->has_value);
 
@@ -533,6 +558,10 @@ DictionaryObject::Traversal DictionaryObject::traverse(void* k, bool with_nodes,
     }
     Node* new_node = reinterpret_cast<Node*>(malloc(
         Node::size_for_range(next_ch, next_ch)));
+    if (!new_node) {
+      raise_python_exception(exc_block, &MemoryError_instance);
+      throw bad_alloc();
+    }
     new (new_node) Node(next_ch, t.ch, slot_contents.key, slot_contents.value,
         slot_contents.occupied);
 

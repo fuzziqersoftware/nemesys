@@ -15,6 +15,7 @@
 #include "Analysis.hh"
 #include "Types/Strings.hh"
 #include "Types/List.hh"
+#include "Types/Instance.hh"
 #include "PythonLexer.hh" // for escape()
 
 // builtin module implementations
@@ -30,8 +31,13 @@ using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
 unordered_map<int64_t, FunctionContext> builtin_function_definitions;
 unordered_map<int64_t, ClassContext> builtin_class_definitions;
 unordered_map<string, Variable> builtin_names;
+InstanceObject MemoryError_instance;
 int64_t AssertionError_class_id;
-int64_t MemoryError_class_id;
+int64_t IndexError_class_id;
+int64_t KeyError_class_id;
+int64_t OSError_class_id;
+int64_t TypeError_class_id;
+int64_t ValueError_class_id;
 
 
 
@@ -60,18 +66,21 @@ static int64_t generate_function_id() {
 
 int64_t create_builtin_function(const char* name,
     const vector<Variable>& arg_types, const Variable& return_type,
-    const void* compiled, bool register_globally) {
+    const void* compiled, bool pass_exception_block, bool register_globally) {
   vector<FragDef> defs({{arg_types, return_type, compiled}});
-  return create_builtin_function(name, defs, register_globally);
+  return create_builtin_function(name, defs, pass_exception_block,
+      register_globally);
 }
 
 int64_t create_builtin_function(const char* name,
-    const vector<FragDef>& fragments, bool register_globally) {
+    const vector<FragDef>& fragments, bool pass_exception_block,
+    bool register_globally) {
 
   int64_t function_id = generate_function_id();
 
   builtin_function_definitions.emplace(piecewise_construct,
-      forward_as_tuple(function_id), forward_as_tuple(nullptr, function_id, name, fragments));
+      forward_as_tuple(function_id), forward_as_tuple(
+        nullptr, function_id, name, fragments,  pass_exception_block));
   if (register_globally) {
     create_builtin_name(name, Variable(ValueType::Function, function_id));
   }
@@ -111,7 +120,7 @@ int64_t create_builtin_class(const char* name,
     vector<FragDef> defs({{modified_init_args, return_type, init_compiled}});
     FunctionContext& fn = builtin_function_definitions.emplace(piecewise_construct,
         forward_as_tuple(class_id),
-        forward_as_tuple(nullptr, class_id, name, defs)).first->second;
+        forward_as_tuple(nullptr, class_id, name, defs, true)).first->second;
     fn.class_id = class_id;
   }
 
@@ -159,7 +168,7 @@ static void create_default_builtin_functions() {
   })), FragDef({Unicode}, None, reinterpret_cast<const void*>(+[](UnicodeObject* str) {
     fprintf(stdout, "%.*ls\n", static_cast<int>(str->count), str->data);
     delete_reference(str);
-  }))}, true);
+  }))}, false, true);
 
   create_builtin_function("bool", {
       FragDef({Bool_False}, Bool, reinterpret_cast<const void*>(+[](bool b) -> bool {
@@ -185,7 +194,7 @@ static void create_default_builtin_functions() {
     bool ret = l->count != 0;
     delete_reference(l);
     return ret;
-  }))}, true);
+  }))}, false, true);
 
   // Unicode input(Unicode='')
   create_builtin_function("input", {Unicode_Blank}, Unicode,
@@ -231,7 +240,7 @@ static void create_default_builtin_functions() {
       return empty_unicode;
     }
     return unicode_new(NULL, data.data(), data.size());
-  }), true);
+  }), false, true);
 
   // Bool bool(Bool=False)
   // Bool bool(Int)
@@ -267,45 +276,79 @@ static void create_default_builtin_functions() {
     bool ret = l->count != 0;
     delete_reference(l);
     return ret;
-  }))}, true);
+  }))}, false, true);
 
   // Int int(Int=0, Int=0)
   // Int int(Bytes, Int=0)
   // Int int(Unicode, Int=0)
   // Int int(Float, Int=0)
   create_builtin_function("int", {
-      FragDef({Int_Zero, Int_Zero}, Int, reinterpret_cast<const void*>(+[](int64_t i, int64_t) -> int64_t {
+      FragDef({Int_Zero, Int_Zero}, Int, reinterpret_cast<const void*>(+[](
+        int64_t i, int64_t, ExceptionBlock*) -> int64_t {
     return i;
-  })), FragDef({Bytes, Int_Zero}, Int, reinterpret_cast<const void*>(+[](BytesObject* s, int64_t base) -> int64_t {
-    int64_t ret = strtoll(reinterpret_cast<const char*>(s->data), NULL, base);
+
+  })), FragDef({Bytes, Int_Zero}, Int, reinterpret_cast<const void*>(+[](
+      BytesObject* s, int64_t base, ExceptionBlock* exc_block) -> int64_t {
+    char* endptr;
+    int64_t ret = strtoll(reinterpret_cast<const char*>(s->data), &endptr, base);
     delete_reference(s);
+
+    if (endptr != s->data + s->count) {
+      raise_python_exception(exc_block, create_instance(ValueError_class_id));
+    }
     return ret;
-  })), FragDef({Unicode, Int_Zero}, Int, reinterpret_cast<const void*>(+[](UnicodeObject* s, int64_t base) -> int64_t {
-    int64_t ret = wcstoll(s->data, NULL, base);
+
+  })), FragDef({Unicode, Int_Zero}, Int, reinterpret_cast<const void*>(+[](
+      UnicodeObject* s, int64_t base, ExceptionBlock* exc_block) -> int64_t {
+    wchar_t* endptr;
+    int64_t ret = wcstoll(s->data, &endptr, base);
     delete_reference(s);
+
+    if (endptr != s->data + s->count) {
+      raise_python_exception(exc_block, create_instance(ValueError_class_id));
+    }
     return ret;
-  })), FragDef({Float, Int_Zero}, Int, reinterpret_cast<const void*>(+[](double x, int64_t) -> int64_t {
+
+  })), FragDef({Float, Int_Zero}, Int, reinterpret_cast<const void*>(+[](
+      double x, int64_t, ExceptionBlock*) -> int64_t {
     return static_cast<int64_t>(x);
-  }))}, true);
+  }))}, true, true);
 
   // Float float(Float=0.0)
   // Float float(Int)
   // Float float(Bytes)
   // Float float(Unicode)
   create_builtin_function("float", {
-      FragDef({Float_Zero}, Float, reinterpret_cast<const void*>(+[](double f) -> double {
+      FragDef({Float_Zero}, Float, reinterpret_cast<const void*>(+[](
+        double f, ExceptionBlock*) -> double {
     return f;
-  })), FragDef({Int}, Float, reinterpret_cast<const void*>(+[](int64_t i) -> double {
+
+  })), FragDef({Int}, Float, reinterpret_cast<const void*>(+[](
+      int64_t i, ExceptionBlock*) -> double {
     return static_cast<double>(i);
-  })), FragDef({Bytes}, Float, reinterpret_cast<const void*>(+[](BytesObject* s) -> double {
-    double ret = strtod(s->data, NULL);
+
+  })), FragDef({Bytes}, Float, reinterpret_cast<const void*>(+[](
+      BytesObject* s, ExceptionBlock* exc_block) -> double {
+    char* endptr;
+    double ret = strtod(s->data, &endptr);
     delete_reference(s);
+
+    if (endptr != s->data + s->count) {
+      raise_python_exception(exc_block, create_instance(ValueError_class_id));
+    }
     return ret;
-  })), FragDef({Unicode}, Float, reinterpret_cast<const void*>(+[](UnicodeObject* s) -> double {
-    double ret = wcstod(s->data, NULL);
+
+  })), FragDef({Unicode}, Float, reinterpret_cast<const void*>(+[](
+      UnicodeObject* s, ExceptionBlock* exc_block) -> double {
+    wchar_t* endptr;
+    double ret = wcstod(s->data, &endptr);
     delete_reference(s);
+
+    if (endptr != s->data + s->count) {
+      raise_python_exception(exc_block, create_instance(ValueError_class_id));
+    }
     return ret;
-  }))}, true);
+  }))}, true, true);
 
   // Unicode repr(None)
   // Unicode repr(Bool)
@@ -373,7 +416,7 @@ static void create_default_builtin_functions() {
     ret->data[escape_ret.size() + 2] = 0;
     delete_reference(v);
     return ret;
-  }))}, true);
+  }))}, false, true);
 
   // Int len(Bytes)
   // Int len(Unicode)
@@ -394,7 +437,7 @@ static void create_default_builtin_functions() {
     int64_t ret = l->count;
     delete_reference(l);
     return ret;
-  }))}, true);
+  }))}, false, true);
 
   // Int abs(Int)
   // Float abs(Float)
@@ -404,29 +447,42 @@ static void create_default_builtin_functions() {
     return (i < 0) ? -i : i;
   })), FragDef({Float}, Float, reinterpret_cast<const void*>(+[](double i) -> double {
     return (i < 0) ? -i : i;
-  }))}, true);
+  }))}, false, true);
 
   // Unicode chr(Int)
-  create_builtin_function("chr", {Int}, Unicode,
-      reinterpret_cast<const void*>(+[](int64_t i) -> UnicodeObject* {
+  create_builtin_function("chr", {Int}, Unicode, reinterpret_cast<const void*>(+[](
+      int64_t i, ExceptionBlock* exc_block) -> UnicodeObject* {
+    if (i >= 0x110000) {
+      raise_python_exception(exc_block, create_instance(ValueError_class_id));
+    }
+
     UnicodeObject* s = unicode_new(NULL, NULL, 1);
     s->data[0] = i;
     s->data[1] = 0;
     return s;
-  }), true);
+  }), true, true);
 
   // Int ord(Bytes) // apparently this isn't part of the Python standard anymore
   // Int ord(Unicode)
   create_builtin_function("ord", {
-       FragDef({Bytes}, Int, reinterpret_cast<const void*>(+[](BytesObject* s) -> int64_t {
+       FragDef({Bytes}, Int, reinterpret_cast<const void*>(+[](BytesObject* s, ExceptionBlock* exc_block) -> int64_t {
+    if (s->count != 1) {
+      raise_python_exception(exc_block, create_instance(TypeError_class_id));
+    }
+
     int64_t ret = (s->count < 1) ? -1 : s->data[0];
     delete_reference(s);
     return ret;
-  })), FragDef({Unicode}, Int, reinterpret_cast<const void*>(+[](UnicodeObject* s) -> int64_t {
+
+  })), FragDef({Unicode}, Int, reinterpret_cast<const void*>(+[](UnicodeObject* s, ExceptionBlock* exc_block) -> int64_t {
+    if (s->count != 1) {
+      raise_python_exception(exc_block, create_instance(TypeError_class_id));
+    }
+
     int64_t ret = (s->count < 1) ? -1 : s->data[0];
     delete_reference(s);
     return ret;
-  }))}, true);
+  }))}, true, true);
 
   // Unicode bin(Int)
   create_builtin_function("bin", {Int}, Unicode,
@@ -458,7 +514,7 @@ static void create_default_builtin_functions() {
     s->data[x] = 0;
     s->count = x;
     return s;
-  }), true);
+  }), false, true);
 
   // Unicode oct(Int)
   create_builtin_function("oct", {Int}, Unicode,
@@ -497,7 +553,7 @@ static void create_default_builtin_functions() {
     s->data[x] = 0;
     s->count = x;
     return s;
-  }), true);
+  }), false, true);
 
   // Unicode hex(Int)
   create_builtin_function("hex", {Int}, Unicode,
@@ -505,7 +561,7 @@ static void create_default_builtin_functions() {
     UnicodeObject* s = unicode_new(NULL, NULL, 19);
     s->count = swprintf(s->data, 19, L"%s0x%x", (i < 0) ? "-" : "", (i < 0) ? -i : i);
     return s;
-  }), true);
+  }), false, true);
 }
 
 
@@ -593,89 +649,82 @@ void create_default_builtin_classes() {
     +[](uint8_t* o, int64_t value) -> void* {
       // no need to deal with references; the reference passed to this function
       // becomes owned by the instance object
-      *reinterpret_cast<int64_t*>(o + ClassContext::attribute_offset) = value;
+      *reinterpret_cast<int64_t*>(o + sizeof(InstanceObject)) = value;
       return o;
     });
   auto one_field_reference_destructor = reinterpret_cast<const void*>(
     +[](uint8_t* o) {
-      delete_reference(*reinterpret_cast<void**>(o + ClassContext::attribute_offset));
+      delete_reference(*reinterpret_cast<void**>(o + sizeof(InstanceObject)));
       delete_reference(o);
     });
+  auto trivial_destructor = reinterpret_cast<const void*>(&free);
 
-  auto declare_unimplemented_exception = +[](const char* name) -> int64_t {
+  auto declare_trivial_exception = +[](const char* name) -> int64_t {
     return create_builtin_class(name, {}, {}, NULL,
         reinterpret_cast<const void*>(&free), true);
   };
 
+  // create some common exception singletons. note that the MemoryError instance
+  // can't be allocated when it's really needed, so it has to be allocated here
+  MemoryError_instance.basic.refcount = 1;
+  MemoryError_instance.basic.destructor = NULL;
+  MemoryError_instance.class_id = declare_trivial_exception("MemoryError");
+
+  IndexError_class_id = declare_trivial_exception("IndexError");
+  KeyError_class_id = declare_trivial_exception("KeyError");
+  TypeError_class_id = declare_trivial_exception("TypeError");
+  ValueError_class_id = declare_trivial_exception("ValueError");
   AssertionError_class_id = create_builtin_class("AssertionError",
     {{"message", Unicode_Blank}}, {Unicode_Blank}, one_field_constructor,
     one_field_reference_destructor, true);
+  OSError_class_id = create_builtin_class("OSError", {{"errno", Int}},
+    {Unicode_Blank}, one_field_constructor, trivial_destructor, true);
 
-  declare_unimplemented_exception("ArithmeticError");
-  declare_unimplemented_exception("AttributeError");
-  declare_unimplemented_exception("BaseException");
-  declare_unimplemented_exception("BlockingIOError");
-  declare_unimplemented_exception("BrokenPipeError");
-  declare_unimplemented_exception("BufferError");
-  declare_unimplemented_exception("BytesWarning");
-  declare_unimplemented_exception("ChildProcessError");
-  declare_unimplemented_exception("ConnectionAbortedError");
-  declare_unimplemented_exception("ConnectionError");
-  declare_unimplemented_exception("ConnectionRefusedError");
-  declare_unimplemented_exception("ConnectionResetError");
-  declare_unimplemented_exception("DeprecationWarning");
-  declare_unimplemented_exception("EOFError");
-  declare_unimplemented_exception("EnvironmentError");
-  declare_unimplemented_exception("Exception");
-  declare_unimplemented_exception("FileExistsError");
-  declare_unimplemented_exception("FileNotFoundError");
-  declare_unimplemented_exception("FloatingPointError");
-  declare_unimplemented_exception("FutureWarning");
-  declare_unimplemented_exception("GeneratorExit");
-  declare_unimplemented_exception("IOError");
-  declare_unimplemented_exception("ImportError");
-  declare_unimplemented_exception("ImportWarning");
-  declare_unimplemented_exception("IndentationError");
-  declare_unimplemented_exception("IndexError");
-  declare_unimplemented_exception("InterruptedError");
-  declare_unimplemented_exception("IsADirectoryError");
-  declare_unimplemented_exception("KeyError");
-  declare_unimplemented_exception("KeyboardInterrupt");
-  declare_unimplemented_exception("LookupError");
-  declare_unimplemented_exception("MemoryError");
-  declare_unimplemented_exception("ModuleNotFoundError");
-  declare_unimplemented_exception("NameError");
-  declare_unimplemented_exception("NotADirectoryError");
-  declare_unimplemented_exception("NotImplementedError");
-  declare_unimplemented_exception("OSError");
-  declare_unimplemented_exception("OverflowError");
-  declare_unimplemented_exception("PendingDeprecationWarning");
-  declare_unimplemented_exception("PermissionError");
-  declare_unimplemented_exception("ProcessLookupError");
-  declare_unimplemented_exception("RecursionError");
-  declare_unimplemented_exception("ReferenceError");
-  declare_unimplemented_exception("ResourceWarning");
-  declare_unimplemented_exception("RuntimeError");
-  declare_unimplemented_exception("RuntimeWarning");
-  declare_unimplemented_exception("StopAsyncIteration");
-  declare_unimplemented_exception("StopIteration");
-  declare_unimplemented_exception("SyntaxError");
-  declare_unimplemented_exception("SyntaxWarning");
-  declare_unimplemented_exception("SystemError");
-  declare_unimplemented_exception("SystemExit");
-  declare_unimplemented_exception("TabError");
-  declare_unimplemented_exception("TimeoutError");
-  declare_unimplemented_exception("TypeError");
-  declare_unimplemented_exception("UnboundLocalError");
-  declare_unimplemented_exception("UnicodeEncodeError");
-  declare_unimplemented_exception("UnicodeTranslateError");
-  declare_unimplemented_exception("UserWarning");
-  declare_unimplemented_exception("UnicodeDecodeError");
-  declare_unimplemented_exception("UnicodeError");
-  declare_unimplemented_exception("UnicodeWarning");
-  declare_unimplemented_exception("ValueError");
-  declare_unimplemented_exception("Warning");
-  declare_unimplemented_exception("ZeroDivisionError");
+  declare_trivial_exception("ArithmeticError");
+  declare_trivial_exception("AttributeError");
+  declare_trivial_exception("BaseException");
+  declare_trivial_exception("BlockingIOError");
+  declare_trivial_exception("BrokenPipeError");
+  declare_trivial_exception("BufferError");
+  declare_trivial_exception("ChildProcessError");
+  declare_trivial_exception("ConnectionAbortedError");
+  declare_trivial_exception("ConnectionError");
+  declare_trivial_exception("ConnectionRefusedError");
+  declare_trivial_exception("ConnectionResetError");
+  declare_trivial_exception("EOFError");
+  declare_trivial_exception("EnvironmentError");
+  declare_trivial_exception("Exception");
+  declare_trivial_exception("FileExistsError");
+  declare_trivial_exception("FileNotFoundError");
+  declare_trivial_exception("FloatingPointError");
+  declare_trivial_exception("GeneratorExit");
+  declare_trivial_exception("IOError");
+  declare_trivial_exception("InterruptedError");
+  declare_trivial_exception("IsADirectoryError");
+  declare_trivial_exception("KeyboardInterrupt");
+  declare_trivial_exception("LookupError");
+  declare_trivial_exception("ModuleNotFoundError");
+  declare_trivial_exception("NotADirectoryError");
+  declare_trivial_exception("NotImplementedError");
+  declare_trivial_exception("OverflowError");
+  declare_trivial_exception("PermissionError");
+  declare_trivial_exception("ProcessLookupError");
+  declare_trivial_exception("RecursionError");
+  declare_trivial_exception("ReferenceError");
+  declare_trivial_exception("ResourceWarning");
+  declare_trivial_exception("RuntimeError");
+  declare_trivial_exception("StopAsyncIteration");
+  declare_trivial_exception("StopIteration");
+  declare_trivial_exception("SystemError");
+  declare_trivial_exception("SystemExit");
+  declare_trivial_exception("TimeoutError");
+  declare_trivial_exception("TypeError");
+  declare_trivial_exception("UnicodeEncodeError");
+  declare_trivial_exception("UnicodeTranslateError");
+  declare_trivial_exception("UnicodeDecodeError");
+  declare_trivial_exception("UnicodeError");
+  declare_trivial_exception("ValueError");
+  declare_trivial_exception("ZeroDivisionError");
 }
 
 void create_default_builtin_names() {

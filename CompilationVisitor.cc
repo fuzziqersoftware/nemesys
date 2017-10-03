@@ -7,7 +7,7 @@
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
 
-#include "CompilationVisitorFunctions.hh"
+#include "Exception.hh"
 #include "BuiltinFunctions.hh"
 #include "Debug.hh"
 #include "PythonLexer.hh"
@@ -90,35 +90,6 @@ static const int64_t default_available_int_registers =
     (1 << Register::R10) |
     (1 << Register::R11);
 static const int64_t default_available_float_registers = 0xFFFF; // all of them
-
-
-
-// this structure is only here for reference. don't actually use it because it
-// contains two levels of variable-size data; using it in C++ doesn't make sense
-struct ExceptionBlock {
-  // pointer to the next exception block
-  ExceptionBlock* next;
-
-  // stack and frame pointers to start the except block with (should be the same
-  // as when the function or try block was entered)
-  void* resume_rbp;
-  void* resume_rsp;
-
-  struct ExceptionBlockSpec {
-    // start of the relevant except block's code
-    const void* resume_rip;
-
-    // class ids of exception type specified in except block. if none are given,
-    // this block matches any exception, but doesn't clear r15 (this is used to
-    // jump to function teardown/local destructor calls and finally blocks)
-    int64_t num_classes;
-    int64_t exc_class_ids[0];
-  };
-  ExceptionBlockSpec spec[0];
-};
-
-const size_t return_exception_block_size =
-    sizeof(ExceptionBlock) + sizeof(ExceptionBlock::ExceptionBlockSpec);
 
 
 
@@ -697,12 +668,12 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       if ((left_type.type == ValueType::Bytes) &&
           (right_type.type == ValueType::Bytes)) {
         this->write_function_call(reinterpret_cast<const void*>(&bytes_concat),
-            NULL, {left_mem, target_mem}, {}, -1, this->target_register);
+            NULL, {left_mem, target_mem, r14}, {}, -1, this->target_register);
 
       } else if ((left_type.type == ValueType::Unicode) &&
                  (right_type.type == ValueType::Unicode)) {
         this->write_function_call(reinterpret_cast<const void*>(&unicode_concat),
-            NULL, {left_mem, target_mem}, {}, -1, this->target_register);
+            NULL, {left_mem, target_mem, r14}, {}, -1, this->target_register);
 
       } else if (left_int && right_int) {
         this->as.write_add(target_mem, left_mem);
@@ -1026,16 +997,17 @@ void CompilationVisitor::visit(ListConstructor* a) {
 
   // allocate the list object
   this->as.write_label(string_printf("__ListConstructor_%p_allocate", a));
-  vector<const MemoryReference> args({
+  vector<const MemoryReference> int_args({
     MemoryReference(argument_register_order[0]),
     MemoryReference(argument_register_order[1]),
     MemoryReference(argument_register_order[2]),
+    r14,
   });
-  this->as.write_mov(args[0], 0);
-  this->as.write_mov(args[1], a->items.size());
-  this->as.write_mov(args[2], 0);
-  this->write_function_call(reinterpret_cast<void*>(list_new), NULL, args, {},
-      -1, this->target_register);
+  this->as.write_mov(int_args[0], 0);
+  this->as.write_mov(int_args[1], a->items.size());
+  this->as.write_mov(int_args[2], 0);
+  this->write_function_call(reinterpret_cast<const void*>(list_new), NULL,
+      int_args, {}, -1, this->target_register);
 
   // save the list items pointer
   this->as.write_mov(rbx, MemoryReference(this->target_register, 0x20));
@@ -1167,11 +1139,12 @@ struct FunctionCallArgumentValue {
   Register target_register; // if the type is Float, this is an xmm register
   ssize_t stack_offset; // if < 0, this argument isn't stored on the stack
 
+  bool is_exception_block;
   bool evaluate_instance_pointer;
 
   FunctionCallArgumentValue(const std::string& name) : name(name),
       passed_value(NULL), default_value(), type(), stack_offset(0),
-      evaluate_instance_pointer(false) { }
+      is_exception_block(false), evaluate_instance_pointer(false) { }
 };
 
 void CompilationVisitor::visit(FunctionCall* a) {
@@ -1281,6 +1254,12 @@ void CompilationVisitor::visit(FunctionCall* a) {
         arg_values.size(), fn->args.size()), this->file_offset);
   }
 
+  // if the function takes the exception block as an argument, push it here
+  if (fn->pass_exception_block) {
+    arg_values.emplace_back("(exception block)");
+    arg_values.back().is_exception_block = true;
+  }
+
   // push all reserved registers
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
 
@@ -1332,6 +1311,8 @@ void CompilationVisitor::visit(FunctionCall* a) {
     }
 
     // generate code for the argument's value
+
+    // if the argument has a passed value, generate code to compute it
     if (arg.passed_value.get()) {
 
       // if this argument is `self`, then it actually comes from the function
@@ -1354,6 +1335,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
         arg.type = move(this->current_type);
       }
 
+    // if the argument is the instance object, figure out what it is
     } else if (fn->is_class_init() && (arg_index == 0)) {
       if (arg.default_value.type != ValueType::Instance) {
         throw compile_error("first argument to class constructor is not an instance", this->file_offset);
@@ -1375,6 +1357,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
       this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(&malloc));
       this->as.write_call(rax);
       this->as.write_mov(this->target_register, rax);
+      // TODO: check if the result is NULL and raise MemoryError in that case
 
       // fill in the refcount, destructor function and class id
       this->as.write_mov(MemoryReference(this->target_register, 0), 1);
@@ -1385,11 +1368,15 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
       // zero everything else in the class
       this->as.write_xor(rax, rax);
-      for (size_t x = cls->attribute_offset; x < cls->instance_size(); x += 8) {
+      for (size_t x = sizeof(InstanceObject); x < cls->instance_size(); x += 8) {
         this->as.write_mov(MemoryReference(this->target_register, x), rax);
       }
 
       arg.type = arg.default_value;
+
+    // if the argument is the exception block, copy it from r14
+    } else if (arg.is_exception_block) {
+      this->as.write_mov(this->target_register, r14);
 
     } else {
       this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_default_value",
@@ -1411,7 +1398,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
       throw compile_error("passing floats as function arguments is not yet supported", this->file_offset);
     }
 
-    // store the value on the stack if needed; otherwise, mark the regsiter as
+    // store the value on the stack if needed; otherwise, mark the register as
     // reserved
     if (arg.stack_offset < 0) {
       this->reserve_register(this->target_register);
@@ -1442,6 +1429,9 @@ void CompilationVisitor::visit(FunctionCall* a) {
   vector<Variable> arg_types;
   unordered_map<string, Variable> callee_local_overrides;
   for (const auto& arg : arg_values) {
+    if (arg.is_exception_block) {
+      continue; // don't include exc_block in the type signature
+    }
     arg_types.emplace_back(arg.type);
     callee_local_overrides.emplace(arg.name, arg.type);
   }
@@ -2072,6 +2062,7 @@ void CompilationVisitor::visit(AssertStatement* a) {
   this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(&malloc));
   this->as.write_call(rax);
   this->as.write_mov(r15, rax);
+  // TODO: check if the result is NULL and raise MemoryError in that case
   this->adjust_stack(stack_bytes_used);
 
   // fill in the refcount, destructor function, class id, and message
@@ -2332,7 +2323,7 @@ void CompilationVisitor::visit(ForStatement* a) {
     // call dictionary_next_item
     this->write_function_call(
         reinterpret_cast<const void*>(&dictionary_next_item), NULL, {rdi, rsi},
-        {}, -1);
+        {});
 
     // if dictionary_next_item returned 0, then we're done
     this->as.write_test(rax, rax);
@@ -2933,7 +2924,7 @@ ssize_t CompilationVisitor::write_function_call_stack_prep(size_t arg_count) {
 
 void CompilationVisitor::write_function_call(const void* function,
     const MemoryReference* function_loc,
-    const std::vector<const MemoryReference>& args,
+    const std::vector<const MemoryReference>& int_args,
     const std::vector<const MemoryReference>& float_args,
     ssize_t arg_stack_bytes, Register return_register) {
 
@@ -2948,7 +2939,7 @@ void CompilationVisitor::write_function_call(const void* function,
 
   size_t rsp_adjustment = 0;
   if (arg_stack_bytes < 0) {
-    arg_stack_bytes = this->write_function_call_stack_prep(args.size());
+    arg_stack_bytes = this->write_function_call_stack_prep(int_args.size());
     // if any of the references are memory references based on RSP, we'll have
     // to adjust them
     rsp_adjustment = arg_stack_bytes;
@@ -2956,7 +2947,7 @@ void CompilationVisitor::write_function_call(const void* function,
 
   // generate the list of move destinations
   vector<MemoryReference> dests;
-  for (size_t x = 0; x < args.size(); x++) {
+  for (size_t x = 0; x < int_args.size(); x++) {
     if (x < argument_register_order.size()) {
       dests.emplace_back(argument_register_order[x]);
     } else {
@@ -2971,12 +2962,12 @@ void CompilationVisitor::write_function_call(const void* function,
   // out: the graph can have cycles, and we'll have to break them somehow,
   // probably by using stack space
   unordered_map<size_t, unordered_set<size_t>> move_to_dependents;
-  for (size_t x = 0; x < args.size(); x++) {
-    for (size_t y = 0; y < args.size(); y++) {
+  for (size_t x = 0; x < int_args.size(); x++) {
+    for (size_t y = 0; y < int_args.size(); y++) {
       if (x == y) {
         continue;
       }
-      if (args[x] == dests[y]) {
+      if (int_args[x] == dests[y]) {
         move_to_dependents[x].insert(y);
       }
     }
@@ -2985,8 +2976,8 @@ void CompilationVisitor::write_function_call(const void* function,
   // DFS-based topological sort. for now just fail if a cycle is detected.
   // TODO: deal with cycles somehow
   deque<size_t> move_order;
-  vector<bool> moves_considered(args.size(), false);
-  vector<bool> moves_in_progress(args.size(), false);
+  vector<bool> moves_considered(int_args.size(), false);
+  vector<bool> moves_in_progress(int_args.size(), false);
   std::function<void(size_t)> visit_move = [&](size_t x) {
     if (moves_in_progress[x]) {
       throw compile_error("cyclic argument move dependency", this->file_offset);
@@ -3002,7 +2993,7 @@ void CompilationVisitor::write_function_call(const void* function,
     moves_considered[x] = true;
     move_order.emplace_front(x);
   };
-  for (size_t x = 0; x < args.size(); x++) {
+  for (size_t x = 0; x < int_args.size(); x++) {
     if (moves_considered[x]) {
       continue;
     }
@@ -3011,7 +3002,7 @@ void CompilationVisitor::write_function_call(const void* function,
 
   // generate the mov opcodes in the determined order
   for (size_t arg_index : move_order) {
-    auto& ref = args[arg_index];
+    auto& ref = int_args[arg_index];
     auto& dest = dests[arg_index];
     if (ref == dest) {
       continue;
@@ -3224,7 +3215,7 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
   if (type_has_refcount(type)) {
     if (debug_flags & DebugFlag::NoInlineRefcounting) {
       this->write_function_call(reinterpret_cast<const void*>(delete_reference),
-          NULL, {mem}, {});
+          NULL, {mem, r14}, {});
 
     } else {
       static uint64_t skip_label_id = 0;

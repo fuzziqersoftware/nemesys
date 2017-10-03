@@ -52,6 +52,7 @@ static std::shared_ptr<ModuleAnalysis> get_module(UnicodeObject* module_name) {
 
 
 void __nemesys___initialize() {
+  Variable None(ValueType::None);
   Variable Int(ValueType::Int);
   Variable Bytes(ValueType::Bytes);
   Variable Unicode(ValueType::Unicode);
@@ -59,30 +60,35 @@ void __nemesys___initialize() {
   __nemesys___module->create_builtin_function("module_phase", {Unicode}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* module_name) -> int64_t {
     auto module = get_module(module_name);
+    delete_reference(module_name);
     return module.get() ? module->phase : -1;
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("module_compiled_size", {Unicode}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* module_name) -> int64_t {
     auto module = get_module(module_name);
+    delete_reference(module_name);
     return module.get() ? module->compiled_size : -1;
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("module_global_base", {Unicode}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* module_name) -> int64_t {
     auto module = get_module(module_name);
+    delete_reference(module_name);
     return module.get() ? module->global_base_offset : -1;
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("module_global_count", {Unicode}, Int,
       reinterpret_cast<const void*>(+[](UnicodeObject* module_name) -> int64_t {
     auto module = get_module(module_name);
+    delete_reference(module_name);
     return module.get() ? module->globals.size() : -1;
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("module_source", {Unicode}, Bytes,
       reinterpret_cast<const void*>(+[](UnicodeObject* module_name) -> BytesObject* {
     auto module = get_module(module_name);
+    delete_reference(module_name);
     if (!module.get()) {
       return bytes_new(NULL, NULL, 0);
     }
@@ -91,43 +97,48 @@ void __nemesys___initialize() {
     }
     const string& data = module->source->data();
     return bytes_new(NULL, data.data(), data.size());
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("code_buffer_size", {}, Int,
       reinterpret_cast<const void*>(+[]() -> int64_t {
     return global->code.total_size();
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("code_buffer_used_size", {}, Int,
       reinterpret_cast<const void*>(+[]() -> int64_t {
     return global->code.total_used_bytes();
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("global_space", {}, Int,
       reinterpret_cast<const void*>(+[]() -> int64_t {
     return global->global_space_used;
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("bytes_constant_count", {}, Int,
       reinterpret_cast<const void*>(+[]() -> int64_t {
     return global->bytes_constants.size();
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("unicode_constant_count", {}, Int,
       reinterpret_cast<const void*>(+[]() -> int64_t {
     return global->unicode_constants.size();
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("debug_flags", {}, Int,
       reinterpret_cast<const void*>(+[]() -> int64_t {
     return debug_flags;
-  }));
+  }), false);
+
+  __nemesys___module->create_builtin_function("set_debug_flags", {Int}, None,
+      reinterpret_cast<const void*>(+[](int64_t new_debug_flags) {
+    debug_flags = new_debug_flags;
+  }), false);
 
   __nemesys___module->create_builtin_function("errno", {}, Int,
       reinterpret_cast<const void*>(+[]() -> int64_t {
     return errno;
-  }));
+  }), false);
 
   __nemesys___module->create_builtin_function("time", {}, Int,
-      reinterpret_cast<const void*>(&now));
+      reinterpret_cast<const void*>(&now), false);
 }
