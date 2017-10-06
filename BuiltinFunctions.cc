@@ -96,7 +96,7 @@ int64_t create_builtin_class(const char* name,
   int64_t class_id = generate_function_id();
 
   // create and register the class context
-  // TODO: define a built-in constructor that will do all this
+  // TODO: define a ClassContext constructor that will do all this
   ClassContext& cls = builtin_class_definitions.emplace(piecewise_construct,
       forward_as_tuple(class_id), forward_as_tuple(nullptr, class_id)).first->second;
   cls.destructor = destructor;
@@ -145,52 +145,52 @@ static void create_default_builtin_functions() {
   // None print(Bytes)
   // None print(Unicode)
   create_builtin_function("print", {
-      FragDef({None}, None, reinterpret_cast<const void*>(+[](void*) {
+      FragDef({None}, None, void_fn_ptr([](void*) {
     fwrite("None\n", 5, 1, stdout);
 
-  })), FragDef({Bool}, None, reinterpret_cast<const void*>(+[](bool v) {
+  })), FragDef({Bool}, None, void_fn_ptr([](bool v) {
     if (v) {
       fwrite("True\n", 5, 1, stdout);
     } else {
       fwrite("False\n", 6, 1, stdout);
     }
 
-  })), FragDef({Int}, None, reinterpret_cast<const void*>(+[](int64_t v) {
+  })), FragDef({Int}, None, void_fn_ptr([](int64_t v) {
     fprintf(stdout, "%" PRId64 "\n", v);
 
-  })), FragDef({Float}, None, reinterpret_cast<const void*>(+[](double v) {
+  })), FragDef({Float}, None, void_fn_ptr([](double v) {
     fprintf(stdout, "%lf\n", v);
 
-  })), FragDef({Bytes}, None, reinterpret_cast<const void*>(+[](BytesObject* str) {
+  })), FragDef({Bytes}, None, void_fn_ptr([](BytesObject* str) {
     fprintf(stdout, "%.*s\n", static_cast<int>(str->count), str->data);
     delete_reference(str);
 
-  })), FragDef({Unicode}, None, reinterpret_cast<const void*>(+[](UnicodeObject* str) {
+  })), FragDef({Unicode}, None, void_fn_ptr([](UnicodeObject* str) {
     fprintf(stdout, "%.*ls\n", static_cast<int>(str->count), str->data);
     delete_reference(str);
   }))}, false, true);
 
   create_builtin_function("bool", {
-      FragDef({Bool_False}, Bool, reinterpret_cast<const void*>(+[](bool b) -> bool {
+      FragDef({Bool_False}, Bool, void_fn_ptr([](bool b) -> bool {
     return b;
 
-  })), FragDef({Int}, Bool, reinterpret_cast<const void*>(+[](int64_t i) -> bool {
+  })), FragDef({Int}, Bool, void_fn_ptr([](int64_t i) -> bool {
     return static_cast<bool>(i);
 
-  })), FragDef({Float}, Bool, reinterpret_cast<const void*>(+[](double f) -> bool {
+  })), FragDef({Float}, Bool, void_fn_ptr([](double f) -> bool {
     return (f != 0.0) && (f != -0.0);
 
-  })), FragDef({Bytes}, Bool, reinterpret_cast<const void*>(+[](BytesObject* b) -> bool {
+  })), FragDef({Bytes}, Bool, void_fn_ptr([](BytesObject* b) -> bool {
     bool ret = b->count != 0;
     delete_reference(b);
     return ret;
 
-  })), FragDef({Unicode}, Bool, reinterpret_cast<const void*>(+[](UnicodeObject* u) -> bool {
+  })), FragDef({Unicode}, Bool, void_fn_ptr([](UnicodeObject* u) -> bool {
     bool ret = u->count != 0;
     delete_reference(u);
     return ret;
 
-  })), FragDef({List_Any}, Int, reinterpret_cast<const void*>(+[](ListObject* l) -> bool {
+  })), FragDef({List_Any}, Int, void_fn_ptr([](ListObject* l) -> bool {
     bool ret = l->count != 0;
     delete_reference(l);
     return ret;
@@ -198,7 +198,7 @@ static void create_default_builtin_functions() {
 
   // Unicode input(Unicode='')
   create_builtin_function("input", {Unicode_Blank}, Unicode,
-      reinterpret_cast<const void*>(+[](UnicodeObject* prompt) -> UnicodeObject* {
+      void_fn_ptr([](UnicodeObject* prompt) -> UnicodeObject* {
     if (prompt->count) {
       fprintf(stdout, "%.*ls", static_cast<int>(prompt->count), prompt->data);
       fflush(stdout);
@@ -253,26 +253,26 @@ static void create_default_builtin_functions() {
   // Bool bool(Dict[Any, Any]) // unimplemented
   // probably more that I'm forgetting right now
   create_builtin_function("bool", {
-      FragDef({Bool_False}, Bool, reinterpret_cast<const void*>(+[](bool b) -> bool {
+      FragDef({Bool_False}, Bool, void_fn_ptr([](bool b) -> bool {
     return b;
 
-  })), FragDef({Int}, Bool, reinterpret_cast<const void*>(+[](int64_t i) -> bool {
+  })), FragDef({Int}, Bool, void_fn_ptr([](int64_t i) -> bool {
     return static_cast<bool>(i);
 
-  })), FragDef({Float}, Bool, reinterpret_cast<const void*>(+[](double f) -> bool {
+  })), FragDef({Float}, Bool, void_fn_ptr([](double f) -> bool {
     return (f != 0.0) && (f != -0.0);
 
-  })), FragDef({Bytes}, Bool, reinterpret_cast<const void*>(+[](BytesObject* b) -> bool {
+  })), FragDef({Bytes}, Bool, void_fn_ptr([](BytesObject* b) -> bool {
     bool ret = b->count != 0;
     delete_reference(b);
     return ret;
 
-  })), FragDef({Unicode}, Bool, reinterpret_cast<const void*>(+[](UnicodeObject* u) -> bool {
+  })), FragDef({Unicode}, Bool, void_fn_ptr([](UnicodeObject* u) -> bool {
     bool ret = u->count != 0;
     delete_reference(u);
     return ret;
 
-  })), FragDef({List_Any}, Int, reinterpret_cast<const void*>(+[](ListObject* l) -> bool {
+  })), FragDef({List_Any}, Int, void_fn_ptr([](ListObject* l) -> bool {
     bool ret = l->count != 0;
     delete_reference(l);
     return ret;
@@ -283,11 +283,11 @@ static void create_default_builtin_functions() {
   // Int int(Unicode, Int=0)
   // Int int(Float, Int=0)
   create_builtin_function("int", {
-      FragDef({Int_Zero, Int_Zero}, Int, reinterpret_cast<const void*>(+[](
+      FragDef({Int_Zero, Int_Zero}, Int, void_fn_ptr([](
         int64_t i, int64_t, ExceptionBlock*) -> int64_t {
     return i;
 
-  })), FragDef({Bytes, Int_Zero}, Int, reinterpret_cast<const void*>(+[](
+  })), FragDef({Bytes, Int_Zero}, Int, void_fn_ptr([](
       BytesObject* s, int64_t base, ExceptionBlock* exc_block) -> int64_t {
     char* endptr;
     int64_t ret = strtoll(reinterpret_cast<const char*>(s->data), &endptr, base);
@@ -298,7 +298,7 @@ static void create_default_builtin_functions() {
     }
     return ret;
 
-  })), FragDef({Unicode, Int_Zero}, Int, reinterpret_cast<const void*>(+[](
+  })), FragDef({Unicode, Int_Zero}, Int, void_fn_ptr([](
       UnicodeObject* s, int64_t base, ExceptionBlock* exc_block) -> int64_t {
     wchar_t* endptr;
     int64_t ret = wcstoll(s->data, &endptr, base);
@@ -309,7 +309,7 @@ static void create_default_builtin_functions() {
     }
     return ret;
 
-  })), FragDef({Float, Int_Zero}, Int, reinterpret_cast<const void*>(+[](
+  })), FragDef({Float, Int_Zero}, Int, void_fn_ptr([](
       double x, int64_t, ExceptionBlock*) -> int64_t {
     return static_cast<int64_t>(x);
   }))}, true, true);
@@ -319,15 +319,15 @@ static void create_default_builtin_functions() {
   // Float float(Bytes)
   // Float float(Unicode)
   create_builtin_function("float", {
-      FragDef({Float_Zero}, Float, reinterpret_cast<const void*>(+[](
+      FragDef({Float_Zero}, Float, void_fn_ptr([](
         double f, ExceptionBlock*) -> double {
     return f;
 
-  })), FragDef({Int}, Float, reinterpret_cast<const void*>(+[](
+  })), FragDef({Int}, Float, void_fn_ptr([](
       int64_t i, ExceptionBlock*) -> double {
     return static_cast<double>(i);
 
-  })), FragDef({Bytes}, Float, reinterpret_cast<const void*>(+[](
+  })), FragDef({Bytes}, Float, void_fn_ptr([](
       BytesObject* s, ExceptionBlock* exc_block) -> double {
     char* endptr;
     double ret = strtod(s->data, &endptr);
@@ -338,7 +338,7 @@ static void create_default_builtin_functions() {
     }
     return ret;
 
-  })), FragDef({Unicode}, Float, reinterpret_cast<const void*>(+[](
+  })), FragDef({Unicode}, Float, void_fn_ptr([](
       UnicodeObject* s, ExceptionBlock* exc_block) -> double {
     wchar_t* endptr;
     double ret = wcstod(s->data, &endptr);
@@ -357,23 +357,23 @@ static void create_default_builtin_functions() {
   // Unicode repr(Bytes)
   // Unicode repr(Unicode)
   create_builtin_function("repr", {
-       FragDef({None}, Unicode, reinterpret_cast<const void*>(+[](void*) -> UnicodeObject* {
+       FragDef({None}, Unicode, void_fn_ptr([](void*) -> UnicodeObject* {
     static UnicodeObject* ret = unicode_new(NULL, L"None", 4);
     add_reference(ret);
     return ret;
 
-  })), FragDef({Bool}, Unicode, reinterpret_cast<const void*>(+[](bool v) -> UnicodeObject* {
+  })), FragDef({Bool}, Unicode, void_fn_ptr([](bool v) -> UnicodeObject* {
     static UnicodeObject* true_str = unicode_new(NULL, L"True", 4);
     static UnicodeObject* false_str = unicode_new(NULL, L"False", 5);
     UnicodeObject* ret = v ? true_str : false_str;
     add_reference(ret);
     return ret;
 
-  })), FragDef({Int}, Unicode, reinterpret_cast<const void*>(+[](int64_t v) -> UnicodeObject* {
+  })), FragDef({Int}, Unicode, void_fn_ptr([](int64_t v) -> UnicodeObject* {
     wchar_t buf[24];
     return unicode_new(NULL, buf, swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%" PRId64, v));
 
-  })), FragDef({Float}, Unicode, reinterpret_cast<const void*>(+[](double v) -> UnicodeObject* {
+  })), FragDef({Float}, Unicode, void_fn_ptr([](double v) -> UnicodeObject* {
     wchar_t buf[60]; // TODO: figure out how long this actually needs to be
     size_t count = swprintf(buf, sizeof(buf) / sizeof(buf[0]) - 2, L"%g", v);
 
@@ -392,7 +392,7 @@ static void create_default_builtin_functions() {
 
     return unicode_new(NULL, buf, wcslen(buf));
 
-  })), FragDef({Bytes}, Unicode, reinterpret_cast<const void*>(+[](BytesObject* v) -> UnicodeObject* {
+  })), FragDef({Bytes}, Unicode, void_fn_ptr([](BytesObject* v) -> UnicodeObject* {
     string escape_ret = escape(reinterpret_cast<const char*>(v->data), v->count);
     UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 3);
     ret->data[0] = L'b';
@@ -405,7 +405,7 @@ static void create_default_builtin_functions() {
     delete_reference(v);
     return ret;
 
-  })), FragDef({Unicode}, Unicode, reinterpret_cast<const void*>(+[](UnicodeObject* v) -> UnicodeObject* {
+  })), FragDef({Unicode}, Unicode, void_fn_ptr([](UnicodeObject* v) -> UnicodeObject* {
     string escape_ret = escape(v->data, v->count);
     UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 2);
     ret->data[0] = L'\'';
@@ -425,15 +425,15 @@ static void create_default_builtin_functions() {
   // Int len(Set[Any]) // unimplemented
   // Int len(Dict[Any, Any]) // unimplemented
   create_builtin_function("len", {
-       FragDef({Bytes}, Int, reinterpret_cast<const void*>(+[](BytesObject* s) -> int64_t {
+       FragDef({Bytes}, Int, void_fn_ptr([](BytesObject* s) -> int64_t {
     int64_t ret = s->count;
     delete_reference(s);
     return ret;
-  })), FragDef({Unicode}, Int, reinterpret_cast<const void*>(+[](UnicodeObject* s) -> int64_t {
+  })), FragDef({Unicode}, Int, void_fn_ptr([](UnicodeObject* s) -> int64_t {
     int64_t ret = s->count;
     delete_reference(s);
     return ret;
-  })), FragDef({List_Any}, Int, reinterpret_cast<const void*>(+[](ListObject* l) -> int64_t {
+  })), FragDef({List_Any}, Int, void_fn_ptr([](ListObject* l) -> int64_t {
     int64_t ret = l->count;
     delete_reference(l);
     return ret;
@@ -443,14 +443,14 @@ static void create_default_builtin_functions() {
   // Float abs(Float)
   // Float abs(Complex) // unimplemented
   create_builtin_function("abs", {
-       FragDef({Int}, Int, reinterpret_cast<const void*>(+[](int64_t i) -> int64_t {
+       FragDef({Int}, Int, void_fn_ptr([](int64_t i) -> int64_t {
     return (i < 0) ? -i : i;
-  })), FragDef({Float}, Float, reinterpret_cast<const void*>(+[](double i) -> double {
+  })), FragDef({Float}, Float, void_fn_ptr([](double i) -> double {
     return (i < 0) ? -i : i;
   }))}, false, true);
 
   // Unicode chr(Int)
-  create_builtin_function("chr", {Int}, Unicode, reinterpret_cast<const void*>(+[](
+  create_builtin_function("chr", {Int}, Unicode, void_fn_ptr([](
       int64_t i, ExceptionBlock* exc_block) -> UnicodeObject* {
     if (i >= 0x110000) {
       raise_python_exception(exc_block, create_instance(ValueError_class_id));
@@ -465,7 +465,7 @@ static void create_default_builtin_functions() {
   // Int ord(Bytes) // apparently this isn't part of the Python standard anymore
   // Int ord(Unicode)
   create_builtin_function("ord", {
-       FragDef({Bytes}, Int, reinterpret_cast<const void*>(+[](BytesObject* s, ExceptionBlock* exc_block) -> int64_t {
+       FragDef({Bytes}, Int, void_fn_ptr([](BytesObject* s, ExceptionBlock* exc_block) -> int64_t {
     if (s->count != 1) {
       raise_python_exception(exc_block, create_instance(TypeError_class_id));
     }
@@ -474,7 +474,7 @@ static void create_default_builtin_functions() {
     delete_reference(s);
     return ret;
 
-  })), FragDef({Unicode}, Int, reinterpret_cast<const void*>(+[](UnicodeObject* s, ExceptionBlock* exc_block) -> int64_t {
+  })), FragDef({Unicode}, Int, void_fn_ptr([](UnicodeObject* s, ExceptionBlock* exc_block) -> int64_t {
     if (s->count != 1) {
       raise_python_exception(exc_block, create_instance(TypeError_class_id));
     }
@@ -486,7 +486,7 @@ static void create_default_builtin_functions() {
 
   // Unicode bin(Int)
   create_builtin_function("bin", {Int}, Unicode,
-      reinterpret_cast<const void*>(+[](int64_t i) -> UnicodeObject* {
+      void_fn_ptr([](int64_t i) -> UnicodeObject* {
     if (!i) {
       return unicode_new(NULL, L"0b0", 3);
     }
@@ -518,7 +518,7 @@ static void create_default_builtin_functions() {
 
   // Unicode oct(Int)
   create_builtin_function("oct", {Int}, Unicode,
-      reinterpret_cast<const void*>(+[](int64_t i) -> UnicodeObject* {
+      void_fn_ptr([](int64_t i) -> UnicodeObject* {
     if (!i) {
       return unicode_new(NULL, L"0o0", 3);
     }
@@ -557,7 +557,7 @@ static void create_default_builtin_functions() {
 
   // Unicode hex(Int)
   create_builtin_function("hex", {Int}, Unicode,
-      reinterpret_cast<const void*>(+[](int64_t i) -> UnicodeObject* {
+      void_fn_ptr([](int64_t i) -> UnicodeObject* {
     UnicodeObject* s = unicode_new(NULL, NULL, 19);
     s->count = swprintf(s->data, 19, L"%s0x%x", (i < 0) ? "-" : "", (i < 0) ? -i : i);
     return s;
@@ -645,23 +645,20 @@ void create_default_builtin_classes() {
     {"write", Variable()},
   }); */
 
-  auto one_field_constructor = reinterpret_cast<const void*>(
-    +[](uint8_t* o, int64_t value) -> void* {
+  auto one_field_constructor = void_fn_ptr([](uint8_t* o, int64_t value) -> void* {
       // no need to deal with references; the reference passed to this function
       // becomes owned by the instance object
       *reinterpret_cast<int64_t*>(o + sizeof(InstanceObject)) = value;
       return o;
     });
-  auto one_field_reference_destructor = reinterpret_cast<const void*>(
-    +[](uint8_t* o) {
+  auto one_field_reference_destructor = void_fn_ptr([](uint8_t* o) {
       delete_reference(*reinterpret_cast<void**>(o + sizeof(InstanceObject)));
       delete_reference(o);
     });
-  auto trivial_destructor = reinterpret_cast<const void*>(&free);
+  auto trivial_destructor = void_fn_ptr(&free);
 
   auto declare_trivial_exception = +[](const char* name) -> int64_t {
-    return create_builtin_class(name, {}, {}, NULL,
-        reinterpret_cast<const void*>(&free), true);
+    return create_builtin_class(name, {}, {}, NULL, void_fn_ptr(&free), true);
   };
 
   // create some common exception singletons. note that the MemoryError instance
@@ -761,7 +758,6 @@ void create_default_builtin_names() {
   create_builtin_name("exec",                      Variable(ValueType::Function));
   create_builtin_name("exit",                      Variable(ValueType::Function));
   create_builtin_name("filter",                    Variable(ValueType::Function));
-  create_builtin_name("float",                     Variable(ValueType::Function));
   create_builtin_name("format",                    Variable(ValueType::Function));
   create_builtin_name("frozenset",                 Variable(ValueType::Function));
   create_builtin_name("getattr",                   Variable(ValueType::Function));

@@ -393,8 +393,11 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
           void* exc = module->compiled(this->global_space);
           if (exc) {
             int64_t class_id = *reinterpret_cast<int64_t*>(reinterpret_cast<int64_t*>(exc) + 2);
+            ClassContext* cls = this->context_for_class(class_id);
+            const char* class_name = cls ? cls->name.c_str() : "<missing>";
             throw compile_error(string_printf(
-                "module root scope raised exception of class %" PRId64, class_id));
+                "module root scope raised exception of class %" PRId64 " (%s)",
+                class_id, class_name));
           }
         }
 
