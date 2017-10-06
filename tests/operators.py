@@ -132,6 +132,8 @@ print('2 > 20 == ' + repr(2 > 20))
 print('2 <= 20 == ' + repr(2 <= 20))
 print('2 >= 20 == ' + repr(2 >= 20))
 
+# is/is not are tested in a separate script
+
 # containment operators
 print('b\'\' in b\'xyz\' == ' + repr(b'' in b'xyz'))
 print('b\'x\' in b\'xyz\' == ' + repr(b'x' in b'xyz'))

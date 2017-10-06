@@ -198,6 +198,7 @@ enum Operation {
   MINSD      = 0x0F5D,
   DIVSD      = 0x0F5E,
   MAXSD      = 0x0F5F,
+  CMPSD      = 0x0FC2,
 };
 
 
@@ -403,6 +404,15 @@ public:
   void write_divsd(Register to, const MemoryReference& from);
   void write_minsd(Register to, const MemoryReference& from);
   void write_maxsd(Register to, const MemoryReference& from);
+  void write_cmpsd(Register to, const MemoryReference& from, uint8_t which);
+  void write_cmpeqsd(Register to, const MemoryReference& from);
+  void write_cmpltsd(Register to, const MemoryReference& from);
+  void write_cmplesd(Register to, const MemoryReference& from);
+  void write_cmpunordsd(Register to, const MemoryReference& from);
+  void write_cmpneqsd(Register to, const MemoryReference& from);
+  void write_cmpnltsd(Register to, const MemoryReference& from);
+  void write_cmpnlesd(Register to, const MemoryReference& from);
+  void write_cmpordsd(Register to, const MemoryReference& from);
   void write_cvtsi2sd(Register to, Register from);
   void write_cvtsd2si(Register to, Register from);
 

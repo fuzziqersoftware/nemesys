@@ -36,6 +36,8 @@ BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b,
 char bytes_at(const BytesObject* s, size_t which,
     ExceptionBlock* exc_block = NULL);
 size_t bytes_length(const BytesObject* s);
+bool bytes_equal(const BytesObject* a, const BytesObject* b);
+int64_t bytes_compare(const BytesObject* a, const BytesObject* b);
 bool bytes_contains(const BytesObject* needle, const BytesObject* haystack);
 std::string bytes_to_cxx_string(const BytesObject* s);
 
@@ -46,6 +48,8 @@ UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b,
 wchar_t unicode_at(const UnicodeObject* s, size_t which,
     ExceptionBlock* exc_block = NULL);
 size_t unicode_length(const UnicodeObject* s);
+bool unicode_equal(const UnicodeObject* a, const UnicodeObject* b);
+int64_t unicode_compare(const UnicodeObject* a, const UnicodeObject* b);
 bool unicode_contains(const UnicodeObject* needle, const UnicodeObject* haystack);
 std::wstring unicode_to_cxx_wstring(const UnicodeObject* s);
 

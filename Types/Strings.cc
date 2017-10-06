@@ -68,6 +68,31 @@ size_t bytes_length(const BytesObject* s) {
   return s->count;
 }
 
+bool bytes_equal(const BytesObject* a, const BytesObject* b) {
+  if (a->count != b->count) {
+    return false;
+  }
+  return !memcmp(a->data, b->data, a->count * sizeof(a->data[0]));
+}
+
+int64_t bytes_compare(const BytesObject* a, const BytesObject* b) {
+  for (size_t x = 0; (x < a->count) && (x < b->count); x++) {
+    if (a->data[x] < b->data[x]) {
+      return -1;
+    }
+    if (a->data[x] > b->data[x]) {
+      return 1;
+    }
+  }
+  if (a->count == b->count) {
+    return 0;
+  }
+  if (a->count < b->count) {
+    return -1;
+  }
+  return 1;
+}
+
 bool bytes_contains(const BytesObject* haystack, const BytesObject* needle) {
   if (needle->count == 0) {
     return true;
@@ -136,6 +161,31 @@ wchar_t unicode_at(const UnicodeObject* s, size_t which,
 
 size_t unicode_length(const UnicodeObject* s) {
   return s->count;
+}
+
+bool unicode_equal(const UnicodeObject* a, const UnicodeObject* b) {
+  if (a->count != b->count) {
+    return false;
+  }
+  return !memcmp(a->data, b->data, a->count * sizeof(a->data[0]));
+}
+
+int64_t unicode_compare(const UnicodeObject* a, const UnicodeObject* b) {
+  for (size_t x = 0; (x < a->count) && (x < b->count); x++) {
+    if (a->data[x] < b->data[x]) {
+      return -1;
+    }
+    if (a->data[x] > b->data[x]) {
+      return 1;
+    }
+  }
+  if (a->count == b->count) {
+    return 0;
+  }
+  if (a->count < b->count) {
+    return -1;
+  }
+  return 1;
 }
 
 bool unicode_contains(const UnicodeObject* haystack, const UnicodeObject* needle) {

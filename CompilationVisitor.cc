@@ -472,6 +472,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   this->file_offset = a->file_offset;
   this->assert_not_evaluating_instance_pointer();
 
+  MemoryReference target_mem(this->target_register);
+
   // LogicalOr and LogicalAnd may not evaluate the right-side operand, so we
   // have to implement those separately (the other operators evaluate both
   // operands in all cases)
@@ -485,15 +487,11 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     if ((a->oper == BinaryOperator::LogicalOr) &&
         is_always_truthy(this->current_type)) {
       this->as.write_label(string_printf("__BinaryOperation_%p_trivialized_true", a));
-      this->write_delete_held_reference(MemoryReference(this->target_register));
-      this->as.write_mov(MemoryReference(this->target_register), 1);
       return;
     }
     if ((a->oper == BinaryOperator::LogicalAnd) &&
         is_always_falsey(this->current_type)) {
       this->as.write_label(string_printf("__BinaryOperation_%p_trivialized_false", a));
-      this->write_delete_held_reference(MemoryReference(this->target_register));
-      this->as.write_mov(MemoryReference(this->target_register), 0);
       return;
     }
 
@@ -522,8 +520,6 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     return;
   }
 
-  MemoryReference target_mem(this->target_register);
-
   // all of the remaining operators use both operands, so evaluate both of them
   // into different registers
   // TODO: it's kind of stupid that we push the result onto the stack; figure
@@ -550,12 +546,14 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   // pick a temporary register that isn't the target register
   MemoryReference temp_mem(this->available_register_except({this->target_register}));
 
-  bool left_int = ((left_type.type == ValueType::Int) ||
-      (left_type.type == ValueType::Bool));
-  bool right_int = ((right_type.type == ValueType::Int) ||
-      (right_type.type == ValueType::Bool));
+  bool left_int_only = (left_type.type == ValueType::Int);
+  bool right_int_only = (right_type.type == ValueType::Int);
+  bool left_int = left_int_only || (left_type.type == ValueType::Bool);
+  bool right_int = right_int_only || (right_type.type == ValueType::Bool);
   bool left_float = (left_type.type == ValueType::Float);
   bool right_float = (right_type.type == ValueType::Float);
+  bool left_numeric = left_int || left_float;
+  bool right_numeric = right_int || right_float;
   bool left_bytes = (left_type.type == ValueType::Bytes);
   bool right_bytes = (right_type.type == ValueType::Bytes);
   bool left_unicode = (left_type.type == ValueType::Unicode);
@@ -567,31 +565,123 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::GreaterThan:
     case BinaryOperator::LessOrEqual:
     case BinaryOperator::GreaterOrEqual:
+
+      // it's an error to ordered-compare disparate types to each other, except
+      // for numeric types
+      if ((!left_numeric || !right_numeric) && (left_type.type != right_type.type)) {
+        throw compile_error("cannot perform ordered comparison between " +
+            left_type.str() + " and " + right_type.str(), this->file_offset);
+      }
+
     case BinaryOperator::Equality:
     case BinaryOperator::NotEqual:
-      // integer comparisons
-      if (left_int && right_int) {
-        this->as.write_mov(target_mem, 0);
-        this->as.write_mov(temp_mem, left_mem);
-        this->as.write_cmp(temp_mem, right_mem);
-        target_mem.base_register = byte_register_for_register(target_mem.base_register);
-        if (a->oper == BinaryOperator::LessThan) {
-          this->as.write_setl(target_mem);
-        } else if (a->oper == BinaryOperator::GreaterThan) {
-          this->as.write_setg(target_mem);
-        } else if (a->oper == BinaryOperator::LessOrEqual) {
-          this->as.write_setle(target_mem);
-        } else if (a->oper == BinaryOperator::GreaterOrEqual) {
-          this->as.write_setge(target_mem);
-        } else if (a->oper == BinaryOperator::Equality) {
-          this->as.write_sete(target_mem);
-        } else if (a->oper == BinaryOperator::NotEqual) {
-          this->as.write_setne(target_mem);
+      if (left_numeric && right_numeric) {
+        Register xmm = this->available_register(Register::None, true);
+        this->as.write_xor(target_mem, target_mem);
+
+        // Int vs Int
+        if (left_int && right_int) {
+          this->as.write_mov(temp_mem, left_mem);
+          this->as.write_cmp(temp_mem, right_mem);
+          target_mem.base_register = byte_register_for_register(target_mem.base_register);
+          if (a->oper == BinaryOperator::LessThan) {
+            this->as.write_setl(target_mem);
+          } else if (a->oper == BinaryOperator::GreaterThan) {
+            this->as.write_setg(target_mem);
+          } else if (a->oper == BinaryOperator::LessOrEqual) {
+            this->as.write_setle(target_mem);
+          } else if (a->oper == BinaryOperator::GreaterOrEqual) {
+            this->as.write_setge(target_mem);
+          } else if (a->oper == BinaryOperator::Equality) {
+            this->as.write_sete(target_mem);
+          } else if (a->oper == BinaryOperator::NotEqual) {
+            this->as.write_setne(target_mem);
+          }
+
+        // Float vs Int
+        } else if (left_float && right_int) {
+          this->as.write_mov(temp_mem, right_mem);
+          this->as.write_cvtsi2sd(xmm, temp_mem.base_register);
+
+          // we're comparing in the opposite direction, so we negate the results
+          // of ordered comparisons
+          if (a->oper == BinaryOperator::LessThan) {
+            this->as.write_cmpnltsd(xmm, left_mem);
+          } else if (a->oper == BinaryOperator::GreaterThan) {
+            this->as.write_cmplesd(xmm, left_mem);
+          } else if (a->oper == BinaryOperator::LessOrEqual) {
+            this->as.write_cmpnlesd(xmm, left_mem);
+          } else if (a->oper == BinaryOperator::GreaterOrEqual) {
+            this->as.write_cmpltsd(xmm, left_mem);
+          } else if (a->oper == BinaryOperator::Equality) {
+            this->as.write_cmpeqsd(xmm, left_mem);
+          } else if (a->oper == BinaryOperator::NotEqual) {
+            this->as.write_cmpneqsd(xmm, left_mem);
+          }
+
+        // Int vs Float and Float vs Float
+        } else if (right_float) {
+          if (left_int) {
+            this->as.write_mov(temp_mem, left_mem);
+            this->as.write_cvtsi2sd(xmm, temp_mem.base_register);
+          } else {
+            this->as.write_movsd(xmm, left_mem);
+          }
+          if (a->oper == BinaryOperator::LessThan) {
+            this->as.write_cmpltsd(xmm, right_mem);
+          } else if (a->oper == BinaryOperator::GreaterThan) {
+            this->as.write_cmpnlesd(xmm, right_mem);
+          } else if (a->oper == BinaryOperator::LessOrEqual) {
+            this->as.write_cmplesd(xmm, right_mem);
+          } else if (a->oper == BinaryOperator::GreaterOrEqual) {
+            this->as.write_cmpnltsd(xmm, right_mem);
+          } else if (a->oper == BinaryOperator::Equality) {
+            this->as.write_cmpeqsd(xmm, right_mem);
+          } else if (a->oper == BinaryOperator::NotEqual) {
+            this->as.write_cmpneqsd(xmm, right_mem);
+          }
+
+        } else {
+          throw compile_error("unimplemented numeric ordered comparison: " +
+              left_type.str() + " vs " + right_type.str(), this->file_offset);
+        }
+
+      } else if ((left_bytes && right_bytes) || (left_unicode && right_unicode)) {
+
+        if ((a->oper == BinaryOperator::Equality) ||
+            (a->oper == BinaryOperator::NotEqual)) {
+          const void* target_function = left_bytes ?
+              void_fn_ptr(&bytes_equal) : void_fn_ptr(&unicode_equal);
+          this->write_function_call(target_function, NULL, {target_mem, left_mem},
+              {}, -1, this->target_register);
+          if (a->oper == BinaryOperator::NotEqual) {
+            this->as.write_xor(target_mem, 1);
+          }
+
+        } else {
+          const void* target_function = left_bytes ?
+              void_fn_ptr(&bytes_compare) : void_fn_ptr(&unicode_compare);
+          this->write_function_call(target_function, NULL, {left_mem, right_mem},
+              {}, -1, this->target_register);
+          this->as.write_cmp(this->target_register, 0);
+          this->as.write_mov(this->target_register, 0);
+          target_mem.base_register = byte_register_for_register(target_mem.base_register);
+          if (a->oper == BinaryOperator::LessThan) {
+            this->as.write_setl(target_mem);
+          } else if (a->oper == BinaryOperator::GreaterThan) {
+            this->as.write_setg(target_mem);
+          } else if (a->oper == BinaryOperator::LessOrEqual) {
+            this->as.write_setle(target_mem);
+          } else if (a->oper == BinaryOperator::GreaterOrEqual) {
+            this->as.write_setge(target_mem);
+          }
         }
 
       } else {
-        throw compile_error("operator not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+        throw compile_error("unimplemented non-numeric ordered comparison: " +
+            left_type.str() + " vs " + right_type.str(), this->file_offset);
       }
+
       this->current_type = Variable(ValueType::Bool);
       break;
 
@@ -599,8 +689,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::NotIn:
       if ((left_bytes && right_bytes) || (left_unicode && right_unicode)) {
         const void* target_function = left_bytes ?
-            reinterpret_cast<const void*>(&bytes_contains) :
-            reinterpret_cast<const void*>(&unicode_contains);
+            void_fn_ptr(&bytes_contains) : void_fn_ptr(&unicode_contains);
         this->write_function_call(target_function, NULL, {target_mem, left_mem},
             {}, -1, this->target_register);
       } else {
@@ -615,14 +704,45 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       break;
 
     case BinaryOperator::Is:
-      // TODO
-      this->current_type = Variable(ValueType::Bool);
-      throw compile_error("Is not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+    case BinaryOperator::IsNot: {
+      bool negate = (a->oper == BinaryOperator::IsNot);
+      // if the left and right types don't match, the result is always false
+      if (left_type.type != right_type.type) {
+        if (negate) {
+          this->as.write_mov(this->target_register, 1);
+        } else {
+          this->as.write_xor(target_mem, target_mem);
+        }
 
-    case BinaryOperator::IsNot:
-      // TODO
+      // None has only one value, so `None is None` is always true
+      } else if (left_type.type == ValueType::None) {
+        if (negate) {
+          this->as.write_xor(target_mem, target_mem);
+        } else {
+          this->as.write_mov(this->target_register, 1);
+        }
+
+      // for everything else, just compare the values directly. this exact same
+      // code works for bools and all other types, since their values are
+      // pointers and we just need to compare the pointers to know if they're
+      // the same object. note that this violates the python standard for
+      // integers and floats - these aren't objects at all in nemesys, so the
+      // operator isn't well-defined for them; we just do the same as ==/!=.
+      } else {
+        this->as.write_xor(target_mem, target_mem);
+        this->as.write_mov(temp_mem, left_mem);
+        this->as.write_cmp(temp_mem, right_mem);
+        target_mem.base_register = byte_register_for_register(target_mem.base_register);
+        if (negate) {
+          this->as.write_setne(target_mem);
+        } else {
+          this->as.write_sete(target_mem);
+        }
+      }
+
       this->current_type = Variable(ValueType::Bool);
-      throw compile_error("IsNot not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+      break;
+    }
 
     case BinaryOperator::Or:
       if (left_int && right_int) {
@@ -667,12 +787,12 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::Addition:
       if ((left_type.type == ValueType::Bytes) &&
           (right_type.type == ValueType::Bytes)) {
-        this->write_function_call(reinterpret_cast<const void*>(&bytes_concat),
+        this->write_function_call(void_fn_ptr(&bytes_concat),
             NULL, {left_mem, target_mem, r14}, {}, -1, this->target_register);
 
       } else if ((left_type.type == ValueType::Unicode) &&
                  (right_type.type == ValueType::Unicode)) {
-        this->write_function_call(reinterpret_cast<const void*>(&unicode_concat),
+        this->write_function_call(void_fn_ptr(&unicode_concat),
             NULL, {left_mem, target_mem, r14}, {}, -1, this->target_register);
 
       } else if (left_int && right_int) {
@@ -1003,10 +1123,10 @@ void CompilationVisitor::visit(ListConstructor* a) {
     MemoryReference(argument_register_order[2]),
     r14,
   });
-  this->as.write_mov(int_args[0], 0);
+  this->as.write_xor(int_args[0], int_args[0]);
   this->as.write_mov(int_args[1], a->items.size());
-  this->as.write_mov(int_args[2], 0);
-  this->write_function_call(reinterpret_cast<const void*>(list_new), NULL,
+  this->as.write_xor(int_args[2], int_args[0]);
+  this->write_function_call(void_fn_ptr(list_new), NULL,
       int_args, {}, -1, this->target_register);
 
   // save the list items pointer
@@ -1605,7 +1725,8 @@ void CompilationVisitor::visit(FalseConstant* a) {
   this->file_offset = a->file_offset;
   this->assert_not_evaluating_instance_pointer();
 
-  this->as.write_mov(this->target_register, 0);
+  MemoryReference target_mem(this->target_register);
+  this->as.write_xor(target_mem, target_mem);
   this->current_type = Variable(ValueType::Bool);
   this->holding_reference = false;
 }
@@ -1614,7 +1735,8 @@ void CompilationVisitor::visit(NoneConstant* a) {
   this->file_offset = a->file_offset;
   this->assert_not_evaluating_instance_pointer();
 
-  this->as.write_mov(this->target_register, 0);
+  MemoryReference target_mem(this->target_register);
+  this->as.write_xor(target_mem, target_mem);
   this->current_type = Variable(ValueType::None);
   this->holding_reference = false;
 }
@@ -2265,15 +2387,14 @@ void CompilationVisitor::visit(ForStatement* a) {
       throw compile_error("cannot use rbx as target register for list iteration");
     }
     this->write_push(Register::RBX);
-    MemoryReference rbx_mem(Register::RBX);
-    this->as.write_mov(rbx_mem, 0);
+    this->as.write_xor(rbx, rbx);
 
     this->as.write_label(next_label);
     // get the list object
     this->as.write_mov(MemoryReference(this->target_register),
         MemoryReference(Register::RSP, 8));
     // check if we're at the end
-    this->as.write_cmp(rbx_mem, MemoryReference(this->target_register, 0x10));
+    this->as.write_cmp(rbx, MemoryReference(this->target_register, 0x10));
     // if we are, skip the loop body
     this->as.write_jge(end_label);
     // else, get the list items
@@ -2283,7 +2404,7 @@ void CompilationVisitor::visit(ForStatement* a) {
     this->as.write_mov(MemoryReference(this->target_register),
         MemoryReference(this->target_register, 0, Register::RBX, 8));
     // increment the item index
-    this->as.write_inc(rbx_mem);
+    this->as.write_inc(rbx);
 
     // if the extension type has a refcount, add a reference
     if (type_has_refcount(collection_type.extension_types[0].type)) {
@@ -2321,9 +2442,8 @@ void CompilationVisitor::visit(ForStatement* a) {
     this->as.write_mov(rsi, rsp);
 
     // call dictionary_next_item
-    this->write_function_call(
-        reinterpret_cast<const void*>(&dictionary_next_item), NULL, {rdi, rsi},
-        {});
+    this->write_function_call(void_fn_ptr(&dictionary_next_item), NULL,
+        {rdi, rsi}, {});
 
     // if dictionary_next_item returned 0, then we're done
     this->as.write_test(rax, rax);
@@ -2861,7 +2981,8 @@ void CompilationVisitor::write_code_for_value(const Variable& value) {
       throw compile_error("can\'t generate code for Indeterminate value", this->file_offset);
 
     case ValueType::None:
-      this->as.write_mov(this->target_register, 0);
+      this->as.write_xor(MemoryReference(this->target_register),
+          MemoryReference(this->target_register));
       break;
 
     case ValueType::Bool:
@@ -2876,8 +2997,8 @@ void CompilationVisitor::write_code_for_value(const Variable& value) {
     case ValueType::Bytes:
     case ValueType::Unicode: {
       const void* o = (value.type == ValueType::Bytes) ?
-          reinterpret_cast<const void*>(this->global->get_or_create_constant(*value.bytes_value)) :
-          reinterpret_cast<const void*>(this->global->get_or_create_constant(*value.unicode_value));
+          void_fn_ptr(this->global->get_or_create_constant(*value.bytes_value)) :
+          void_fn_ptr(this->global->get_or_create_constant(*value.unicode_value));
       this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(o));
       this->write_add_reference(this->target_register);
       break;
@@ -3185,8 +3306,8 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
 void CompilationVisitor::write_add_reference(Register addr_reg) {
   if (debug_flags & DebugFlag::NoInlineRefcounting) {
     this->reserve_register(addr_reg);
-    this->write_function_call(reinterpret_cast<const void*>(&add_reference),
-        NULL, {MemoryReference(addr_reg)}, {});
+    this->write_function_call(void_fn_ptr(&add_reference), NULL,
+        {MemoryReference(addr_reg)}, {});
     this->release_register(addr_reg);
   } else {
     this->as.write_lock();
@@ -3214,8 +3335,8 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
 
   if (type_has_refcount(type)) {
     if (debug_flags & DebugFlag::NoInlineRefcounting) {
-      this->write_function_call(reinterpret_cast<const void*>(delete_reference),
-          NULL, {mem, r14}, {});
+      this->write_function_call(void_fn_ptr(delete_reference), NULL, {mem, r14},
+          {});
 
     } else {
       static uint64_t skip_label_id = 0;

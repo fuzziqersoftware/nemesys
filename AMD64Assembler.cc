@@ -813,6 +813,46 @@ void AMD64Assembler::write_maxsd(Register to, const MemoryReference& from) {
   this->write_rm(Operation::MAXSD, from, to, OperandSize::DoublePrecision, 0xF2);
 }
 
+void AMD64Assembler::write_cmpsd(Register to, const MemoryReference& from,
+    uint8_t which) {
+  string data = this->generate_rm(Operation::CMPSD, from, to,
+      OperandSize::DoublePrecision, 0xF2);
+  data += which;
+  this->write(data);
+}
+
+void AMD64Assembler::write_cmpeqsd(Register to, const MemoryReference& from) {
+  this->write_cmpsd(to, from, 0);
+}
+
+void AMD64Assembler::write_cmpltsd(Register to, const MemoryReference& from) {
+  this->write_cmpsd(to, from, 1);
+}
+
+void AMD64Assembler::write_cmplesd(Register to, const MemoryReference& from) {
+  this->write_cmpsd(to, from, 2);
+}
+
+void AMD64Assembler::write_cmpunordsd(Register to, const MemoryReference& from) {
+  this->write_cmpsd(to, from, 3);
+}
+
+void AMD64Assembler::write_cmpneqsd(Register to, const MemoryReference& from) {
+  this->write_cmpsd(to, from, 4);
+}
+
+void AMD64Assembler::write_cmpnltsd(Register to, const MemoryReference& from) {
+  this->write_cmpsd(to, from, 5);
+}
+
+void AMD64Assembler::write_cmpnlesd(Register to, const MemoryReference& from) {
+  this->write_cmpsd(to, from, 6);
+}
+
+void AMD64Assembler::write_cmpordsd(Register to, const MemoryReference& from) {
+  this->write_cmpsd(to, from, 7);
+}
+
 void AMD64Assembler::write_cvtsi2sd(Register to, Register from) {
   this->write_rm(Operation::CVTSI2SD, MemoryReference(from), to,
       OperandSize::QuadWord, 0xF2);
@@ -1775,6 +1815,27 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
           opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
               "imul", true, NULL, ext, reg_ext, base_ext, index_ext,
               operand_size);
+
+        } else if (opcode == 0xC2) {
+          if (!xmm_prefix) {
+            opcode_text = "<<unknown-0F-C2-non-xmm>>";
+          } else {
+            opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+                "cmpsd", true, NULL, ext, reg_ext, base_ext, index_ext,
+                OperandSize::DoublePrecision);
+            if (offset >= size) {
+              opcode_text += ", <<incomplete>>";
+            } else {
+              const char* operation_suffixes[8] = {
+                  "eq", "lt", "le", "unord", "ne", "ge", "gt", "ord"};
+              if (data[offset] < 8) {
+                opcode_text += string_printf(", %s", operation_suffixes[data[offset]]);
+              } else {
+                opcode_text += string_printf(", 0x%hhX", data[offset]);
+              }
+              offset++;
+            }
+          }
 
         } else {
           opcode_text = "<<unknown-0F>>";
