@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "../Analysis.hh"
+#include "../BuiltinFunctions.hh"
 #include "../Types/Strings.hh"
 #include "../Types/List.hh"
 
@@ -51,7 +52,7 @@ static map<string, Variable> globals({
   // {"getrefcount",          Variable()},
   // {"getsizeof",            Variable()},
   // {"hash_info",            Variable()},
-  // {"hexversion",           Variable()},
+  {"hexversion",           Variable(ValueType::Int, 0LL)},
   // {"implementation",       Variable()},
   // {"int_info",             Variable()},
   // {"last_traceback",       Variable()},
@@ -82,14 +83,15 @@ void sys_set_executable(const char* realpath) {
 void sys_set_argv(const vector<const char*>& sys_argv) {
   vector<shared_ptr<Variable>> argv;
   for (const char* arg : sys_argv) {
-    // TODO: these should be Unicode, not Bytes
-    argv.emplace_back(new Variable(ValueType::Bytes,
-        reinterpret_cast<const char*>(arg)));
+    wstring warg;
+    for (; *arg; arg++) {
+      warg += static_cast<wchar_t>(*arg);
+    }
+    argv.emplace_back(new Variable(ValueType::Unicode, move(warg)));
   }
-  sys_module->globals.emplace("argv", Variable(ValueType::List, argv));
+  sys_module->globals.emplace("argv", Variable(ValueType::List, move(argv)));
 }
 
 void sys_initialize() {
-  // nothing to do here for now. in the future this is where we would create
-  // function ids for the functions defined in this module
+  // nothing to do (yet)
 }

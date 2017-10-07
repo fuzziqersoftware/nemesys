@@ -11,7 +11,6 @@
 #define void_fn_ptr(a) reinterpret_cast<const void*>(+a)
 
 
-// indexes of built-in functions and some commonly-used ids and instances
 extern std::unordered_map<std::string, Variable> builtin_names;
 extern std::unordered_map<int64_t, FunctionContext> builtin_function_definitions;
 extern std::unordered_map<int64_t, ClassContext> builtin_class_definitions;
