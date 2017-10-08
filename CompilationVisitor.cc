@@ -241,7 +241,8 @@ int64_t CompilationVisitor::write_push_reserved_registers() {
     }
 
     this->adjust_stack(-8);
-    this->as.write_movsd(MemoryReference(Register::RSP, 0), which);
+    this->as.write_movsd(MemoryReference(Register::RSP, 0),
+        MemoryReference(which));
   }
 
   // reset the available flags and return the old flags
@@ -322,7 +323,8 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         // check if the value is zero
         this->as.write_test(target_mem, target_mem);
         this->as.write_mov(this->target_register, 0);
-        this->as.write_setz(byte_register_for_register(this->target_register));
+        this->as.write_setz(MemoryReference(byte_register_for_register(
+            this->target_register)));
 
       } else if (this->current_type == ValueType::Float) {
         // 0.0 and -0.0 are falsey, everything else is truthy
@@ -332,7 +334,8 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         this->as.write_shl(target_mem, 1);
         this->as.write_test(target_mem, target_mem);
         this->as.write_mov(this->target_register, 0);
-        this->as.write_setz(byte_register_for_register(this->target_register));
+        this->as.write_setz(MemoryReference(byte_register_for_register(
+            this->target_register)));
 
       } else if ((this->current_type == ValueType::Bytes) ||
                  (this->current_type == ValueType::Unicode) ||
@@ -349,13 +352,14 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         this->write_delete_held_reference(target_mem);
         this->as.write_test(mem, mem);
         this->as.write_mov(this->target_register, 0);
-        this->as.write_setz(byte_register_for_register(this->target_register));
+        this->as.write_setz(MemoryReference(byte_register_for_register(
+            this->target_register)));
         this->release_register(reg);
 
       } else {
         // other types cannot be falsey
         this->as.write_mov(this->target_register, 1);
-        this->write_delete_held_reference(this->target_register);
+        this->write_delete_held_reference(target_mem);
       }
 
       this->current_type = Variable(ValueType::Bool);
@@ -473,6 +477,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   this->assert_not_evaluating_instance_pointer();
 
   MemoryReference target_mem(this->target_register);
+  MemoryReference float_target_mem(this->float_target_register);
 
   // LogicalOr and LogicalAnd may not evaluate the right-side operand, so we
   // have to implement those separately (the other operators evaluate both
@@ -577,6 +582,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::NotEqual:
       if (left_numeric && right_numeric) {
         Register xmm = this->available_register(Register::None, true);
+        MemoryReference xmm_mem(xmm);
         this->as.write_xor(target_mem, target_mem);
 
         // Int vs Int
@@ -623,7 +629,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
           if (left_int) {
             this->as.write_cvtsi2sd(xmm, left_mem);
           } else {
-            this->as.write_movsd(xmm, left_mem);
+            this->as.write_movsd(xmm_mem, left_mem);
           }
           if (a->oper == BinaryOperator::LessThan) {
             this->as.write_cmpltsd(xmm, right_mem);
@@ -661,8 +667,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
               void_fn_ptr(&bytes_compare) : void_fn_ptr(&unicode_compare);
           this->write_function_call(target_function, NULL, {left_mem, right_mem},
               {}, -1, this->target_register);
-          this->as.write_cmp(this->target_register, 0);
-          this->as.write_mov(this->target_register, 0);
+          this->as.write_cmp(target_mem, 0);
+          this->as.write_mov(target_mem, 0);
           target_mem.base_register = byte_register_for_register(target_mem.base_register);
           if (a->oper == BinaryOperator::LessThan) {
             this->as.write_setl(target_mem);
@@ -695,7 +701,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         throw compile_error("In/NotIn not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
       }
       if (a->oper == BinaryOperator::NotIn) {
-        this->as.write_xor(this->target_register, 1);
+        this->as.write_xor(target_mem, 1);
       }
       this->current_type = Variable(ValueType::Bool);
       this->holding_reference = false;
@@ -802,7 +808,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
       } else if (left_float && right_int) {
         // the int value is still in the target register; skip the memory access
-        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_cvtsi2sd(this->float_target_register, target_mem);
         this->as.write_addsd(this->float_target_register, left_mem);
 
         // watch it: in this case the type is different from right_type
@@ -881,12 +887,12 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_divsd(this->float_target_register, right_mem);
 
       } else if (left_float && right_int) {
-        this->as.write_movsd(this->float_target_register, left_mem);
+        this->as.write_movsd(float_target_mem, left_mem);
         this->as.write_cvtsi2sd(tmp_xmm, right_mem);
         this->as.write_divsd(this->float_target_register, tmp_xmm_mem);
 
       } else if (left_float && right_float) {
-        this->as.write_movsd(this->float_target_register, left_mem);
+        this->as.write_movsd(float_target_mem, left_mem);
         this->as.write_divsd(this->float_target_register, right_mem);
 
       } else {
@@ -952,12 +958,12 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         MemoryReference right_xmm_mem(right_xmm);
 
         if (left_float) {
-          this->as.write_movsd(left_xmm, left_mem);
+          this->as.write_movsd(left_xmm_mem, left_mem);
         } else {
           this->as.write_cvtsi2sd(left_xmm, left_mem);
         }
         if (right_float) {
-          this->as.write_movsd(right_xmm, right_mem);
+          this->as.write_movsd(right_xmm_mem, right_mem);
         } else {
           this->as.write_cvtsi2sd(right_xmm, right_mem);
         }
@@ -967,13 +973,13 @@ void CompilationVisitor::visit(BinaryOperation* a) {
           Register tmp_xmm = this->available_register_except(
               {left_xmm, right_xmm}, true);
           MemoryReference tmp_xmm_mem(tmp_xmm);
-          this->as.write_movsd(tmp_xmm_mem, left_xmm);
+          this->as.write_movsd(tmp_xmm_mem, left_xmm_mem);
           this->as.write_divsd(tmp_xmm, right_xmm_mem);
           this->as.write_roundsd(tmp_xmm, tmp_xmm_mem, 3);
           this->as.write_mulsd(tmp_xmm, right_xmm_mem);
           this->as.write_subsd(left_xmm, tmp_xmm_mem);
         } else {
-          this->as.write_divsd(left_xmm, right_xmm);
+          this->as.write_divsd(left_xmm, right_xmm_mem);
         }
 
         // Float // Int == Int // Float == Float // Float == Float
@@ -1460,7 +1466,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
       this->as.write_mov(rdi, cls->instance_size());
       this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(&malloc));
       this->as.write_call(rax);
-      this->as.write_mov(this->target_register, rax);
+      this->as.write_mov(MemoryReference(this->target_register), rax);
       // TODO: check if the result is NULL and raise MemoryError in that case
 
       // fill in the refcount, destructor function and class id
@@ -1480,7 +1486,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
     // if the argument is the exception block, copy it from r14
     } else if (arg.is_exception_block) {
-      this->as.write_mov(this->target_register, r14);
+      this->as.write_mov(MemoryReference(this->target_register), r14);
 
     } else {
       this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_default_value",
@@ -2434,7 +2440,8 @@ void CompilationVisitor::visit(ForStatement* a) {
     this->as.write_je(end_label);
 
     // get the key pointer
-    this->as.write_mov(this->target_register, MemoryReference(Register::RSP, 0));
+    this->as.write_mov(MemoryReference(this->target_register),
+        MemoryReference(Register::RSP, 0));
 
     // if the extension type has a refcount, add a reference
     if (type_has_refcount(collection_type.extension_types[0].type)) {
@@ -2918,7 +2925,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
             this->as.write_jnz(skip_label);
 
             // call the destructor
-            dtor_as.write_mov(Register::RAX, MemoryReference(Register::RDI, 8));
+            dtor_as.write_mov(rax, MemoryReference(Register::RDI, 8));
             dtor_as.write_call(rax);
 
             this->as.write_label(skip_label);
@@ -3213,8 +3220,9 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
     // if it's a float arg, reserve stack space and write it from the xmm reg
     try {
       Register xmm_reg = float_arg_to_register.at(local.first);
+      MemoryReference xmm_mem(xmm_reg);
       this->adjust_stack(-8);
-      this->as.write_movsd(MemoryReference(Register::RSP, 0), xmm_reg);
+      this->as.write_movsd(MemoryReference(Register::RSP, 0), xmm_mem);
       continue;
     } catch (const out_of_range&) { }
 

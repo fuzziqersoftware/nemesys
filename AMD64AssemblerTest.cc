@@ -207,7 +207,7 @@ void test_float_move_load_multiply() {
 
   as.write_movq_from_xmm(rax, Register::XMM0);
   as.write_movq_to_xmm(Register::XMM0, rax);
-  as.write_movsd(Register::XMM1, MemoryReference(Register::RDI, 0));
+  as.write_movsd(xmm1, MemoryReference(Register::RDI, 0));
   as.write_mulsd(Register::XMM0, xmm1);
   as.write_ret();
 

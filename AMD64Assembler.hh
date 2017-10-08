@@ -338,7 +338,7 @@ struct MemoryReference {
   MemoryReference();
   MemoryReference(Register base_register, int64_t offset,
       Register index_register = Register::None, uint8_t field_size = 1);
-  MemoryReference(Register base_register);
+  explicit MemoryReference(Register base_register);
 
   bool operator==(const MemoryReference& other) const;
   bool operator!=(const MemoryReference& other) const;
