@@ -70,11 +70,11 @@ using namespace std;
 // TODO: keep common function references around somewhere (r14 maybe) and use
 // `call [r14 + X]` instead of `mov rax, X; call rax`.
 
-static const vector<Register> argument_register_order = {
+static const vector<Register> int_argument_register_order = {
   Register::RDI, Register::RSI, Register::RDX, Register::RCX, Register::R8,
   Register::R9,
 };
-static const vector<Register> floating_argument_register_order = {
+static const vector<Register> float_argument_register_order = {
   Register::XMM0, Register::XMM1, Register::XMM2, Register::XMM3,
   Register::XMM4, Register::XMM5, Register::XMM6, Register::XMM7,
 };
@@ -164,6 +164,14 @@ void CompilationVisitor::release_register(Register which, bool float_register) {
   int32_t* available_mask = float_register ? &this->available_float_registers :
       &this->available_int_registers;
   *available_mask |= (1 << which);
+}
+
+void CompilationVisitor::release_all_registers(bool float_registers) {
+  if (float_registers) {
+    this->available_float_registers = default_available_float_registers;
+  } else {
+    this->available_int_registers = default_available_int_registers;
+  }
 }
 
 Register CompilationVisitor::available_register(Register preferred,
@@ -623,6 +631,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
           } else if (a->oper == BinaryOperator::NotEqual) {
             this->as.write_cmpneqsd(xmm, left_mem);
           }
+          this->as.write_movq_from_xmm(target_mem, xmm);
 
         // Int vs Float and Float vs Float
         } else if (right_float) {
@@ -644,6 +653,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
           } else if (a->oper == BinaryOperator::NotEqual) {
             this->as.write_cmpneqsd(xmm, right_mem);
           }
+          this->as.write_movq_from_xmm(target_mem, xmm);
 
         } else {
           throw compile_error("unimplemented numeric ordered comparison: " +
@@ -1108,9 +1118,9 @@ void CompilationVisitor::visit(ListConstructor* a) {
   // allocate the list object
   this->as.write_label(string_printf("__ListConstructor_%p_allocate", a));
   vector<const MemoryReference> int_args({
-    MemoryReference(argument_register_order[0]),
-    MemoryReference(argument_register_order[1]),
-    MemoryReference(argument_register_order[2]),
+    MemoryReference(int_argument_register_order[0]),
+    MemoryReference(int_argument_register_order[1]),
+    MemoryReference(int_argument_register_order[2]),
     r14,
   });
   this->as.write_xor(int_args[0], int_args[0]);
@@ -1266,6 +1276,14 @@ void CompilationVisitor::visit(FunctionCall* a) {
     throw compile_error("can\'t resolve function reference", this->file_offset);
   }
 
+  // if the target register is reserved, its value will be preserved instead of
+  // being overwritten by the function's return value, which probably isn't what
+  // we want
+  if (!this->register_is_available(this->target_register)) {
+    throw compile_error("target register is reserved at function call time",
+        this->file_offset);
+  }
+
   // get the function context
   auto* fn = this->global->context_for_function(a->callee_function_id);
   if (a->callee_function_id == 0) {
@@ -1373,51 +1391,31 @@ void CompilationVisitor::visit(FunctionCall* a) {
   // push all reserved registers
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
 
-  // reserve stack space as needed
+  // reserve enough stack space for the worst case - all args are ints (since
+  // there are fewer int registers available)
   ssize_t arg_stack_bytes = this->write_function_call_stack_prep(arg_values.size());
-
-  // generate the register/stack assignments for the args
-  {
-    size_t int_arg_index = 0;
-    size_t float_arg_index = 0;
-    for (auto& arg : arg_values) {
-      if (arg.type.type == ValueType::Float) {
-        if (float_arg_index >= floating_argument_register_order.size()) {
-          throw compile_error("too many floating arguments to function call",
-              this->file_offset);
-        }
-        arg.target_register = floating_argument_register_order[float_arg_index++];
-
-      } else {
-        if (int_arg_index < argument_register_order.size()) {
-          arg.target_register = argument_register_order[int_arg_index++];
-          arg.stack_offset = -1; // passed through register only
-        } else {
-          arg.target_register = Register::None;
-          arg.stack_offset = sizeof(int64_t) * ((int_arg_index++) - argument_register_order.size());
-        }
-      }
-
-      if (arg.stack_offset >= arg_stack_bytes) {
-        throw compile_error(string_printf(
-            "argument stack overflow at function call time (0x%zX vs 0x%zX)",
-            arg.stack_offset, arg_stack_bytes), this->file_offset);
-      }
-    }
-  }
 
   // generate code for the arguments
   Register original_target_register = this->target_register;
+  Register original_float_target_register = this->float_target_register;
+  size_t int_registers_used = 0, float_registers_used = 0, stack_offset = 0;
   for (size_t arg_index = 0; arg_index < arg_values.size(); arg_index++) {
     auto& arg = arg_values[arg_index];
 
-    // figure out where to construct it into
-    if (arg.type.type == ValueType::Float) {
-      this->float_target_register = arg.target_register;
-    } else if (arg.stack_offset < 0) {
-      this->target_register = arg.target_register;
-    } else {
+    // if it's an int, it goes into the next int register; if it's a float, it
+    // goes into the next float register. if either of these are exhausted, it
+    // goes onto the stack
+    if (int_registers_used == int_argument_register_order.size()) {
       this->target_register = this->available_register();
+    } else {
+      this->target_register = int_argument_register_order[int_registers_used];
+    }
+    if (float_registers_used == float_argument_register_order.size()) {
+      // TODO: none of the registers will be available when this happens; figure
+      // out a way to deal with this
+      this->float_target_register = this->available_register(Register::None, true);
+    } else {
+      this->float_target_register = float_argument_register_order[float_registers_used];
     }
 
     // generate code for the argument's value
@@ -1500,40 +1498,35 @@ void CompilationVisitor::visit(FunctionCall* a) {
       arg.type = arg.default_value;
     }
 
-    // TODO: make float argument passing actually work. the problem is that we
-    // don't know the correct type until after we generate the code, but we
-    // allocate registers and stack space before generating any code. probably
-    // a bit of refactoring will be necessary to get this to work
-    if (arg.type.type == ValueType::Float) {
-      throw compile_error("passing floats as function arguments is not yet supported", this->file_offset);
-    }
-
     // store the value on the stack if needed; otherwise, mark the register as
     // reserved
-    if (arg.stack_offset < 0) {
-      this->reserve_register(this->target_register);
+    if (arg.type.type == ValueType::Float) {
+      if (float_registers_used != float_argument_register_order.size()) {
+        this->reserve_register(this->float_target_register, true);
+        float_registers_used++;
+      } else {
+        this->as.write_movsd(MemoryReference(Register::RSP, stack_offset),
+            MemoryReference(this->float_target_register));
+        stack_offset += sizeof(double);
+      }
     } else {
-      this->as.write_mov(MemoryReference(Register::RSP, arg.stack_offset),
-          MemoryReference(this->target_register));
+      if (int_registers_used != int_argument_register_order.size()) {
+        this->reserve_register(this->target_register);
+        int_registers_used++;
+      } else {
+        this->as.write_mov(MemoryReference(Register::RSP, stack_offset),
+            MemoryReference(this->target_register));
+        stack_offset += sizeof(int64_t);
+      }
     }
   }
   this->target_register = original_target_register;
+  this->float_target_register = original_float_target_register;
 
-  // we can now unreserve the argument registers
-  for (size_t arg_index = 0;
-       (arg_index < argument_register_order.size()) &&
-         (arg_index < arg_values.size());
-       arg_index++) {
-    this->release_register(argument_register_order[arg_index]);
-  }
-
-  // any remaining reserved registers will need to be saved
-  // TODO: for now, just assert that there are no reserved registers (I'm lazy)
-  if ((this->available_int_registers != default_available_int_registers) ||
-      (this->available_float_registers != default_available_float_registers)) {
-    throw compile_error(string_printf("some registers were reserved at function call (%" PRIX64 " available)",
-        this->available_registers), this->file_offset);
-  }
+  // we can now unreserve the argument registers. there should be no reserved
+  // registers at this point because we already saved them above
+  this->release_all_registers(false);
+  this->release_all_registers(true);
 
   // figure out which fragment to call
   vector<Variable> arg_types;
@@ -3022,8 +3015,8 @@ void CompilationVisitor::assert_not_evaluating_instance_pointer() {
 }
 
 ssize_t CompilationVisitor::write_function_call_stack_prep(size_t arg_count) {
-  ssize_t arg_stack_bytes = (arg_count > argument_register_order.size()) ?
-      ((arg_count - argument_register_order.size()) * sizeof(int64_t)) : 0;
+  ssize_t arg_stack_bytes = (arg_count > int_argument_register_order.size()) ?
+      ((arg_count - int_argument_register_order.size()) * sizeof(int64_t)) : 0;
 
   // make sure the stack will be aligned at call time
   arg_stack_bytes += ((this->stack_bytes_used + arg_stack_bytes) & 0x0F);
@@ -3060,10 +3053,10 @@ void CompilationVisitor::write_function_call(const void* function,
   // generate the list of move destinations
   vector<MemoryReference> dests;
   for (size_t x = 0; x < int_args.size(); x++) {
-    if (x < argument_register_order.size()) {
-      dests.emplace_back(argument_register_order[x]);
+    if (x < int_argument_register_order.size()) {
+      dests.emplace_back(int_argument_register_order[x]);
     } else {
-      dests.emplace_back(Register::RSP, (x - argument_register_order.size()) * 8);
+      dests.emplace_back(Register::RSP, (x - int_argument_register_order.size()) * 8);
     }
   }
 
@@ -3132,7 +3125,7 @@ void CompilationVisitor::write_function_call(const void* function,
   // TODO: we need to topological sort these too, sigh
   for (size_t arg_index = 0; arg_index < float_args.size(); arg_index++) {
     auto& ref = float_args[arg_index];
-    MemoryReference dest(floating_argument_register_order[arg_index]);
+    MemoryReference dest(float_argument_register_order[arg_index]);
     if (ref == dest) {
       continue;
     }
@@ -3185,6 +3178,7 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
   unordered_map<string, Register> int_arg_to_register;
   unordered_map<string, int64_t> int_arg_to_stack_offset;
   unordered_map<string, Register> float_arg_to_register;
+  size_t arg_stack_offset = sizeof(int64_t) * 2; // after return addr and rbp
   for (size_t arg_index = 0; arg_index < this->target_function->args.size(); arg_index++) {
     const auto& arg = this->target_function->args[arg_index];
 
@@ -3197,20 +3191,20 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
     }
 
     if (is_float) {
-      if (float_arg_to_register.size() >= floating_argument_register_order.size()) {
+      if (float_arg_to_register.size() >= float_argument_register_order.size()) {
         throw compile_error("function accepts too many float args", this->file_offset);
       }
       float_arg_to_register.emplace(arg.name,
-          floating_argument_register_order[float_arg_to_register.size()]);
+          float_argument_register_order[float_arg_to_register.size()]);
 
-    } else if (int_arg_to_register.size() < argument_register_order.size()) {
+    } else if (int_arg_to_register.size() < int_argument_register_order.size()) {
       int_arg_to_register.emplace(arg.name,
-          argument_register_order[int_arg_to_register.size()]);
+          int_argument_register_order[int_arg_to_register.size()]);
 
     } else {
       // add 2, since at this point we've called the function and pushed RBP
-      int_arg_to_stack_offset.emplace(arg.name,
-          sizeof(int64_t) * (arg_index - argument_register_order.size() + 2));
+      int_arg_to_stack_offset.emplace(arg.name, arg_stack_offset);
+      arg_stack_offset += sizeof(int64_t);
     }
   }
 

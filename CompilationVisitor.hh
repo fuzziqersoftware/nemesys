@@ -141,6 +141,7 @@ private:
   Register reserve_register(Register which = Register::None,
       bool float_register = false);
   void release_register(Register reg, bool float_register = false);
+  void release_all_registers(bool float_registers = false);
   bool register_is_available(Register which, bool float_register = false);
   Register available_register(Register preferred = Register::None,
       bool float_register = false);
