@@ -853,9 +853,16 @@ void AMD64Assembler::write_cmpordsd(Register to, const MemoryReference& from) {
   this->write_cmpsd(to, from, 7);
 }
 
-void AMD64Assembler::write_cvtsi2sd(Register to, Register from) {
-  this->write_rm(Operation::CVTSI2SD, MemoryReference(from), to,
-      OperandSize::QuadWord, 0xF2);
+void AMD64Assembler::write_roundsd(Register to, const MemoryReference& from,
+    uint8_t mode) {
+  string data = this->generate_rm(Operation::ROUNDSD, from, to,
+      OperandSize::DoublePrecision, 0x66);
+  data += mode;
+  this->write(data);
+}
+
+void AMD64Assembler::write_cvtsi2sd(Register to, const MemoryReference& from) {
+  this->write_rm(Operation::CVTSI2SD, from, to, OperandSize::QuadWord, 0xF2);
 }
 
 void AMD64Assembler::write_cvtsd2si(Register to, Register from) {
@@ -1768,6 +1775,29 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
             opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
                 "cvtsd2si", true, NULL, ext, reg_ext, base_ext, index_ext,
                 OperandSize::DoublePrecision);
+          }
+
+        } else if (opcode == 0x3A) {
+          if (xmm_prefix) {
+            opcode_text = "<<unknown-0F-3A-xmm>>";
+          } else if (offset >= size) {
+            opcode_text = "<<incomplete-0F-3A-non-xmm>>";
+          } else if (data[offset] != 0x0B) {
+            opcode_text = string_printf("<<unknown-0F-3A-%02hhX-non-xmm>>",
+                data[offset]);
+            offset++;
+          } else {
+            offset++;
+
+            opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+                "roundsd", true, NULL, ext, reg_ext, base_ext, index_ext,
+                OperandSize::DoublePrecision);
+            if (offset >= size) {
+              opcode_text += ", <<incomplete>>";
+            } else {
+              opcode_text += string_printf(", 0x%02hhX", data[offset]);
+              offset++;
+            }
           }
 
         } else if ((opcode & 0xF8) == 0x58) {

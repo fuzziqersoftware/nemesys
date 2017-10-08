@@ -127,6 +127,7 @@ enum Operation {
 
   CVTSI2SD   = 0x0F2A,
   CVTSD2SI   = 0x0F2C,
+  ROUNDSD    = 0x0F3A0B,
   MOVQ_TO_XMM   = 0x0F6E,
   MOVQ_FROM_XMM = 0x0F7E,
   JO         = 0x0F80,
@@ -413,7 +414,8 @@ public:
   void write_cmpnltsd(Register to, const MemoryReference& from);
   void write_cmpnlesd(Register to, const MemoryReference& from);
   void write_cmpordsd(Register to, const MemoryReference& from);
-  void write_cvtsi2sd(Register to, Register from);
+  void write_roundsd(Register to, const MemoryReference& from, uint8_t mode);
+  void write_cvtsi2sd(Register to, const MemoryReference& from);
   void write_cvtsd2si(Register to, Register from);
 
   // control flow opcodes

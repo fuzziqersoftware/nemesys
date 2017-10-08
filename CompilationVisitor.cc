@@ -600,8 +600,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
         // Float vs Int
         } else if (left_float && right_int) {
-          this->as.write_mov(temp_mem, right_mem);
-          this->as.write_cvtsi2sd(xmm, temp_mem.base_register);
+          this->as.write_cvtsi2sd(xmm, right_mem);
 
           // we're comparing in the opposite direction, so we negate the results
           // of ordered comparisons
@@ -622,8 +621,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         // Int vs Float and Float vs Float
         } else if (right_float) {
           if (left_int) {
-            this->as.write_mov(temp_mem, left_mem);
-            this->as.write_cvtsi2sd(xmm, temp_mem.base_register);
+            this->as.write_cvtsi2sd(xmm, left_mem);
           } else {
             this->as.write_movsd(xmm, left_mem);
           }
@@ -799,8 +797,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_add(target_mem, left_mem);
 
       } else if (left_int && right_float) {
-        this->as.write_mov(this->target_register, left_mem);
-        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_cvtsi2sd(this->float_target_register, left_mem);
         this->as.write_addsd(this->float_target_register, right_mem);
 
       } else if (left_float && right_int) {
@@ -825,13 +822,12 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_add(target_mem, left_mem);
 
       } else if (left_int && right_float) {
-        this->as.write_mov(this->target_register, left_mem);
-        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_cvtsi2sd(this->float_target_register, left_mem);
         this->as.write_subsd(this->float_target_register, right_mem);
 
       } else if (left_float && right_int) {
         this->as.write_neg(target_mem);
-        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_cvtsi2sd(this->float_target_register, target_mem);
         this->as.write_addsd(this->float_target_register, left_mem);
 
         // watch it: in this case the type is different from right_type
@@ -851,13 +847,11 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_imul(target_mem.base_register, left_mem);
 
       } else if (left_int && right_float) {
-        this->as.write_mov(target_mem, left_mem);
-        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_cvtsi2sd(this->float_target_register, left_mem);
         this->as.write_mulsd(this->float_target_register, right_mem);
 
       } else if (left_float && right_int) {
-        this->as.write_mov(target_mem, right_mem);
-        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_cvtsi2sd(this->float_target_register, right_mem);
         this->as.write_mulsd(this->float_target_register, left_mem);
 
         // watch it: in this case the type is different from right_type
@@ -878,21 +872,17 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       MemoryReference tmp_xmm_mem(tmp_xmm);
 
       if (left_int && right_int) {
-        this->as.write_mov(target_mem, left_mem);
-        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
-        this->as.write_mov(target_mem, right_mem);
-        this->as.write_cvtsi2sd(tmp_xmm, this->target_register);
+        this->as.write_cvtsi2sd(this->float_target_register, left_mem);
+        this->as.write_cvtsi2sd(tmp_xmm, right_mem);
         this->as.write_divsd(this->float_target_register, tmp_xmm_mem);
 
       } else if (left_int && right_float) {
-        this->as.write_mov(target_mem, left_mem);
-        this->as.write_cvtsi2sd(this->float_target_register, this->target_register);
+        this->as.write_cvtsi2sd(this->float_target_register, left_mem);
         this->as.write_divsd(this->float_target_register, right_mem);
 
       } else if (left_float && right_int) {
         this->as.write_movsd(this->float_target_register, left_mem);
-        this->as.write_mov(target_mem, right_mem);
-        this->as.write_cvtsi2sd(tmp_xmm, this->target_register);
+        this->as.write_cvtsi2sd(tmp_xmm, right_mem);
         this->as.write_divsd(this->float_target_register, tmp_xmm_mem);
 
       } else if (left_float && right_float) {
@@ -908,93 +898,87 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     }
 
     case BinaryOperator::Modulus:
-      // TODO: deduplicate this with IntegerDivision below. the only difference
-      // is that here we take rdx instead of rax (remainder instead of quotient)
+    case BinaryOperator::IntegerDivision: {
+      bool is_mod = (a->oper == BinaryOperator::Modulus);
+
+      // we only support numeric arguments here
+      if (!left_numeric || !right_numeric) {
+        throw compile_error("integer division and modulus not implemented for "
+            + left_type.str() + " and " + right_type.str(), this->file_offset);
+      }
+
+      // if both arguments are ints, do integer div/mod
       if (left_int && right_int) {
         // x86 has a reasonable imul opcode, but no reasonable idiv; we have to
         // use rdx and rax
-        if (!this->register_is_available(Register::RAX)) {
+        bool push_rax = (this->target_register != Register::RAX) &&
+            !this->register_is_available(Register::RAX);
+        bool push_rdx = (this->target_register != Register::RDX) &&
+            !this->register_is_available(Register::RDX);
+        if (push_rax) {
           this->write_push(Register::RAX);
         }
-        if (!this->register_is_available(Register::RDX)) {
+        if (push_rdx) {
           this->write_push(Register::RDX);
         }
 
         this->as.write_mov(rax, left_mem);
         this->as.write_xor(rdx, rdx);
         this->as.write_idiv(right_mem);
-        if (this->target_register != Register::RDX) {
-          this->as.write_mov(target_mem, rdx);
+        if (is_mod) {
+          if (this->target_register != Register::RDX) {
+            this->as.write_mov(target_mem, rdx);
+          }
+        } else {
+          if (this->target_register != Register::RAX) {
+            this->as.write_mov(target_mem, rax);
+          }
         }
 
-        if (!this->register_is_available(Register::RDX)) {
+        if (push_rdx) {
           this->write_pop(Register::RDX);
         }
-        if (!this->register_is_available(Register::RAX)) {
+        if (push_rax) {
           this->write_pop(Register::RAX);
         }
 
-      } else {
-        throw compile_error("Modulus not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
-      }
-      break;
-
-    case BinaryOperator::IntegerDivision: {
-      // we'll need a temp reg for all cases except Int // Int
-      Register tmp_xmm = this->available_register(Register::None, true);
-      MemoryReference tmp_xmm_mem(tmp_xmm);
-
-      // if right is an int, we'll use the idiv opcode
-      if (right_int) {
-        // x86 has a reasonable imul opcode, but no reasonable idiv; we have to
-        // use rdx and rax
-        if (!this->register_is_available(Register::RAX)) {
-          this->write_push(Register::RAX);
-        }
-        if (!this->register_is_available(Register::RDX)) {
-          this->write_push(Register::RDX);
-        }
-
-        if (left_int) {
-          this->as.write_mov(rax, left_mem);
-        } else if (left_float) {
-          this->as.write_movsd(tmp_xmm, left_mem);
-          this->as.write_cvtsd2si(Register::RAX, tmp_xmm);
-        } else {
-          throw compile_error("IntegerDivision left type is not Int or Float",
-              this->file_offset);
-        }
-
-        this->as.write_xor(rdx, rdx);
-        this->as.write_idiv(right_mem);
-        if (this->target_register != Register::RAX) {
-          this->as.write_mov(target_mem, rax);
-        }
-
-        if (!this->register_is_available(Register::RDX)) {
-          this->write_pop(Register::RDX);
-        }
-        if (!this->register_is_available(Register::RAX)) {
-          this->write_pop(Register::RAX);
-        }
-
-      // if right is a float, we'll do the division in float-land and truncate
-      } else if (right_float) {
-        if (left_int) {
-          this->as.write_mov(target_mem, left_mem);
-          this->as.write_cvtsi2sd(tmp_xmm, this->target_register);
-        } else if (left_float) {
-          this->as.write_movsd(tmp_xmm, left_mem);
-        } else {
-          throw compile_error("IntegerDivision not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
-        }
-        this->as.write_divsd(tmp_xmm, right_mem);
-        this->as.write_cvtsd2si(this->target_register, tmp_xmm);
+        // Int // Int == Int
+        this->current_type = Variable(ValueType::Int);
 
       } else {
-        throw compile_error("IntegerDivision not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+        Register left_xmm = this->float_target_register;
+        Register right_xmm = this->available_register_except({left_xmm}, true);
+        MemoryReference left_xmm_mem(left_xmm);
+        MemoryReference right_xmm_mem(right_xmm);
+
+        if (left_float) {
+          this->as.write_movsd(left_xmm, left_mem);
+        } else {
+          this->as.write_cvtsi2sd(left_xmm, left_mem);
+        }
+        if (right_float) {
+          this->as.write_movsd(right_xmm, right_mem);
+        } else {
+          this->as.write_cvtsi2sd(right_xmm, right_mem);
+        }
+
+        if (is_mod) {
+          // TODO: can we do this without using a third xmm register?
+          Register tmp_xmm = this->available_register_except(
+              {left_xmm, right_xmm}, true);
+          MemoryReference tmp_xmm_mem(tmp_xmm);
+          this->as.write_movsd(tmp_xmm_mem, left_xmm);
+          this->as.write_divsd(tmp_xmm, right_xmm_mem);
+          this->as.write_roundsd(tmp_xmm, tmp_xmm_mem, 3);
+          this->as.write_mulsd(tmp_xmm, right_xmm_mem);
+          this->as.write_subsd(left_xmm, tmp_xmm_mem);
+        } else {
+          this->as.write_divsd(left_xmm, right_xmm);
+        }
+
+        // Float // Int == Int // Float == Float // Float == Float
+        this->current_type = Variable(ValueType::Float);
       }
-      this->current_type = Variable(ValueType::Int);
       break;
     }
 
