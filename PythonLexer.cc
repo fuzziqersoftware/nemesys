@@ -955,7 +955,7 @@ PythonLexer::PythonLexer(shared_ptr<const SourceFile> source) : source(source) {
   }
 
   // replace composite tokens, duplicate newlines, and semicolons
-  for (size_t x = 0; x < this->tokens.size() - 1; x++) {
+  for (ssize_t x = 0; x < static_cast<ssize_t>(this->tokens.size()) - 1; x++) {
     if (this->tokens[x].type == TokenType::Is && this->tokens[x + 1].type == TokenType::Not) {
       this->tokens.erase(this->tokens.begin() + x, this->tokens.begin() + x + 1);
       this->tokens[x] = Token(TokenType::IsNot, "", 0, 0, x, 0);
