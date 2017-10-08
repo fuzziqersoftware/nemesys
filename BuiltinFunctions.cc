@@ -20,6 +20,7 @@
 
 // builtin module implementations
 #include "Modules/__nemesys__.hh"
+#include "Modules/errno.hh"
 #include "Modules/posix.hh"
 #include "Modules/sys.hh"
 
@@ -822,6 +823,7 @@ struct BuiltinModule {
 #define DECLARE_MODULE(name) {#name, {name##_initialize, []() -> shared_ptr<ModuleAnalysis> {return name##_module;}}}
 static unordered_map<string, BuiltinModule> builtin_modules({
   DECLARE_MODULE(__nemesys__),
+  DECLARE_MODULE(errno),
   DECLARE_MODULE(posix),
   DECLARE_MODULE(sys),
 });
