@@ -2243,6 +2243,8 @@ void CompilationVisitor::visit(ReturnStatement* a) {
 
   // generate a jump to the end of the function (this is right before the
   // relevant destructor calls)
+  // TODO: this is wrong; it doesn't cause enclosing finally blocks to execute.
+  // we should unwind the exception blocks until the end of the function
   this->as.write_label(string_printf("__ReturnStatement_%p_return", a));
   this->as.write_jmp(this->return_label);
 }
@@ -2540,8 +2542,6 @@ void CompilationVisitor::visit(FinallyStatement* a) {
   // if there's now an active exception, then the finally block raised an
   // exception of its own. if there was a saved exception object, destroy it;
   // then start unwinding the new exception
-  // TODO: is this even possible? shouldn't an active exception have already
-  // been unwound, so we would never get here with r15 != 0?
   string no_exc_label = string_printf("__FinallyStatement_%p_no_exc", a);
   string end_label = string_printf("__FinallyStatement_%p_end", a);
   this->as.write_label(string_printf("__FinallyStatement_%p_restore_exc", a));
@@ -2571,26 +2571,25 @@ void CompilationVisitor::visit(TryStatement* a) {
 
   // here's how we implement exception handling:
 
-  // TODO: update this for the new exception block format
   // # all try blocks have a finally block, even if it's not defined in the code
   // # let N be the number of except clauses on the try block
   // try:
   //   # stack-allocate one exception block on the stack with exc_class_id = 0,
-  //   #     pointing to the finally block
-  //   # stack-allocate N exception blocks for except clauses in reverse order
+  //   #     pointing to the finally block, and containing N except clause
+  //   #     blocks pointing to each except block's code
   //   if should_raise:
   //     raise KeyError()  # allocate object, set r15, call unwind_exception
-  //   # remove the exception block structs from the stack
+  //   # remove the exception block from the stack
   //   # if there's an else block, jump there
   //   # if there's a finally block, jump there
   //   # jump to end of suite chain
   // except KeyError as e:
   //   # let this exception block's index be I
-  //   # write r15 to e (local variable), clear r15
-  //   # remove (N - I) exception blocks (note that unwind_exception already
-  //   #     removed the block for this clause, but there's an extra block for
-  //   #     the finally clause. we manually jump to the finally block so we
-  //   #     don't need that)
+  //   # if the exception has a name (is assigned to a local variable), then
+  //   #     write r15 to that variable; else, delete the object pointed to by
+  //   #     r15 and clear r15
+  //   # note: don't remove the exception block from the stack; this was already
+  //   #     done by unwind_exception
   //   print('caught KeyError')
   //   # if there's a finally block, jump there
   //   # jump to end of suite chain
@@ -2599,11 +2598,9 @@ void CompilationVisitor::visit(TryStatement* a) {
   //   # if there's a finally block, jump there
   //   # jump to end of suite chain
   // finally:
+  //   # note: we can get here with an active exception (r15 != 0)
   //   print('executed finally block')
   //   # if r15 is nonzero, call unwind_exception again
-
-  // TODO: figure out a way to support raising exceptions from c extension
-  // functions
 
   this->as.write_label(string_printf("__TryStatement_%p_create_exc_block", a));
 
@@ -3263,9 +3260,9 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
   for (auto it = this->target_function->locals.crbegin();
        it != this->target_function->locals.crend(); it++) {
     if (type_has_refcount(it->second.type)) {
-      // TODO: this is dumb; we can probably optimize this to eliminate some
-      // memory accesses here. we have to preserve the value in rax somehow but
-      // we can't easily use the stack since we're popping locals off of it
+      // we have to preserve the value in rax since it's the function's return
+      // value, so store it on the stack (in the location we're about to pop)
+      // while we destroy the object
       this->as.write_xchg(Register::RAX, MemoryReference(Register::RSP, 0));
       this->write_delete_reference(rax, it->second.type);
       this->write_pop(Register::RAX);
@@ -3434,7 +3431,6 @@ void CompilationVisitor::adjust_stack_to(ssize_t bytes, bool write_opcode) {
 }
 
 void CompilationVisitor::write_load_double(Register reg, double value) {
-  // TODO: can we do this more efficiently?
   Register tmp = this->available_register();
   const int64_t* int_value = reinterpret_cast<const int64_t*>(&value);
   this->as.write_mov(tmp, *int_value);
