@@ -16,7 +16,30 @@ def test_for():
     print('for loop done')
   return x
 
-# TODO: test break and continue
+def test_while_break_continue():
+  x = 0
+  while x < 10:
+    x = x + 1
+    if x == 3:
+      continue
+    if x == 6:
+      break
+    print(repr(x))
+  else:
+    print('else block executed')
+
+def test_for_break_continue():
+  z = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  for x in z:
+    if x == 3:
+      continue
+    if x == 6:
+      break
+    print(repr(x))
+  else:
+    print('else block executed')
 
 print('while test result: ' + repr(test_while()))
 print('for test result: ' + repr(test_for()))
+test_while_break_continue()
+test_for_break_continue()

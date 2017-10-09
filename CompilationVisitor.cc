@@ -2257,15 +2257,21 @@ void CompilationVisitor::visit(AssertStatement* a) {
 void CompilationVisitor::visit(BreakStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("BreakStatement not yet implemented", this->file_offset);
+  if (this->break_label_stack.empty()) {
+    throw compile_error("break statement outside loop", this->file_offset);
+  }
+  this->as.write_label(string_printf("__BreakStatement_%p", a));
+  this->as.write_jmp(this->break_label_stack.back());
 }
 
 void CompilationVisitor::visit(ContinueStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("ContinueStatement not yet implemented", this->file_offset);
+  if (this->continue_label_stack.empty()) {
+    throw compile_error("continue statement outside loop", this->file_offset);
+  }
+  this->as.write_label(string_printf("__ContinueStatement_%p", a));
+  this->as.write_jmp(this->continue_label_stack.back());
 }
 
 void CompilationVisitor::visit(ReturnStatement* a) {
@@ -2455,18 +2461,18 @@ void CompilationVisitor::visit(ForStatement* a) {
   Variable collection_type = this->current_type;
   this->write_push(this->target_register);
 
+  // we'll use rbx for some loop state (e.g. the item index in lists)
+  if (this->target_register == Register::RBX) {
+    throw compile_error("cannot use rbx as target register for list iteration");
+  }
+  this->write_push(Register::RBX);
+  this->as.write_xor(rbx, rbx);
+
   string next_label = string_printf("__ForStatement_%p_next", a);
   string end_label = string_printf("__ForStatement_%p_complete", a);
   string break_label = string_printf("__ForStatement_%p_broken", a);
 
   if (collection_type.type == ValueType::List) {
-
-    // we'll store the item index in rbx
-    if (this->target_register == Register::RBX) {
-      throw compile_error("cannot use rbx as target register for list iteration");
-    }
-    this->write_push(Register::RBX);
-    this->as.write_xor(rbx, rbx);
 
     this->as.write_label(next_label);
     // get the list object
@@ -2497,12 +2503,13 @@ void CompilationVisitor::visit(ForStatement* a) {
 
     // do the loop body
     this->as.write_label(string_printf("__ForStatement_%p_body", a));
+    this->break_label_stack.emplace_back(break_label);
+    this->continue_label_stack.emplace_back(next_label);
     this->visit_list(a->items);
+    this->continue_label_stack.pop_back();
+    this->break_label_stack.pop_back();
     this->as.write_jmp(next_label);
     this->as.write_label(end_label);
-
-    // restore rbx
-    this->write_pop(Register::RBX);
 
   } else if (collection_type.type == ValueType::Dict) {
 
@@ -2544,7 +2551,11 @@ void CompilationVisitor::visit(ForStatement* a) {
 
     // do the loop body
     this->as.write_label(string_printf("__ForStatement_%p_body", a));
+    this->break_label_stack.emplace_back(break_label);
+    this->continue_label_stack.emplace_back(next_label);
     this->visit_list(a->items);
+    this->continue_label_stack.pop_back();
+    this->break_label_stack.pop_back();
     this->as.write_jmp(next_label);
     this->as.write_label(end_label);
 
@@ -2564,6 +2575,9 @@ void CompilationVisitor::visit(ForStatement* a) {
 
   // any break statement will jump over the loop body and the else statement
   this->as.write_label(break_label);
+
+  // restore rbx
+  this->write_pop(Register::RBX);
 
   // we still own a reference to the collection; destroy it now
   // note: all collection types have refcounts; dunno why I bothered checking
@@ -2593,7 +2607,11 @@ void CompilationVisitor::visit(WhileStatement* a) {
   // generate the loop body
   this->write_delete_held_reference(MemoryReference(this->target_register));
   this->as.write_label(string_printf("__WhileStatement_%p_body", a));
+  this->break_label_stack.emplace_back(break_label);
+  this->continue_label_stack.emplace_back(start_label);
   this->visit_list(a->items);
+  this->continue_label_stack.pop_back();
+  this->break_label_stack.pop_back();
   this->as.write_jmp(start_label);
 
   // when the loop ends normally, we may still be holding a reference to the

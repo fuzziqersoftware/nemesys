@@ -119,7 +119,8 @@ private:
 
   std::string return_label;
   std::string exception_return_label;
-  // TODO: break_label and continue_label stacks
+  std::vector<std::string> break_label_stack;
+  std::vector<std::string> continue_label_stack;
 
   struct VariableLocation {
     std::string name;
