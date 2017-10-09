@@ -2295,49 +2295,86 @@ void CompilationVisitor::visit(SingleIfStatement* a) {
 void CompilationVisitor::visit(IfStatement* a) {
   this->file_offset = a->file_offset;
 
-  // if the condition is never true, skip it entirely
-  if (a->always_false) {
-    this->as.write_label(string_printf("__IfStatement_%p_always_false", a));
-    return; // nothing to do
+  // if the condition is always true, skip the condition check, elifs and else,
+  // and just generate the body
+  if (a->always_true) {
+    this->as.write_label(string_printf("__IfStatement_%p_always_true", a));
+    this->visit_list(a->items);
+    return;
   }
 
   string false_label = string_printf("__IfStatement_%p_condition_false", a);
   string end_label = string_printf("__IfStatement_%p_end", a);
 
-  // if the condition is always true, skip generating the condition check
-  if (!a->always_true) {
-    this->as.write_label(string_printf("__IfStatement_%p_condition", a));
+  // if the condition is always false, go directly to the elifs/else
+  if (a->always_false) {
+    this->as.write_label(string_printf("__IfStatement_%p_always_false", a));
+  } else {
+    // if the condition is always true, skip generating the condition check
+    if (!a->always_true) {
+      this->as.write_label(string_printf("__IfStatement_%p_condition", a));
+      this->target_register = this->available_register();
+      a->check->accept(this);
+      this->as.write_label(string_printf("__IfStatement_%p_test", a));
+      this->write_current_truth_value_test();
+      this->as.write_jz(false_label);
+      this->write_delete_held_reference(MemoryReference(this->target_register));
+
+    } else {
+      this->as.write_label(string_printf("__IfStatement_%p_always_true", a));
+    }
+
+    // generate the body statements, then jump to the end (skip the elifs/else
+    // if the condition was true)
+    this->visit_list(a->items);
+    this->as.write_jmp(end_label);
+  }
+
+  // write the elif clauses
+  for (auto& elif : a->elifs) {
+    // if the condition is always false, just skip it entirely
+    if (elif->always_false) {
+      continue;
+    }
+
+    // this is where execution should resume if the previous block didn't run
+    this->as.write_label(false_label);
+    false_label = string_printf("__IfStatement_%p_elif_%p_condition_false",
+        a, elif.get());
+
+    // if the condition is always true, skip the condition check and just
+    // generate the body. no other elifs, nor the else block
+    if (elif->always_true) {
+      elif->accept(this);
+      this->as.write_label(end_label);
+      return;
+    }
+
+    // generate the condition check
+    this->as.write_label(string_printf("__IfStatement_%p_elif_%p_condition",
+        a, elif.get()));
     this->target_register = this->available_register();
-    a->check->accept(this);
-    this->as.write_label(string_printf("__IfStatement_%p_test", a));
+    elif->check->accept(this);
+    this->as.write_label(string_printf("__IfStatement_%p_elif_%p_test", a,
+        elif.get()));
     this->write_current_truth_value_test();
     this->as.write_jz(false_label);
     this->write_delete_held_reference(MemoryReference(this->target_register));
 
-  } else {
-    this->as.write_label(string_printf("__IfStatement_%p_always_true", a));
+    // generate the body
+    elif->accept(this);
+    this->as.write_jmp(end_label);
   }
 
-  // generate the body statements
-  this->visit_list(a->items);
-
-  // if the condition is always true, no elifs/elses will ever run
-  if (!a->always_true) {
-    // TODO: support elifs
-    if (!a->elifs.empty()) {
-      throw compile_error("elif clauses not yet supported");
-    }
-
-    // generate the else block, if any
-    if (a->else_suite.get()) {
-      this->as.write_jmp(end_label);
-      this->as.write_label(false_label);
-      this->write_delete_held_reference(MemoryReference(this->target_register));
-      a->else_suite->accept(this);
-    } else {
-      this->as.write_label(false_label);
-      this->write_delete_held_reference(MemoryReference(this->target_register));
-    }
+  // generate the else block, if any. note that we don't get here if any of the
+  // if blocks were always true
+  if (a->else_suite.get()) {
+    this->as.write_label(false_label);
+    this->write_delete_held_reference(MemoryReference(this->target_register));
+    a->else_suite->accept(this);
+  } else {
+    this->as.write_label(false_label);
+    this->write_delete_held_reference(MemoryReference(this->target_register));
   }
 
   this->as.write_label(end_label);
@@ -2355,8 +2392,9 @@ void CompilationVisitor::visit(ElseStatement* a) {
 void CompilationVisitor::visit(ElifStatement* a) {
   this->file_offset = a->file_offset;
 
-  // TODO
-  throw compile_error("ElifStatement not yet implemented", this->file_offset);
+  // just do the sub-statements; the encapsulating logic is all in IfStatement
+  this->as.write_label(string_printf("__ElifStatement_%p", a));
+  this->visit_list(a->items);
 }
 
 void CompilationVisitor::visit(ForStatement* a) {
