@@ -1,14 +1,23 @@
 .intel_syntax noprefix
 
+// there is (still!) a bug in as on osx; symbolic labels do not work in jmp
+// opcodes when using intel syntax. so we have to use numeric labels in addition
+// to symbolic labels, sigh
+
 // exception unwinding entry point from c code. this function searches the
 // exception blocks for one that matches the active exception and rewinds the
 // stack to that point. this function never returns to the point where it was
 // called - it returns to somewhere further up the call stack.
 .globl _raise_python_exception
 _raise_python_exception:
-  // exc block ptr is rdi, exc object is rsi
-  // just move them into the right places and go to __unwind_exception_internal
+  // c entry point for raising a nemesys exception. exc block ptr is rdi, exc
+  // object is rsi. just move them into the right places and go to
+  // __unwind_exception_internal. if the exception block or exception object is
+  // NULL, return without doing anything
   test rdi, rdi
+  jnz 1f // _raise_python_exception__continue
+  ret
+  test rsi, rsi
   jnz 1f // _raise_python_exception__continue
   ret
 1: _raise_python_exception__continue:
