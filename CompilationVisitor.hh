@@ -165,7 +165,8 @@ private:
       const MemoryReference* function_loc,
       const std::vector<const MemoryReference>& args,
       const std::vector<const MemoryReference>& float_args,
-      ssize_t arg_stack_bytes = -1, Register return_register = Register::None);
+      ssize_t arg_stack_bytes = -1, Register return_register = Register::None,
+      bool return_float = false);
   void write_function_setup(const std::string& base_label);
   void write_function_cleanup(const std::string& base_label);
 

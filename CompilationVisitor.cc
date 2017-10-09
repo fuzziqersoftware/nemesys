@@ -1614,9 +1614,16 @@ void CompilationVisitor::visit(FunctionCall* a) {
   this->as.write_label(no_exc_label);
 
   // put the return value into the target register
-  if (this->target_register != Register::RAX) {
-    this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
-    this->as.write_mov(MemoryReference(this->target_register), rax);
+  if (fragment->return_type.type == ValueType::Float) {
+    if (this->target_register != Register::RAX) {
+      this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
+      this->as.write_movsd(MemoryReference(this->float_target_register), xmm0);
+    }
+  } else {
+    if (this->target_register != Register::RAX) {
+      this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
+      this->as.write_mov(MemoryReference(this->target_register), rax);
+    }
   }
 
   // functions always return new references, unless they return trivial types
@@ -3028,7 +3035,7 @@ void CompilationVisitor::write_function_call(const void* function,
     const MemoryReference* function_loc,
     const std::vector<const MemoryReference>& int_args,
     const std::vector<const MemoryReference>& float_args,
-    ssize_t arg_stack_bytes, Register return_register) {
+    ssize_t arg_stack_bytes, Register return_register, bool return_float) {
 
   if (float_args.size() > 8) {
     // TODO: we should support this in the future. probably we just stuff them
@@ -3145,13 +3152,20 @@ void CompilationVisitor::write_function_call(const void* function,
   } else if (function_loc) {
     this->as.write_call(*function_loc);
   } else {
-    throw compile_error("can\'t generate call to no function", this->file_offset);
+    throw compile_error("no function to call", this->file_offset);
   }
 
   // put the return value into the target register
-  if ((return_register != Register::None) &&
+  if (return_float) {
+    if ((return_register != Register::None) &&
+        (return_register != Register::XMM0)) {
+      this->as.write_movsd(MemoryReference(return_register), xmm0);
+    }
+  } else {
+    if ((return_register != Register::None) &&
       (return_register != Register::RAX)) {
-    this->as.write_mov(MemoryReference(this->target_register), rax);
+      this->as.write_mov(MemoryReference(return_register), rax);
+    }
   }
 
   // reclaim any reserved stack space
