@@ -138,7 +138,4 @@ void __nemesys___initialize() {
       void_fn_ptr([]() -> int64_t {
     return errno;
   }), false);
-
-  __nemesys___module->create_builtin_function("time", {}, Int,
-      void_fn_ptr(&now), false);
 }

@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <memory>
+#include <phosg/Time.hh>
 #include <string>
 #include <unordered_map>
 
@@ -65,18 +66,12 @@ void time_initialize() {
   Variable Int(ValueType::Int);
   Variable Float(ValueType::Float);
 
-  static auto utime = +[]() -> int64_t {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return static_cast<int64_t>(tv.tv_sec) * 1000000 + static_cast<int64_t>(tv.tv_usec);
-  };
-
   time_module->create_builtin_function("time", {}, Float,
       void_fn_ptr([]() -> double {
-    return static_cast<double>(utime()) / 1000000.0;
+    return static_cast<double>(now()) / 1000000.0;
   }), false);
 
-  time_module->create_builtin_function("utime", {}, Int, void_fn_ptr(utime), false);
+  time_module->create_builtin_function("utime", {}, Int, void_fn_ptr(&now), false);
 
   time_module->create_builtin_function("sleep", {Float}, None,
       void_fn_ptr([](double secs) {
