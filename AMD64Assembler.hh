@@ -581,7 +581,7 @@ public:
 
 private:
   static std::string generate_jmp(Operation op8, Operation op32,
-    int64_t opcode_address, int64_t target_address);
+    int64_t opcode_address, int64_t target_address, OperandSize* offset_size = NULL);
   static std::string generate_rm(Operation op, const MemoryReference& mem,
       Register reg, OperandSize size, uint32_t extra_prefixes = 0);
   static std::string generate_rm(Operation op, const MemoryReference& mem,

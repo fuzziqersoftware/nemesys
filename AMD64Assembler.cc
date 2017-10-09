@@ -886,7 +886,7 @@ void AMD64Assembler::write_jmp(const MemoryReference& mem) {
 }
 
 std::string AMD64Assembler::generate_jmp(Operation op8, Operation op32,
-    int64_t opcode_address, int64_t target_address) {
+    int64_t opcode_address, int64_t target_address, OperandSize* offset_size) {
   int64_t offset = target_address - opcode_address;
 
   if (op8) { // may be omitted for call opcodes
@@ -898,6 +898,9 @@ std::string AMD64Assembler::generate_jmp(Operation op8, Operation op32,
       }
       data += op8 & 0xFF;
       data.append(reinterpret_cast<const char*>(&offset8), 1);
+      if (offset_size) {
+        *offset_size = OperandSize::Byte;
+      }
       return data;
     }
   }
@@ -910,6 +913,9 @@ std::string AMD64Assembler::generate_jmp(Operation op8, Operation op32,
     }
     data += op32 & 0xFF;
     data.append(reinterpret_cast<const char*>(&offset32), 4);
+    if (offset_size) {
+      *offset_size = OperandSize::QuadWord;
+    }
     return data;
   }
 
@@ -931,6 +937,9 @@ std::string AMD64Assembler::generate_jmp(Operation op8, Operation op32,
   data.append(reinterpret_cast<const char*>(&target_address) + 4, 4);
   // ret
   data += 0xC3;
+  if (offset_size) {
+    *offset_size = OperandSize::QuadWord;
+  }
   return data;
 }
 
@@ -1598,13 +1607,16 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
           }
 
           // generate a bogus forward jmp opcode, and the appropriate patches
+          OperandSize offset_size;
           code += this->generate_jmp(item.relative_jump_opcode8,
               item.relative_jump_opcode32, code.size(),
-              code.size() + max_displacement);
-          if ((max_displacement < 0x80) && item.relative_jump_opcode8) {
+              code.size() + max_displacement, &offset_size);
+          if (offset_size == OperandSize::Byte) {
             label->patches.emplace_back(code.size() - 1, 1, false);
-          } else {
+          } else if (offset_size == OperandSize::QuadWord) {
             label->patches.emplace_back(code.size() - 4, 4, false);
+          } else {
+            throw runtime_error("64-bit jump cannot be backpatched");
           }
         }
       }
