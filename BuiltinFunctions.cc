@@ -23,6 +23,7 @@
 #include "Modules/errno.hh"
 #include "Modules/posix.hh"
 #include "Modules/sys.hh"
+#include "Modules/time.hh"
 
 using namespace std;
 using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
@@ -826,6 +827,7 @@ static unordered_map<string, BuiltinModule> builtin_modules({
   DECLARE_MODULE(errno),
   DECLARE_MODULE(posix),
   DECLARE_MODULE(sys),
+  DECLARE_MODULE(time),
 });
 #undef DECLARE_MODULE
 
