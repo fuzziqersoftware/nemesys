@@ -1050,17 +1050,21 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     this->write_push(this->target_register);
 
     // destroy the temp values
-    this->as.write_label(string_printf("__BinaryOperation_%p_destroy_left", a));
-    this->write_delete_reference(MemoryReference(Register::RSP, 8), left_type.type);
-    this->as.write_label(string_printf("__BinaryOperation_%p_destroy_right", a));
-    this->write_delete_reference(MemoryReference(Register::RSP, 16), right_type.type);
+    if (type_has_refcount(left_type.type)) {
+      this->as.write_label(string_printf("__BinaryOperation_%p_destroy_left", a));
+      this->write_delete_reference(MemoryReference(Register::RSP, 8), left_type.type);
+    }
+    if (type_has_refcount(right_type.type)) {
+      this->as.write_label(string_printf("__BinaryOperation_%p_destroy_right", a));
+      this->write_delete_reference(MemoryReference(Register::RSP, 16), right_type.type);
+    }
 
     // load the result again and clean up the stack
     this->as.write_mov(MemoryReference(this->target_register),
         MemoryReference(Register::RSP, 0));
     this->adjust_stack(0x18);
 
-  // no destructor call necessary; just remove left and right from the stack
+  // no destructor calls necessary; just remove left and right from the stack
   } else {
     this->adjust_stack(0x10);
   }
@@ -1824,8 +1828,9 @@ void CompilationVisitor::visit(AttributeLookup* a) {
   }
 
   if (this->evaluating_instance_pointer) {
-    this->as.write_label(string_printf("__AttributeLookup_%p_evaluate_instance", a));
     this->evaluating_instance_pointer = false;
+
+    this->as.write_label(string_printf("__AttributeLookup_%p_evaluate_instance", a));
     a->base->accept(this);
     if (this->current_type.type != ValueType::Instance) {
       throw compile_error("instance pointer evaluation resulted in non-instance",
