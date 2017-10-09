@@ -494,6 +494,15 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
 
   } catch (const compile_error& e) {
     scopes_in_progress.erase(scope_name);
+    if (debug_flags & DebugFlag::ShowCodeSoFar) {
+      fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
+          scope_name.c_str());
+      const string& compiled = v->assembler().assemble(patch_offsets,
+          &compiled_labels, true);
+      string disassembly = AMD64Assembler::disassemble(compiled.data(),
+          compiled.size(), 0, &compiled_labels);
+      fprintf(stderr, "\n%s\n", disassembly.c_str());
+    }
     this->print_compile_error(stderr, module, e);
     throw;
   }
@@ -660,7 +669,6 @@ const BytesObject* GlobalAnalysis::get_or_create_constant(const string& s,
   BytesObject* o = NULL;
   try {
     o = this->bytes_constants.at(s);
-    add_reference(o);
   } catch (const out_of_range& e) {
     o = bytes_new(NULL, s.data(), s.size());
     this->bytes_constants.emplace(s, o);
@@ -677,7 +685,6 @@ const UnicodeObject* GlobalAnalysis::get_or_create_constant(const wstring& s,
   UnicodeObject* o = NULL;
   try {
     o = this->unicode_constants.at(s);
-    add_reference(o);
   } catch (const out_of_range& e) {
     o = unicode_new(NULL, s.data(), s.size());
     this->unicode_constants.emplace(s, o);

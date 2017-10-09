@@ -1,4 +1,4 @@
-from tests.globals import y, z
+from globals import y, z
 
 z = 10
 

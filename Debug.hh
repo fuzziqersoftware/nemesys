@@ -13,7 +13,8 @@ enum DebugFlag {
   ShowAnalyzeDebug    = 0x0000000000000020,
   ShowCompileDebug    = 0x0000000000000040,
   ShowAssembly        = 0x0000000000000080,
-  ShowRefcountChanges = 0x0000000000000100,
+  ShowCodeSoFar       = 0x0000000000000100,
+  ShowRefcountChanges = 0x0000000000000200,
   NoInlineRefcounting = 0x0000000000010000,
 
   Code                = 0x00000000000000F0, // transformation steps only

@@ -495,6 +495,10 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     // generate code for the left value
     this->as.write_label(string_printf("__BinaryOperation_%p_evaluate_left", a));
     a->left->accept(this);
+    if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+      throw compile_error("non-held reference to left binary operator argument",
+          this->file_offset);
+    }
 
     // if the operator is trivialized, omit the right-side code
     if ((a->oper == BinaryOperator::LogicalOr) &&
@@ -526,6 +530,10 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     Variable left_type = move(this->current_type);
     a->right->accept(this);
     this->as.write_label(label_name);
+    if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+      throw compile_error("non-held reference to right binary operator argument",
+          this->file_offset);
+    }
 
     if (left_type != this->current_type) {
       throw compile_error("logical combine operator has different return types", this->file_offset);
@@ -544,6 +552,10 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     this->as.write_movq_from_xmm(target_mem, this->float_target_register);
   }
   this->write_push(this->target_register); // so right doesn't clobber it
+  if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+    throw compile_error("non-held reference to left binary operator argument",
+        this->file_offset);
+  }
 
   this->as.write_label(string_printf("__BinaryOperation_%p_evaluate_right", a));
   a->right->accept(this);
@@ -552,6 +564,10 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     this->as.write_movq_from_xmm(target_mem, this->float_target_register);
   }
   this->write_push(this->target_register); // for the destructor call later
+  if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+    throw compile_error("non-held reference to right binary operator argument",
+        this->file_offset);
+  }
 
   MemoryReference left_mem(Register::RSP, 8);
   MemoryReference right_mem(Register::RSP, 0);
@@ -1422,7 +1438,6 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
     // if the argument has a passed value, generate code to compute it
     if (arg.passed_value.get()) {
-
       // if this argument is `self`, then it actually comes from the function
       // expression (and we evaluate the instance pointer there instead)
       if (arg.evaluate_instance_pointer) {
@@ -1435,6 +1450,11 @@ void CompilationVisitor::visit(FunctionCall* a) {
         if (this->evaluating_instance_pointer) {
           throw compile_error("instance pointer evaluation failed", this->file_offset);
         }
+        if (this->current_type.type != ValueType::Instance) {
+          throw compile_error("instance pointer evaluation resulted in " + this->current_type.str(),
+              this->file_offset);
+        }
+        arg.type = move(this->current_type);
 
       } else {
         this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_passed_value",
@@ -1481,9 +1501,13 @@ void CompilationVisitor::visit(FunctionCall* a) {
       }
 
       arg.type = arg.default_value;
+      this->current_type = Variable(ValueType::Instance, cls->id, NULL);
+      this->holding_reference = true;
 
     // if the argument is the exception block, copy it from r14
     } else if (arg.is_exception_block) {
+      this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_exception_block",
+          a, arg_index));
       this->as.write_mov(MemoryReference(this->target_register), r14);
 
     } else {
@@ -1496,6 +1520,14 @@ void CompilationVisitor::visit(FunctionCall* a) {
       }
       this->write_code_for_value(arg.default_value);
       arg.type = arg.default_value;
+    }
+
+    // bugcheck: if the value has a refcount, we had better be holding a
+    // reference to it
+    if (type_has_refcount(arg.type.type) && !this->holding_reference) {
+      throw compile_error(string_printf(
+          "function call argument %zu is a non-held reference", arg_index),
+          this->file_offset);
     }
 
     // store the value on the stack if needed; otherwise, mark the register as
@@ -1795,6 +1827,14 @@ void CompilationVisitor::visit(AttributeLookup* a) {
     this->as.write_label(string_printf("__AttributeLookup_%p_evaluate_instance", a));
     this->evaluating_instance_pointer = false;
     a->base->accept(this);
+    if (this->current_type.type != ValueType::Instance) {
+      throw compile_error("instance pointer evaluation resulted in non-instance",
+          this->file_offset);
+    }
+    if (!this->holding_reference) {
+      throw compile_error("instance pointer evaluation resulted in non-held reference",
+          this->file_offset);
+    }
     return;
   }
 
@@ -1815,7 +1855,9 @@ void CompilationVisitor::visit(AttributeLookup* a) {
     this->as.write_mov(MemoryReference(attr_register), loc.mem);
     bool attr_has_refcount = type_has_refcount(loc.type.type);
     if (attr_has_refcount) {
+      this->reserve_register(base_register);
       this->write_add_reference(attr_register);
+      this->release_register(base_register);
     }
 
     // if we're holding a reference to the base, delete that reference now
@@ -1866,6 +1908,12 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
 
   // if it's an object attribute, store the value and evaluate the object
   if (a->base.get()) {
+
+    // we had better be holding a reference to the value
+    if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+      throw compile_error("assignment of non-held reference to attribute",
+          this->file_offset);
+    }
 
     // don't touch my value plz
     Register value_register = this->target_register;
@@ -2157,6 +2205,7 @@ void CompilationVisitor::visit(AssertStatement* a) {
     // if no message is given, use a blank message
     const UnicodeObject* message = this->global->get_or_create_constant(L"");
     this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(message));
+    this->write_add_reference(this->target_register);
   }
   this->write_push(this->target_register);
 
@@ -2872,6 +2921,11 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       // make sure the stack is aligned at call time for any subfunctions
       dtor_as.write_sub(rsp, 8);
 
+      // we have to add a fake reference to the object while destroying it;
+      // otherwise __del__ will call this destructor recursively
+      dtor_as.write_lock();
+      dtor_as.write_inc(MemoryReference(Register::RBX, 0));
+
       // call __del__ before deleting attribute references
       if (has_del) {
         // figure out what __del__ is
@@ -2901,11 +2955,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
         }
 
         // generate the call to the fragment. note that the instance pointer is
-        // still in rdi, so we don't have to do anything to prepare, but we do
-        // have to add a fake reference to it! otherwise __del__ will call this
-        // destructor again, which would be a Bad Thing
-        dtor_as.write_lock();
-        dtor_as.write_inc(MemoryReference(Register::RBX, 0)); // fake reference
+        // still in rdi, so we don't have to do anything to prepare
         dtor_as.write_lock();
         dtor_as.write_inc(MemoryReference(Register::RBX, 0)); // reference for the function arg
         dtor_as.write_mov(Register::RAX,
@@ -2914,9 +2964,13 @@ void CompilationVisitor::visit(ClassDefinition* a) {
 
         // __del__ can add new references to the object; if this happens, don't
         // proceed with the destruction
+        // TODO: if the refcpount is zero, something has gone seriously wrong.
+        // what should we do in that case?
+        // TODO: do we need the lock prefix to do this compare?
+        dtor_as.write_cmp(MemoryReference(Register::RBX, 0), 1);
+        dtor_as.write_je(base_label + "_proceed");
         dtor_as.write_lock();
         dtor_as.write_dec(MemoryReference(Register::RBX, 0)); // fake reference
-        dtor_as.write_jz(base_label + "_proceed");
         dtor_as.write_add(rsp, 8);
         dtor_as.write_pop(Register::RBX);
         dtor_as.write_ret();
@@ -2938,6 +2992,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
           // if inline refcounting is disabled, call delete_reference manually
           if (debug_flags & DebugFlag::NoInlineRefcounting) {
             dtor_as.write_mov(rdi, MemoryReference(Register::RBX, offset));
+            dtor_as.write_mov(rsi, r14);
             dtor_as.write_mov(Register::RAX,
                 reinterpret_cast<int64_t>(&delete_reference));
             dtor_as.write_call(rax);
@@ -2968,9 +3023,17 @@ void CompilationVisitor::visit(ClassDefinition* a) {
         }
       }
 
+      dtor_as.write_label(base_label + "_jmp_free");
+
+      // remove the fake reference to the object being destroyed. if anyone else
+      // added a reference in the meantime (e.g. while attributes were being
+      // destroyed), then they're holding a reference to an incomplete object
+      // and they deserve the segfault they will probably get
+      dtor_as.write_lock();
+      dtor_as.write_dec(MemoryReference(Register::RBX, 0));
+
       // cheating time: "return" by jumping directly to free() so it will return
       // to the caller
-      dtor_as.write_label(base_label + "_jmp_free");
       dtor_as.write_mov(rdi, rbx);
       dtor_as.write_add(rsp, 8);
       dtor_as.write_pop(Register::RBX);
@@ -3001,6 +3064,7 @@ void CompilationVisitor::write_code_for_value(const Variable& value) {
   if (!value.value_known) {
     throw compile_error("can\'t generate code for unknown value", this->file_offset);
   }
+  this->current_type = value.type_only();
 
   switch (value.type) {
     case ValueType::Indeterminate:
@@ -3027,6 +3091,7 @@ void CompilationVisitor::write_code_for_value(const Variable& value) {
           void_fn_ptr(this->global->get_or_create_constant(*value.unicode_value));
       this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(o));
       this->write_add_reference(this->target_register);
+      this->holding_reference = true;
       break;
     }
 
@@ -3051,7 +3116,7 @@ void CompilationVisitor::write_code_for_value(const Variable& value) {
 
 void CompilationVisitor::assert_not_evaluating_instance_pointer() {
   if (this->evaluating_instance_pointer) {
-    throw compile_error("incorrect node visited when evaluating instnace pointer",
+    throw compile_error("incorrect node visited when evaluating instance pointer",
         this->file_offset);
   }
 }
@@ -3370,6 +3435,9 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
 
   if (type_has_refcount(type)) {
     if (debug_flags & DebugFlag::NoInlineRefcounting) {
+      static uint64_t skip_label_id = 0;
+      string skip_label = string_printf("__delete_reference_skip_%" PRIu64,
+          skip_label_id++);
       this->write_function_call(void_fn_ptr(delete_reference), NULL, {mem, r14},
           {});
 

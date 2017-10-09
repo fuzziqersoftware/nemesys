@@ -18,7 +18,7 @@ BasicObject::BasicObject(void (*destructor)(void*)) : refcount(1),
 void* add_reference(void* o) {
   BasicObject* obj = reinterpret_cast<BasicObject*>(o);
   if (debug_flags & DebugFlag::ShowRefcountChanges) {
-    fprintf(stderr, "[refcount] %p++ == %" PRId64 "\n", o, obj->refcount++);
+    fprintf(stderr, "[refcount] %p++ == %" PRId64 "\n", o, ++obj->refcount);
   } else {
     obj->refcount++;
   }

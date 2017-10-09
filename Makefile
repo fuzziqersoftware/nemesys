@@ -17,7 +17,7 @@ all: test
 test: nemesys AMD64AssemblerTest Types/DictionaryTest
 	./AMD64AssemblerTest
 	./Types/DictionaryTest
-	./run_tests.sh
+	(cd tests ; ./run_tests.sh)
 
 nemesys: $(OBJECTS)
 	$(CXXLD) $(LDFLAGS) -o nemesys $^
