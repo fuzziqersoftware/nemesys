@@ -523,7 +523,8 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
       throw invalid_argument("RIP cannot be used with scaled index addressing");
     }
 
-  } else if (mem.base_register == Register::RSP) {
+  } else if ((mem.base_register == Register::RSP) ||
+             (mem.base_register == Register::R12)) {
     rm_byte |= (mem.base_register & 7);
     sib_byte = 0x24;
 
