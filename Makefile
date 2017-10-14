@@ -4,7 +4,7 @@ OBJECTS=Main.o Debug.o \
 	CodeBuffer.o AMD64Assembler.o \
 	SourceFile.o PythonLexer.o PythonParser.o PythonASTNodes.o PythonASTVisitor.o \
 	Environment.o Analysis.o \
-	BuiltinFunctions.o \
+	BuiltinFunctions.o CommonObjects.o \
 	Exception.o Exception-Assembly.o \
 	Types/Reference.o Types/Strings.o Types/List.o Types/Dictionary.o Types/Instance.o \
 	AnnotationVisitor.o AnalysisVisitor.o CompilationVisitor.o \

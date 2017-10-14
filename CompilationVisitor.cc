@@ -7,6 +7,7 @@
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
 
+#include "CommonObjects.hh"
 #include "Exception.hh"
 #include "BuiltinFunctions.hh"
 #include "Debug.hh"
@@ -56,7 +57,7 @@ using namespace std;
 // R9  = caller = 6th int arg
 // R10 = caller = temp values
 // R11 = caller = temp values
-// R12 = callee = unused
+// R12 = callee = common object pointer (e.g. malloc, free, etc.)
 // R13 = callee = global space pointer
 // R14 = callee = exception block pointer
 // R15 = callee = active exception
@@ -66,9 +67,6 @@ using namespace std;
 // `mov [r13 + X]` opcodes. module root scopes compile into functions that
 // return nothing and take the global pointer as an argument. functions defined
 // within modules expect the global pointer to already be in r13.
-
-// TODO: keep common function references around somewhere (r14 maybe) and use
-// `call [r14 + X]` instead of `mov rax, X; call rax`.
 
 static const vector<Register> int_argument_register_order = {
   Register::RDI, Register::RSI, Register::RDX, Register::RCX, Register::R8,
@@ -147,6 +145,10 @@ string CompilationVisitor::VariableLocation::str() const {
 
 Register CompilationVisitor::reserve_register(Register which,
     bool float_register) {
+  if (which == Register::R15) {
+    throw invalid_argument("r15");
+  }
+
   if (which == Register::None) {
     which = this->available_register(Register::None, float_register);
   }
@@ -680,18 +682,18 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
         if ((a->oper == BinaryOperator::Equality) ||
             (a->oper == BinaryOperator::NotEqual)) {
-          const void* target_function = left_bytes ?
-              void_fn_ptr(&bytes_equal) : void_fn_ptr(&unicode_equal);
-          this->write_function_call(target_function, NULL, {target_mem, left_mem},
+          const MemoryReference target_function = common_object_reference(
+              left_bytes ? void_fn_ptr(&bytes_equal) : void_fn_ptr(&unicode_equal));
+          this->write_function_call(target_function, {target_mem, left_mem},
               {}, -1, this->target_register);
           if (a->oper == BinaryOperator::NotEqual) {
             this->as.write_xor(target_mem, 1);
           }
 
         } else {
-          const void* target_function = left_bytes ?
-              void_fn_ptr(&bytes_compare) : void_fn_ptr(&unicode_compare);
-          this->write_function_call(target_function, NULL, {left_mem, right_mem},
+          const MemoryReference target_function = common_object_reference(
+              left_bytes ? void_fn_ptr(&bytes_compare) : void_fn_ptr(&unicode_compare));
+          this->write_function_call(target_function, {left_mem, right_mem},
               {}, -1, this->target_register);
           this->as.write_cmp(target_mem, 0);
           this->as.write_mov(target_mem, 0);
@@ -718,10 +720,10 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::In:
     case BinaryOperator::NotIn:
       if ((left_bytes && right_bytes) || (left_unicode && right_unicode)) {
-        const void* target_function = left_bytes ?
-            void_fn_ptr(&bytes_contains) : void_fn_ptr(&unicode_contains);
-        this->write_function_call(target_function, NULL, {target_mem, left_mem},
-            {}, -1, this->target_register);
+        const MemoryReference target_function = common_object_reference(
+            left_bytes ? void_fn_ptr(&bytes_contains) : void_fn_ptr(&unicode_contains));
+        this->write_function_call(target_function, {target_mem, left_mem}, {},
+            -1, this->target_register);
       } else {
         // TODO
         throw compile_error("In/NotIn not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
@@ -817,13 +819,13 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::Addition:
       if ((left_type.type == ValueType::Bytes) &&
           (right_type.type == ValueType::Bytes)) {
-        this->write_function_call(void_fn_ptr(&bytes_concat),
-            NULL, {left_mem, target_mem, r14}, {}, -1, this->target_register);
+        this->write_function_call(common_object_reference(void_fn_ptr(&bytes_concat)),
+            {left_mem, target_mem, r14}, {}, -1, this->target_register);
 
       } else if ((left_type.type == ValueType::Unicode) &&
                  (right_type.type == ValueType::Unicode)) {
-        this->write_function_call(void_fn_ptr(&unicode_concat),
-            NULL, {left_mem, target_mem, r14}, {}, -1, this->target_register);
+        this->write_function_call(common_object_reference(void_fn_ptr(&unicode_concat)),
+            {left_mem, target_mem, r14}, {}, -1, this->target_register);
 
       } else if (left_int && right_int) {
         this->as.write_add(target_mem, left_mem);
@@ -1016,22 +1018,35 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
     case BinaryOperator::Exponentiation:
       if (left_int && right_int) {
-        // TODO: deal with negative exponents (currently we just do nothing)
+        // if the exponent is negative, throw ValueError. unfortunately we can't
+        // fix this in a consistent way since the return type of the expression
+        // depends on the value, not on any part of the code that we can
+        // analyze. as far as I can tell this is the only case in the entire
+        // language that has this property, and it's easy to work around (just
+        // change the source to do `1/(a**b)` instead), so we'll make the user
+        // do that instead
+
+        string positive_label = string_printf("__BinaryOperation_%p_pow_not_neg", a);
+        this->as.write_label(string_printf("__BinaryOperation_%p_pow_check_neg", a));
+        this->as.write_cmp(right_mem, 0);
+        this->as.write_jge(positive_label);
+        this->write_raise_exception(ValueError_class_id);
+        this->as.write_label(positive_label);
 
         // implementation mirrors notes/pow.s except that we load the base value
         // into a temp register
         string again_label = string_printf("__BinaryOperation_%p_pow_again", a);
         string skip_base_label = string_printf("__BinaryOperation_%p_pow_skip_base", a);
-        as.write_mov(target_mem, 1);
-        as.write_mov(temp_mem, left_mem);
-        as.write_label(again_label);
-        as.write_test(right_mem, 1);
-        as.write_jz(skip_base_label);
-        as.write_imul(target_mem.base_register, temp_mem);
-        as.write_label(skip_base_label);
-        as.write_imul(temp_mem.base_register, temp_mem);
-        as.write_shr(right_mem, 1);
-        as.write_jnz(again_label);
+        this->as.write_mov(target_mem, 1);
+        this->as.write_mov(temp_mem, left_mem);
+        this->as.write_label(again_label);
+        this->as.write_test(right_mem, 1);
+        this->as.write_jz(skip_base_label);
+        this->as.write_imul(target_mem.base_register, temp_mem);
+        this->as.write_label(skip_base_label);
+        this->as.write_imul(temp_mem.base_register, temp_mem);
+        this->as.write_shr(right_mem, 1);
+        this->as.write_jnz(again_label);
         break;
       }
 
@@ -1146,7 +1161,7 @@ void CompilationVisitor::visit(ListConstructor* a) {
   this->as.write_xor(int_args[0], int_args[0]);
   this->as.write_mov(int_args[1], a->items.size());
   this->as.write_xor(int_args[2], int_args[0]);
-  this->write_function_call(void_fn_ptr(list_new), NULL,
+  this->write_function_call(common_object_reference(void_fn_ptr(&list_new)),
       int_args, {}, -1, this->target_register);
 
   // save the list items pointer
@@ -1478,31 +1493,9 @@ void CompilationVisitor::visit(FunctionCall* a) {
         throw compile_error("__init__ call does not have an associated class");
       }
 
-      // call malloc to create the class object. note that the stack is already
-      // adjusted to the right alignment here
-      // note: this is a semi-ugly hack, but we ignore reserved registers here
-      // because this can only be the first argument - no registers can be
-      // reserved at this point
       this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_alloc_instance",
           a, arg_index));
-      this->as.write_mov(rdi, cls->instance_size());
-      this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(&malloc));
-      this->as.write_call(rax);
-      this->as.write_mov(MemoryReference(this->target_register), rax);
-      // TODO: check if the result is NULL and raise MemoryError in that case
-
-      // fill in the refcount, destructor function and class id
-      this->as.write_mov(MemoryReference(this->target_register, 0), 1);
-      this->as.write_mov(Register::RAX,
-          reinterpret_cast<int64_t>(cls->destructor));
-      this->as.write_mov(MemoryReference(this->target_register, 8), rax);
-      this->as.write_mov(MemoryReference(this->target_register, 16), cls->id);
-
-      // zero everything else in the class
-      this->as.write_xor(rax, rax);
-      for (size_t x = sizeof(InstanceObject); x < cls->instance_size(); x += 8) {
-        this->as.write_mov(MemoryReference(this->target_register, x), rax);
-      }
+      this->write_alloc_class_instance(cls->id);
 
       arg.type = arg.default_value;
       this->current_type = Variable(ValueType::Instance, cls->id, NULL);
@@ -1644,9 +1637,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
   string no_exc_label = string_printf("__FunctionCall_%p_no_exception", a);
   this->as.write_test(r15, r15);
   this->as.write_jz(no_exc_label);
-  this->as.write_mov(Register::RAX,
-      reinterpret_cast<int64_t>(&_unwind_exception_internal));
-  this->as.write_jmp(rax);
+  this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
   this->as.write_label(no_exc_label);
 
   // put the return value into the target register
@@ -2035,7 +2026,7 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   this->write_push(Register::RBP);
   this->as.write_mov(rbp, rsp);
   this->write_push(Register::R12);
-  this->as.write_xor(r12, r12);
+  this->as.write_mov(Register::R12, reinterpret_cast<int64_t>(common_object_base()));
   this->write_push(Register::R13);
   this->as.write_mov(r13, rdi);
   this->write_push(Register::R14);
@@ -2047,6 +2038,10 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   // this exception block just returns from the module scope - but the calling
   // code checks for a nonzero return value (which means an exception is active)
   // and will handle it appropriately
+  // TODO: we need to save the values of r12 and r13 here too, since
+  // intermediate stack frames (calls to non-nemesys functions) can destroy
+  // their values. this may also cause problems when calling back into nemesys
+  // code from non-nemesys code; figure out a way to deal with this too
   string exc_label = string_printf("__ModuleStatement_%p_exc", a);
   this->as.write_label(string_printf("__ModuleStatement_%p_create_exc_block", a));
   this->write_create_exception_block({}, exc_label);
@@ -2221,23 +2216,9 @@ void CompilationVisitor::visit(AssertStatement* a) {
         this->file_offset);
   }
 
-  // call malloc to create the class object
   this->as.write_label(string_printf("__AssertStatement_%p_allocate_instance", a));
-  int64_t stack_bytes_used = this->write_function_call_stack_prep();
-  this->as.write_mov(rdi, cls->instance_size());
-  this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(&malloc));
-  this->as.write_call(rax);
-  this->as.write_mov(r15, rax);
-  // TODO: check if the result is NULL and raise MemoryError in that case
-  this->adjust_stack(stack_bytes_used);
-
-  // fill in the refcount, destructor function, class id, and message
-  this->as.write_mov(MemoryReference(Register::R15, 0), 1);
-  this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(cls->destructor));
-  this->as.write_mov(MemoryReference(Register::R15, 8), rax);
-  this->as.write_mov(MemoryReference(Register::R15, 16), cls->id);
-  this->write_pop(Register::RAX);
-  this->as.write_mov(MemoryReference(Register::R15, 24), rax);
+  this->write_alloc_class_instance(AssertionError_class_id, false);
+  this->as.write_mov(MemoryReference(this->target_register, 24), rax);
 
   // we should have filled everything in
   if (cls->instance_size() != 32) {
@@ -2247,9 +2228,9 @@ void CompilationVisitor::visit(AssertStatement* a) {
 
   // now jump to unwind_exception
   this->as.write_label(string_printf("__AssertStatement_%p_unwind", a));
-  this->as.write_mov(Register::RAX,
-      reinterpret_cast<int64_t>(&_unwind_exception_internal));
-  this->as.write_jmp(rax);
+  this->as.write_mov(r15, MemoryReference(this->target_register));
+  this->write_pop(Register::RAX);
+  this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
 
   // if we get here, then the expression was truthy, but we may still need to
   // destroy it if it has a refcount
@@ -2327,16 +2308,12 @@ void CompilationVisitor::visit(RaiseStatement* a) {
 
   // we'll construct the exception object into r15
   this->as.write_label(string_printf("__RaiseStatement_%p_evaluate_object", a));
-  Register original_target_register = this->target_register;
-  this->target_register = Register::R15;
   a->type->accept(this);
-  this->target_register = original_target_register;
 
   // now jump to unwind_exception
   this->as.write_label(string_printf("__RaiseStatement_%p_unwind", a));
-  this->as.write_mov(Register::RAX,
-      reinterpret_cast<int64_t>(&_unwind_exception_internal));
-  this->as.write_jmp(rax);
+  this->as.write_mov(r15, MemoryReference(this->target_register));
+  this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
 }
 
 void CompilationVisitor::visit(YieldStatement* a) {
@@ -2533,8 +2510,8 @@ void CompilationVisitor::visit(ForStatement* a) {
     this->as.write_mov(rsi, rsp);
 
     // call dictionary_next_item
-    this->write_function_call(void_fn_ptr(&dictionary_next_item), NULL,
-        {rdi, rsi}, {});
+    this->write_function_call(
+        common_object_reference(void_fn_ptr(&dictionary_next_item)), {rdi, rsi}, {});
 
     // if dictionary_next_item returned 0, then we're done
     this->as.write_test(rax, rax);
@@ -2665,9 +2642,7 @@ void CompilationVisitor::visit(FinallyStatement* a) {
   this->as.write_test(r15, r15);
   this->as.write_jz(no_exc_label);
   this->write_delete_reference(MemoryReference(Register::R15, 0), ValueType::Instance);
-  this->as.write_mov(Register::RAX,
-      reinterpret_cast<int64_t>(&_unwind_exception_internal));
-  this->as.write_jmp(rax);
+  this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
 
   // the finally block did not raise an exception, but there may be a saved
   // exception. if so, unwind it now
@@ -2675,9 +2650,7 @@ void CompilationVisitor::visit(FinallyStatement* a) {
   this->write_pop(Register::R15);
   this->as.write_test(r15, r15);
   this->as.write_jz(end_label);
-  this->as.write_mov(Register::RAX,
-      reinterpret_cast<int64_t>(&_unwind_exception_internal));
-  this->as.write_jmp(rax);
+  this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
   this->as.write_label(end_label);
 
   this->in_finally_block = prev_in_finally_block;
@@ -3016,9 +2989,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
           if (debug_flags & DebugFlag::NoInlineRefcounting) {
             dtor_as.write_mov(rdi, MemoryReference(Register::RBX, offset));
             dtor_as.write_mov(rsi, r14);
-            dtor_as.write_mov(Register::RAX,
-                reinterpret_cast<int64_t>(&delete_reference));
-            dtor_as.write_call(rax);
+            dtor_as.write_call(common_object_reference(void_fn_ptr(&delete_reference)));
 
           } else {
             string skip_label = string_printf(
@@ -3029,19 +3000,19 @@ void CompilationVisitor::visit(ClassDefinition* a) {
             dtor_as.write_mov(rdi, MemoryReference(Register::RBX, offset));
 
             // if the pointer is NULL, do nothing
-            this->as.write_test(rdi, rdi);
-            this->as.write_je(skip_label);
+            dtor_as.write_test(rdi, rdi);
+            dtor_as.write_je(skip_label);
 
             // decrement the refcount; if it's not zero, skip the destructor call
-            this->as.write_lock();
-            this->as.write_dec(MemoryReference(Register::RDI, 0));
-            this->as.write_jnz(skip_label);
+            dtor_as.write_lock();
+            dtor_as.write_dec(MemoryReference(Register::RDI, 0));
+            dtor_as.write_jnz(skip_label);
 
             // call the destructor
             dtor_as.write_mov(rax, MemoryReference(Register::RDI, 8));
             dtor_as.write_call(rax);
 
-            this->as.write_label(skip_label);
+            dtor_as.write_label(skip_label);
           }
         }
       }
@@ -3060,7 +3031,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       dtor_as.write_mov(rdi, rbx);
       dtor_as.write_add(rsp, 8);
       dtor_as.write_pop(Register::RBX);
-      dtor_as.write_mov(Register::RBP, reinterpret_cast<int64_t>(&free));
+      dtor_as.write_mov(rbp, common_object_reference(void_fn_ptr(&free)));
       dtor_as.write_xchg(Register::RBP, MemoryReference(Register::RSP, 0));
       dtor_as.write_ret();
 
@@ -3157,8 +3128,8 @@ ssize_t CompilationVisitor::write_function_call_stack_prep(size_t arg_count) {
   return arg_stack_bytes;
 }
 
-void CompilationVisitor::write_function_call(const void* function,
-    const MemoryReference* function_loc,
+void CompilationVisitor::write_function_call(
+    const MemoryReference& function_loc,
     const std::vector<const MemoryReference>& int_args,
     const std::vector<const MemoryReference>& float_args,
     ssize_t arg_stack_bytes, Register return_register, bool return_float) {
@@ -3270,16 +3241,11 @@ void CompilationVisitor::write_function_call(const void* function,
     }
   }
 
-  // finally, call the function. note the stack is already adjusted to be
-  // 16-byte aligned here
-  if (function) {
-    this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(function));
-    this->as.write_call(rax);
-  } else if (function_loc) {
-    this->as.write_call(*function_loc);
-  } else {
-    throw compile_error("no function to call", this->file_offset);
+  // finally, call the function. the stack must be 16-byte aligned at this point
+  if (this->stack_bytes_used & 0x0F) {
+    throw compile_error("stack not aligned at function call");
   }
+  this->as.write_call(function_loc);
 
   // put the return value into the target register
   if (return_float) {
@@ -3429,7 +3395,7 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
 void CompilationVisitor::write_add_reference(Register addr_reg) {
   if (debug_flags & DebugFlag::NoInlineRefcounting) {
     this->reserve_register(addr_reg);
-    this->write_function_call(void_fn_ptr(&add_reference), NULL,
+    this->write_function_call(common_object_reference(void_fn_ptr(&add_reference)),
         {MemoryReference(addr_reg)}, {});
     this->release_register(addr_reg);
   } else {
@@ -3458,18 +3424,15 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
 
   if (type_has_refcount(type)) {
     if (debug_flags & DebugFlag::NoInlineRefcounting) {
-      static uint64_t skip_label_id = 0;
-      string skip_label = string_printf("__delete_reference_skip_%" PRIu64,
-          skip_label_id++);
-      this->write_function_call(void_fn_ptr(delete_reference), NULL, {mem, r14},
-          {});
+      this->write_function_call(common_object_reference(void_fn_ptr(&delete_reference)),
+          {mem, r14}, {});
 
     } else {
       static uint64_t skip_label_id = 0;
-      Register r = this->available_register();
-      MemoryReference r_mem(r);
       string skip_label = string_printf("__delete_reference_skip_%" PRIu64,
           skip_label_id++);
+      Register r = this->available_register();
+      MemoryReference r_mem(r);
 
       // get the object pointer
       if (mem.field_size || (r != mem.base_register)) {
@@ -3487,11 +3450,82 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
 
       // call the destructor
       MemoryReference function_loc(r, 8);
-      this->write_function_call(NULL, &function_loc, {r_mem}, {});
+      this->write_function_call(function_loc, {r_mem}, {});
 
       this->as.write_label(skip_label);
     }
   }
+}
+
+void CompilationVisitor::write_alloc_class_instance(int64_t class_id,
+    bool initialize_attributes) {
+  auto* cls = this->global->context_for_class(class_id);
+
+  static uint64_t skip_label_id = 0;
+  string skip_label = string_printf("__alloc_class_instance_skip_%" PRIu64,
+      skip_label_id++);
+
+  // call malloc to create the class object. note that the stack is already
+  // adjusted to the right alignment here
+  // note: this is a semi-ugly hack, but we ignore reserved registers here
+  // because this can only be the first argument - no registers can be
+  // reserved at this point
+  int64_t stack_bytes_used = this->write_function_call_stack_prep();
+  this->as.write_mov(rdi, cls->instance_size());
+  this->as.write_call(common_object_reference(void_fn_ptr(&malloc)));
+  this->adjust_stack(stack_bytes_used);
+
+  // check if the result is NULL and raise MemoryError in that case
+  this->as.write_test(rax, rax);
+  this->as.write_jnz(skip_label);
+  this->as.write_mov(rax, common_object_reference(&MemoryError_instance));
+  this->write_add_reference(Register::RAX);
+  this->as.write_mov(r15, rax);
+  this->as.write_jmp(
+      common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
+  this->as.write_label(skip_label);
+
+  // fill in the refcount, destructor function and class id
+  Register tmp = this->available_register_except({Register::RAX});
+  MemoryReference tmp_mem(tmp);
+  if (this->target_register != Register::RAX) {
+    this->as.write_mov(MemoryReference(this->target_register), rax);
+  }
+  this->as.write_mov(MemoryReference(this->target_register, 0), 1);
+  this->as.write_mov(tmp, reinterpret_cast<int64_t>(cls->destructor));
+  this->as.write_mov(MemoryReference(this->target_register, 8), tmp_mem);
+  this->as.write_mov(MemoryReference(this->target_register, 16), class_id);
+
+  // zero everything else in the class, if it has any attributes
+  if (initialize_attributes && (cls->instance_size() != sizeof(InstanceObject))) {
+    this->as.write_xor(tmp_mem, tmp_mem);
+    for (size_t x = sizeof(InstanceObject); x < cls->instance_size(); x += 8) {
+      this->as.write_mov(MemoryReference(this->target_register, x), tmp_mem);
+    }
+  }
+}
+
+void CompilationVisitor::write_raise_exception(int64_t class_id) {
+  auto* cls = this->global->context_for_class(class_id);
+
+  // this form can only be used for exceptions that don't take an argument
+  if (cls->instance_size() != sizeof(InstanceObject)) {
+    throw compile_error("incorrect exception raise form generated");
+  }
+
+  this->write_alloc_class_instance(class_id, false);
+  this->as.write_mov(r15, MemoryReference(this->target_register));
+
+  // TODO: implement form of this function that zeroes attributes (like below)
+  // and calls __init__ appropriately
+  // zero everything else in the class
+  //this->as.write_xor(rax, rax);
+  //for (size_t x = sizeof(InstanceObject); x < cls->instance_size(); x += 8) {
+  //  this->as.write_mov(MemoryReference(Register::R15, x), rax);
+  //}
+
+  // raise the exception
+  this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
 }
 
 void CompilationVisitor::write_create_exception_block(

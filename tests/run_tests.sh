@@ -4,13 +4,14 @@ set -e
 
 export PYTHONDONTWRITEBYTECODE=1
 
-echo "-- running tests in python3"
 for FILE in *.py; do
   if [ -e $FILE.input.1 ]; then
     for INPUT_FILE in $FILE.input.*; do
+      echo "-- python3 $FILE ($INPUT_FILE)"
       python3 $FILE < $INPUT_FILE > output.$INPUT_FILE.txt
     done
   else
+    echo "-- python3 $FILE"
     python3 $FILE > output.$FILE.txt
   fi
 done

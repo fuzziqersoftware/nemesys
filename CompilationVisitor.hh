@@ -162,8 +162,7 @@ private:
   void assert_not_evaluating_instance_pointer();
 
   ssize_t write_function_call_stack_prep(size_t arg_count = 0);
-  void write_function_call(const void* function,
-      const MemoryReference* function_loc,
+  void write_function_call(const MemoryReference& function_loc,
       const std::vector<const MemoryReference>& args,
       const std::vector<const MemoryReference>& float_args,
       ssize_t arg_stack_bytes = -1, Register return_register = Register::None,
@@ -175,9 +174,12 @@ private:
   void write_delete_held_reference(const MemoryReference& mem);
   void write_delete_reference(const MemoryReference& mem, ValueType type);
 
+  void write_alloc_class_instance(int64_t class_id, bool initialize_attributes = true);
+
+  void write_raise_exception(int64_t class_id);
   void write_create_exception_block(
-    const std::vector<std::pair<std::string, std::unordered_set<int64_t>>>& label_to_class_ids,
-    const std::string& exception_return_label);
+      const std::vector<std::pair<std::string, std::unordered_set<int64_t>>>& label_to_class_ids,
+      const std::string& exception_return_label);
 
   void write_push(Register reg);
   void write_push(const MemoryReference& mem);

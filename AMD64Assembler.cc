@@ -2138,7 +2138,7 @@ string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
     if ((behavior == 0) && (base_reg == Register::RBP)) {
       behavior = 2; // also has a 32-bit offset
       mem_str = "[rip";
-    } else if (base_reg == Register::RSP) {
+    } else if ((base_reg == Register::RSP) || (base_reg == Register::R12)) {
       if (offset >= size) {
         return "<<incomplete>>";
       }

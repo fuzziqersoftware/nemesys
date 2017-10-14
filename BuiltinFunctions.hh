@@ -20,6 +20,8 @@ extern int64_t AssertionError_class_id;
 extern int64_t IndexError_class_id;
 extern int64_t KeyError_class_id;
 extern int64_t OSError_class_id;
+extern int64_t TypeError_class_id;
+extern int64_t ValueError_class_id;
 
 // functions for creating new builtin functions and classes
 int64_t create_builtin_function(const char* name,
