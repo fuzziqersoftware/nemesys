@@ -1823,19 +1823,16 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
         case ValueType::Int: {
           if ((right.type == ValueType::Bool) || (right.type == ValueType::Int)) {
             if (right.value_known && (right.int_value == 0)) {
-              return Variable(ValueType::Int, static_cast<int64_t>(0));
+              return Variable(ValueType::Int, static_cast<int64_t>(1));
             }
             if (left.value_known && (left.int_value == 1)) {
               return Variable(ValueType::Int, static_cast<int64_t>(1));
             }
 
-            // TODO: this returns a Float if right is negative. for now we just
-            // assume it's an Int if we don't know the right value, which could
-            // be wrong :(
+            // we don't support negative integer exponents on integer bases; it
+            // will fail at runtime. this means we can assume the exponent is
+            // positive or zero, so the result type is Int
             if (!left.value_known) {
-              if (right.value_known && (right.int_value < 0)) {
-                return Variable(ValueType::Float);
-              }
               return Variable(ValueType::Int);
             }
             if (!right.value_known) {
@@ -1844,8 +1841,8 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
             if (right.int_value < 0) {
               return Variable(ValueType::Int,
-                  pow(static_cast<double>(left.int_value),
-                    static_cast<double>(right.float_value)));
+                  static_cast<int64_t>(pow(static_cast<double>(left.int_value),
+                    static_cast<double>(right.int_value))));
             }
 
             // TODO: factor this out somewhere? it's basically the same as
