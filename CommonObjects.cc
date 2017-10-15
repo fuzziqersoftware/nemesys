@@ -49,6 +49,10 @@ const void* common_object_base() {
   return objects.data();
 }
 
+size_t common_object_count() {
+  return objects.size();
+}
+
 MemoryReference common_object_reference(const void* which) {
   if (!pointer_to_index.get()) {
     auto* m = new unordered_map<const void*, size_t>();

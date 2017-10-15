@@ -16,6 +16,7 @@
 #include "../Debug.hh"
 #include "../Analysis.hh"
 #include "../BuiltinFunctions.hh"
+#include "../CommonObjects.hh"
 #include "../Types/Strings.hh"
 
 using namespace std;
@@ -132,6 +133,11 @@ void __nemesys___initialize() {
   __nemesys___module->create_builtin_function("set_debug_flags", {Int}, None,
       void_fn_ptr([](int64_t new_debug_flags) {
     debug_flags = new_debug_flags;
+  }), false);
+
+  __nemesys___module->create_builtin_function("common_object_count", {}, Int,
+      void_fn_ptr([]() -> int64_t {
+    return common_object_count();
   }), false);
 
   __nemesys___module->create_builtin_function("errno", {}, Int,

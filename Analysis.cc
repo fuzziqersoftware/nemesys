@@ -380,7 +380,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
       case ModuleAnalysis::Phase::Analyzed: {
         if (module->ast_root.get()) {
           auto fragment = this->compile_scope(module.get());
-          module->compiled = reinterpret_cast<void*(*)(int64_t*)>(const_cast<void*>(fragment.compiled));
+          module->compiled = reinterpret_cast<void*(*)()>(const_cast<void*>(fragment.compiled));
           module->compiled_labels = move(fragment.compiled_labels);
 
           if (debug_flags & DebugFlag::ShowCompileDebug) {
@@ -390,7 +390,7 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
 
           // all imports are done statically, so we can't translate this to a
           // python exception - just fail
-          void* exc = module->compiled(this->global_space);
+          void* exc = module->compiled();
           if (exc) {
             int64_t class_id = *reinterpret_cast<int64_t*>(reinterpret_cast<int64_t*>(exc) + 2);
             ClassContext* cls = this->context_for_class(class_id);

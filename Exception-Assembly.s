@@ -37,7 +37,7 @@ __unwind_exception_internal:
   // guarantee that something in the exception block will match, since all
   // exception blocks end with a spec that matches everything. use r8 as the
   // exception spec pointer
-  lea r8, [r14 + 24]
+  lea r8, [r14 + 40]
 
 0: __unwind_exception_internal__check_spec_match:
   mov r9, [r8 + 8]
@@ -69,5 +69,7 @@ __unwind_exception_internal:
   // the list in r14, and jump to the rip from the exception spec (r8)
   mov rsp, [r14 + 8]
   mov rbp, [r14 + 16]
+  mov r12, [r14 + 24]
+  mov r13, [r14 + 32]
   mov r14, [r14]
   jmp [r8]

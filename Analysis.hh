@@ -149,7 +149,7 @@ public:
   int64_t num_splits; // split count for root scope
 
   std::multimap<size_t, std::string> compiled_labels;
-  void* (*compiled)(int64_t* global_space);
+  void* (*compiled)();
   int64_t compiled_size;
 
   // constructor for imported modules

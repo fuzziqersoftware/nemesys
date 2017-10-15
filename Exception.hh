@@ -12,8 +12,12 @@ struct ExceptionBlock {
 
   // stack and frame pointers to start the except block with (should be the same
   // as when the function or try block was entered)
-  void* resume_rbp;
   void* resume_rsp;
+  void* resume_rbp;
+
+  // common object and global space pointers
+  void* resume_r12;
+  void* resume_r13;
 
   struct ExceptionBlockSpec {
     // start of the relevant except block's code
