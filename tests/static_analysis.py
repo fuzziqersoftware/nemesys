@@ -3,7 +3,7 @@
 # within the block
 if 2 + 2 == 5:
   print("you should never see this message")
-  print(5)  # compilation fails here; print() has no fragment that takes an Int
+  hex('lol')  # compilation fails here; hex() has no fragment that takes Unicode
   x = 7
   x = 'omg'  # analysis fails here; the variable type changes
 

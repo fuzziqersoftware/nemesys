@@ -1,11 +1,9 @@
-# hey look it's a testing script lol ### #
-
 if True:
   y = 4
 else:
   x = 3
 
-z = -8  # this is imported in other modules
+z = -8
 
 identity_function = lambda x: x
 negative = lambda x: -x

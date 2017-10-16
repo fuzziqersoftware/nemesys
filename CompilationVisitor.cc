@@ -926,6 +926,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
           {this->float_target_register}, true);
       MemoryReference tmp_xmm_mem(tmp_xmm);
 
+      // TODO: check if right is zero and raise ZeroDivisionError if so
+
       if (left_int && right_int) {
         this->as.write_cvtsi2sd(this->float_target_register, left_mem);
         this->as.write_cvtsi2sd(tmp_xmm, right_mem);
@@ -977,6 +979,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
           this->write_push(Register::RDX);
         }
 
+        // TODO: check if right is zero and raise ZeroDivisionError if so
+
         this->as.write_mov(rax, left_mem);
         this->as.write_xor(rdx, rdx);
         this->as.write_idiv(right_mem);
@@ -1016,6 +1020,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         } else {
           this->as.write_cvtsi2sd(right_xmm, right_mem);
         }
+
+        // TODO: check if right is zero and raise ZeroDivisionError if so
 
         if (is_mod) {
           // TODO: can we do this without using a third xmm register?
