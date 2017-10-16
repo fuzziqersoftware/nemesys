@@ -1003,7 +1003,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
         case ValueType::Bytes: {
           if (right.type == ValueType::Bytes) {
-            return Variable(ValueType::Bool, left.bytes_value < right.bytes_value);
+            return Variable(ValueType::Bool, *left.bytes_value < *right.bytes_value);
           }
 
           string left_str = left.str();
@@ -1013,7 +1013,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
         case ValueType::Unicode: {
           if (right.type == ValueType::Unicode) {
-            return Variable(ValueType::Bool, left.unicode_value < right.unicode_value);
+            return Variable(ValueType::Bool, *left.unicode_value < *right.unicode_value);
           }
 
           string left_str = left.str();
@@ -1106,10 +1106,10 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
 
       switch (left.type) {
         case ValueType::Bytes:
-          return Variable(ValueType::Bool, left.bytes_value == right.bytes_value);
+          return Variable(ValueType::Bool, *left.bytes_value == *right.bytes_value);
 
         case ValueType::Unicode:
-          return Variable(ValueType::Bool, left.unicode_value == right.unicode_value);
+          return Variable(ValueType::Bool, *left.unicode_value == *right.unicode_value);
 
         case ValueType::List:
         case ValueType::Tuple: {
@@ -1862,7 +1862,7 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
             if (!left.value_known || !right.value_known) {
               return Variable(ValueType::Float);
             }
-            return Variable(ValueType::Int,
+            return Variable(ValueType::Float,
                 pow(static_cast<double>(left.int_value), right.float_value));
           }
           string left_str = left.str();

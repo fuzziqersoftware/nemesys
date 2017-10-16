@@ -161,7 +161,7 @@ static void create_default_builtin_functions() {
     fprintf(stdout, "%" PRId64 "\n", v);
 
   })), FragDef({Float}, None, void_fn_ptr([](double v) {
-    fprintf(stdout, "%lf\n", v);
+    fprintf(stdout, "%lg\n", v);
 
   })), FragDef({Bytes}, None, void_fn_ptr([](BytesObject* str) {
     fprintf(stdout, "%.*s\n", static_cast<int>(str->count), str->data);
@@ -377,7 +377,7 @@ static void create_default_builtin_functions() {
 
   })), FragDef({Float}, Unicode, void_fn_ptr([](double v) -> UnicodeObject* {
     wchar_t buf[60]; // TODO: figure out how long this actually needs to be
-    size_t count = swprintf(buf, sizeof(buf) / sizeof(buf[0]) - 2, L"%g", v);
+    size_t count = swprintf(buf, sizeof(buf) / sizeof(buf[0]) - 2, L"%lg", v);
 
     // if there isn't a . in the output, add .0 at the end
     size_t x;
@@ -767,7 +767,6 @@ void create_default_builtin_names() {
   create_builtin_name("hasattr",                   Variable(ValueType::Function));
   create_builtin_name("hash",                      Variable(ValueType::Function));
   create_builtin_name("help",                      Variable(ValueType::Function));
-  create_builtin_name("hex",                       Variable(ValueType::Function));
   create_builtin_name("id",                        Variable(ValueType::Function));
   create_builtin_name("isinstance",                Variable(ValueType::Function));
   create_builtin_name("issubclass",                Variable(ValueType::Function));

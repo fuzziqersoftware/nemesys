@@ -1,3 +1,5 @@
+import sys
+
 # some useful stuff
 
 def fail(x):
@@ -160,7 +162,46 @@ print('39 * 5 == ' + repr(39 * 5))
 print('39 / 5 == ' + repr(39 / 5))
 print('39 // 5 == ' + repr(39 // 5))
 print('39 % 5 == ' + repr(39 % 5))
-print('39 ** 5 == ' + repr(39 % 5))
+print('39 ** 5 == ' + repr(39 ** 5))
+
+# float operators
+# TODO: we use a smaller exponent for ** because nemesys' repr(Float) isn't as
+# precise as python3's repr(Float) yet
+print('39.0 + 5 == ' + repr(39.0 + 5))
+print('39.0 - 5 == ' + repr(39.0 - 5))
+print('39.0 * 5 == ' + repr(39.0 * 5))
+print('39.0 / 5 == ' + repr(39.0 / 5))
+print('39.0 // 5 == ' + repr(39.0 // 5))
+print('39.0 % 5 == ' + repr(39.0 % 5))
+print('39.0 ** 3 == ' + repr(39.0 ** 3))
+print('39 + 5.0 == ' + repr(39 + 5.0))
+print('39 - 5.0 == ' + repr(39 - 5.0))
+print('39 * 5.0 == ' + repr(39 * 5.0))
+print('39 / 5.0 == ' + repr(39 / 5.0))
+print('39 // 5.0 == ' + repr(39 // 5.0))
+print('39 % 5.0 == ' + repr(39 % 5.0))
+print('39 ** 3.0 == ' + repr(39 ** 3.0))
+print('39.0 + 5.0 == ' + repr(39.0 + 5.0))
+print('39.0 - 5.0 == ' + repr(39.0 - 5.0))
+print('39.0 * 5.0 == ' + repr(39.0 * 5.0))
+print('39.0 / 5.0 == ' + repr(39.0 / 5.0))
+print('39.0 // 5.0 == ' + repr(39.0 // 5.0))
+print('39.0 % 5.0 == ' + repr(39.0 % 5.0))
+print('39.0 ** 3.0 == ' + repr(39.0 ** 3.0))
+
+# exponentiation has a special case for Int and Int when exponent < 0
+if sys.version == 'nemesys':
+  try:
+    x = 39 ** -5
+    print('negative exponentiation is incorrect')
+  except ValueError:
+    print('negative exponentiation is correct')
+else:
+  x = 39 ** -5
+  if (x > 0) and (x < 1):
+    print('negative exponentiation is correct')
+  else:
+    print('negative exponentiation is incorrect')
 
 
 

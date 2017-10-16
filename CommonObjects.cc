@@ -1,5 +1,6 @@
 #include "CommonObjects.hh"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -21,6 +22,10 @@ static const vector<const void*> objects({
 
   void_fn_ptr(&malloc),
   void_fn_ptr(&free),
+
+  // have to cast ths pointer so the compiler knows which overloaded function
+  // we want
+  void_fn_ptr(static_cast<double(*)(double, double)>(&pow)),
 
   void_fn_ptr(&add_reference),
   void_fn_ptr(&delete_reference),

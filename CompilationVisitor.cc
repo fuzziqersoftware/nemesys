@@ -1029,6 +1029,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
           this->as.write_subsd(left_xmm, tmp_xmm_mem);
         } else {
           this->as.write_divsd(left_xmm, right_xmm_mem);
+          this->as.write_roundsd(left_xmm, left_xmm_mem, 3);
         }
 
         // Float // Int == Int // Float == Float // Float == Float
@@ -1068,6 +1069,32 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_imul(temp_mem.base_register, temp_mem);
         this->as.write_shr(right_mem, 1);
         this->as.write_jnz(again_label);
+        break;
+
+      } else if (left_float || right_float) {
+        Register left_xmm = this->available_register(Register::None, true);
+        Register right_xmm = this->available_register_except({left_xmm}, true);
+        MemoryReference left_xmm_mem(left_xmm);
+        MemoryReference right_xmm_mem(right_xmm);
+
+        if (!left_float) { // left is Int, right is Float
+          this->as.write_cvtsi2sd(left_xmm, left_mem);
+        } else {
+          this->as.write_movsd(left_xmm_mem, left_mem);
+        }
+
+        if (!right_float) { // left is Float, right is Int
+          this->as.write_cvtsi2sd(right_xmm, right_mem);
+          // watch it: in this case the type is different from right_type
+          this->current_type = Variable(ValueType::Float);
+
+        } else {
+          this->as.write_movsd(right_xmm_mem, right_mem);
+        }
+
+        static const void* pow_fn = void_fn_ptr(static_cast<double(*)(double, double)>(&pow));
+        this->write_function_call(common_object_reference(pow_fn), {},
+            {left_xmm_mem, right_xmm_mem}, -1, this->float_target_register, true);
         break;
       }
 
