@@ -459,6 +459,8 @@ void CompilationVisitor::write_current_truth_value_test() {
   switch (this->current_type.type) {
     case ValueType::Indeterminate:
       throw compile_error("truth value test on Indeterminate type", this->file_offset);
+    case ValueType::ExtensionTypeReference:
+      throw compile_error("truth value test on ExtensionTypeReference type", this->file_offset);
 
     case ValueType::Bool:
     case ValueType::Int:

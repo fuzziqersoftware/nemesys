@@ -29,6 +29,33 @@ compile_error::compile_error(const string& what, ssize_t where) :
 
 
 
+BuiltinFragmentDefinition::BuiltinFragmentDefinition(
+    const vector<Variable>& arg_types, Variable return_type,
+    const void* compiled) : arg_types(arg_types), return_type(return_type),
+    compiled(compiled) { }
+
+BuiltinFunctionDefinition::BuiltinFunctionDefinition(const char* name,
+    const std::vector<Variable>& arg_types, Variable return_type,
+    const void* compiled, bool pass_exception_block, bool register_globally) :
+    name(name), fragments({{arg_types, return_type, compiled}}),
+    pass_exception_block(pass_exception_block),
+    register_globally(register_globally) { }
+
+BuiltinFunctionDefinition::BuiltinFunctionDefinition(const char* name,
+    const std::vector<BuiltinFragmentDefinition>& fragments,
+    bool pass_exception_block, bool register_globally) : name(name),
+    fragments(fragments), pass_exception_block(pass_exception_block),
+    register_globally(register_globally) { }
+
+BuiltinClassDefinition::BuiltinClassDefinition(const char* name,
+    const std::map<std::string, Variable>& attributes,
+    const std::vector<BuiltinFunctionDefinition>& methods,
+    const void* destructor, bool register_globally) : name(name),
+    attributes(attributes), methods(methods), destructor(destructor),
+    register_globally(register_globally) { }
+
+
+
 ClassContext::ClassContext(ModuleAnalysis* module, int64_t id) : module(module),
     id(id), destructor(NULL), ast_root(NULL) { }
 
@@ -83,24 +110,12 @@ FunctionContext::Fragment::Fragment(Variable return_type, const void* compiled,
     return_type(return_type), compiled(compiled),
     compiled_labels(move(compiled_labels)) { }
 
-FunctionContext::BuiltinFunctionFragmentDefinition::BuiltinFunctionFragmentDefinition(
-    const vector<Variable>& arg_types, Variable return_type,
-    const void* compiled) : arg_types(arg_types), return_type(return_type),
-    compiled(compiled) { }
-
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id) :
     module(module), id(id), class_id(0), ast_root(NULL), num_splits(0),
     pass_exception_block(false) { }
 
 FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
-    const char* name, const vector<Variable>& arg_types, Variable return_type,
-    const void* compiled, bool pass_exception_block) : FunctionContext(
-      module, id, name, {BuiltinFunctionFragmentDefinition(
-        arg_types, return_type, compiled)}, pass_exception_block) { }
-
-FunctionContext::FunctionContext(ModuleAnalysis* module, int64_t id,
-    const char* name,
-    const vector<BuiltinFunctionFragmentDefinition>& fragments,
+    const char* name, const vector<BuiltinFragmentDefinition>& fragments,
     bool pass_exception_block) : module(module), id(id), class_id(0),
     name(name), ast_root(NULL), num_splits(0),
     pass_exception_block(pass_exception_block) {
@@ -179,31 +194,15 @@ ModuleAnalysis::ModuleAnalysis(const string& name,
     name(name), source(NULL), ast_root(NULL), globals(globals),
     global_base_offset(-1), num_splits(0), compiled(NULL) { }
 
-int64_t ModuleAnalysis::create_builtin_function(const char* name,
-    const vector<Variable>& arg_types, const Variable& return_type,
-    const void* compiled, bool pass_exception_block) {
-  int64_t function_id = ::create_builtin_function(name, arg_types, return_type,
-      compiled, pass_exception_block, false);
-  this->globals.emplace(name, Variable(ValueType::Function, function_id));
+int64_t ModuleAnalysis::create_builtin_function(BuiltinFunctionDefinition& def) {
+  int64_t function_id = ::create_builtin_function(def);
+  this->globals.emplace(def.name, Variable(ValueType::Function, function_id));
   return function_id;
 }
 
-int64_t ModuleAnalysis::create_builtin_function(const char* name,
-    const vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments,
-    bool pass_exception_block) {
-  int64_t function_id = ::create_builtin_function(name, fragments,
-      pass_exception_block, false);
-  this->globals.emplace(name, Variable(ValueType::Function, function_id));
-  return function_id;
-}
-
-int64_t ModuleAnalysis::create_builtin_class(const char* name,
-    const std::map<std::string, Variable>& attributes,
-    const std::vector<Variable>& init_arg_types, const void* init_compiled,
-    const void* destructor) {
-  int64_t class_id = ::create_builtin_class(name, attributes, init_arg_types,
-      init_compiled, destructor, false);
-  this->globals.emplace(name, Variable(ValueType::Class, class_id));
+int64_t ModuleAnalysis::create_builtin_class(BuiltinClassDefinition& def) {
+  int64_t class_id = ::create_builtin_class(def);
+  this->globals.emplace(def.name, Variable(ValueType::Class, class_id));
   return class_id;
 }
 

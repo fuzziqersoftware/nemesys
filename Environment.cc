@@ -113,12 +113,14 @@ Variable::Variable(ValueType type, bool bool_value) : type(type),
   }
 }
 
-// Int/Function/Class
+// Int/Function/Class/ExtensionTypeReference
 Variable::Variable(ValueType type, int64_t int_value) : type(type),
-    value_known(true), int_value(int_value), instance(NULL) {
+    value_known(type != ValueType::ExtensionTypeReference),
+    int_value(int_value), instance(NULL) {
   if ((this->type != ValueType::Int) &&
       (this->type != ValueType::Function) &&
-      (this->type != ValueType::Class)) {
+      (this->type != ValueType::Class) &&
+      (this->type != ValueType::ExtensionTypeReference)) {
     throw invalid_argument(string_printf("incorrect construction: Variable(%d, int64_t)", type));
   }
 }
@@ -257,8 +259,8 @@ Variable::Variable(ValueType type, unordered_map<Variable, shared_ptr<Variable>>
 Variable::Variable(ValueType type, int64_t class_id, void* instance) :
     type(type), value_known(instance ? true : false), class_id(class_id),
     instance(instance) {
-  if (!class_id) {
-    throw invalid_argument("Instance objects must have a nonzero class_id");
+  if (!class_id && instance) {
+    throw invalid_argument("Instance objects with indeterminate class_id cannot have an instance");
   }
   if (this->type != ValueType::Instance) {
     throw invalid_argument(string_printf("incorrect construction: Variable(%d, int64_t, void*)", type));
@@ -323,6 +325,9 @@ Variable& Variable::operator=(const Variable& other) {
       case ValueType::Class:
         this->class_id = other.class_id;
         break;
+      case ValueType::ExtensionTypeReference:
+        this->extension_type_index = other.extension_type_index;
+        break;
     }
   } else {
     if (this->type == ValueType::Instance) {
@@ -381,6 +386,9 @@ Variable& Variable::operator=(Variable&& other) {
       case ValueType::Class:
         this->class_id = other.class_id;
         break;
+      case ValueType::ExtensionTypeReference:
+        this->extension_type_index = other.extension_type_index;
+        break;
     }
   } else {
     if (this->type == ValueType::Instance) {
@@ -415,6 +423,7 @@ void Variable::clear_value() {
     case ValueType::Float:
     case ValueType::Function:
     case ValueType::Class:
+    case ValueType::ExtensionTypeReference:
       break; // nothing to do
     case ValueType::Bytes:
     case ValueType::Module:
@@ -582,6 +591,10 @@ string Variable::str() const {
       }
       return string_printf("Module:%s", this->bytes_value->c_str());
 
+    case ValueType::ExtensionTypeReference:
+      return string_printf("ExtensionTypeReference:%" PRId64,
+          this->extension_type_index);
+      
     default:
       return "InvalidValueType";
   }
@@ -615,6 +628,8 @@ bool Variable::truth_value() const {
     case ValueType::Instance:
     case ValueType::Module:
       return true;
+    case ValueType::ExtensionTypeReference:
+      throw logic_error("unresolved extension type reference at compile time");
     default:
       throw logic_error(string_printf("variable has invalid type for truth test: 0x%" PRIX64,
           static_cast<int64_t>(this->type)));
@@ -662,6 +677,8 @@ bool Variable::operator==(const Variable& other) const {
     case ValueType::Instance:
       return (this->class_id == other.class_id) &&
              (this->instance == other.instance);
+    case ValueType::ExtensionTypeReference:
+      throw logic_error("unresolved extension type reference at compile time");
     default:
       throw logic_error(string_printf("variable has invalid type for equality check: 0x%" PRIX64,
           static_cast<int64_t>(this->type)));
@@ -763,6 +780,9 @@ std::string type_signature_for_variables(const vector<Variable>& vars,
         // TODO
         throw invalid_argument("type signatures for Classes not implemented");
 
+      case ValueType::ExtensionTypeReference:
+        throw logic_error("unresolved extension type reference at compile time");
+
       default:
         throw logic_error(string_printf("variable has invalid type for type signature: 0x%" PRIX64,
             static_cast<int64_t>(var.type)));
@@ -807,6 +827,8 @@ namespace std {
         return h ^ hash<int64_t>()(var.class_id);
       case ValueType::Class:
         return h ^ hash<int64_t>()(var.function_id);
+      case ValueType::ExtensionTypeReference:
+        return h ^ hash<int64_t>()(var.extension_type_index);
       default:
         throw logic_error(string_printf("variable has invalid type for hashing: 0x%" PRIX64,
             static_cast<int64_t>(var.type)));

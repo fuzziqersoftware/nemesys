@@ -441,6 +441,8 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
     // this is technically a failure of the compiler
     case ValueType::Indeterminate:
       throw compile_error("attribute lookup on Indeterminate variable", a->file_offset);
+    case ValueType::ExtensionTypeReference:
+      throw compile_error("attribute lookup on ExtensionTypeReference variable", a->file_offset);
 
     // these have attributes, but most programs don't use them
     case ValueType::None:
@@ -785,6 +787,8 @@ void AnalysisVisitor::visit(ForStatement* a) {
       // just proceed without knowing
       case ValueType::Indeterminate:
         throw compile_error("encountered known value of Indeterminate type");
+      case ValueType::ExtensionTypeReference:
+        throw compile_error("encountered known value of ExtensionTypeReference type");
 
       // silly programmer; you can't iterate these types
       case ValueType::None:
@@ -874,6 +878,9 @@ void AnalysisVisitor::visit(ForStatement* a) {
 
   } else { // value not known
     switch (this->current_value.type) {
+      case ValueType::ExtensionTypeReference:
+        throw compile_error("encountered collection of ExtensionTypeReference type");
+
       // if we don't know the collection type, we can't know the value type;
       // just proceed without knowing
       case ValueType::Indeterminate:

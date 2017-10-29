@@ -20,7 +20,7 @@
 #include "../Types/Strings.hh"
 
 using namespace std;
-using FragDef = FunctionContext::BuiltinFunctionFragmentDefinition;
+using FragDef = BuiltinFragmentDefinition;
 
 
 
@@ -58,90 +58,82 @@ void __nemesys___initialize() {
   Variable Bytes(ValueType::Bytes);
   Variable Unicode(ValueType::Unicode);
 
-  __nemesys___module->create_builtin_function("module_phase", {Unicode}, Int,
-      void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
-    auto module = get_module(module_name);
-    delete_reference(module_name);
-    return module.get() ? module->phase : -1;
-  }), false);
+  vector<BuiltinFunctionDefinition> module_function_defs({
+    {"module_phase", {Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
+      auto module = get_module(module_name);
+      delete_reference(module_name);
+      return module.get() ? module->phase : -1;
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("module_compiled_size", {Unicode}, Int,
-      void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
-    auto module = get_module(module_name);
-    delete_reference(module_name);
-    return module.get() ? module->compiled_size : -1;
-  }), false);
+    {"module_compiled_size", {Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
+      auto module = get_module(module_name);
+      delete_reference(module_name);
+      return module.get() ? module->compiled_size : -1;
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("module_global_base", {Unicode}, Int,
-      void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
-    auto module = get_module(module_name);
-    delete_reference(module_name);
-    return module.get() ? module->global_base_offset : -1;
-  }), false);
+    {"module_global_base", {Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
+      auto module = get_module(module_name);
+      delete_reference(module_name);
+      return module.get() ? module->global_base_offset : -1;
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("module_global_count", {Unicode}, Int,
-      void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
-    auto module = get_module(module_name);
-    delete_reference(module_name);
-    return module.get() ? module->globals.size() : -1;
-  }), false);
+    {"module_global_count", {Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
+      auto module = get_module(module_name);
+      delete_reference(module_name);
+      return module.get() ? module->globals.size() : -1;
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("module_source", {Unicode}, Bytes,
-      void_fn_ptr([](UnicodeObject* module_name) -> BytesObject* {
-    auto module = get_module(module_name);
-    delete_reference(module_name);
-    if (!module.get()) {
-      return bytes_new(NULL, NULL, 0);
-    }
-    if (!module->source.get()) {
-      return bytes_new(NULL, NULL, 0);
-    }
-    const string& data = module->source->data();
-    return bytes_new(NULL, data.data(), data.size());
-  }), false);
+    {"module_source", {Unicode}, Bytes, void_fn_ptr([](UnicodeObject* module_name) -> BytesObject* {
+      auto module = get_module(module_name);
+      delete_reference(module_name);
+      if (!module.get()) {
+        return bytes_new(NULL, NULL, 0);
+      }
+      if (!module->source.get()) {
+        return bytes_new(NULL, NULL, 0);
+      }
+      const string& data = module->source->data();
+      return bytes_new(NULL, data.data(), data.size());
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("code_buffer_size", {}, Int,
-      void_fn_ptr([]() -> int64_t {
-    return global->code.total_size();
-  }), false);
+    {"code_buffer_size", {}, Int, void_fn_ptr([]() -> int64_t {
+      return global->code.total_size();
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("code_buffer_used_size", {}, Int,
-      void_fn_ptr([]() -> int64_t {
-    return global->code.total_used_bytes();
-  }), false);
+    {"code_buffer_used_size", {}, Int, void_fn_ptr([]() -> int64_t {
+      return global->code.total_used_bytes();
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("global_space", {}, Int,
-      void_fn_ptr([]() -> int64_t {
-    return global->global_space_used;
-  }), false);
+    {"global_space", {}, Int, void_fn_ptr([]() -> int64_t {
+      return global->global_space_used;
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("bytes_constant_count", {}, Int,
-      void_fn_ptr([]() -> int64_t {
-    return global->bytes_constants.size();
-  }), false);
+    {"bytes_constant_count", {}, Int, void_fn_ptr([]() -> int64_t {
+      return global->bytes_constants.size();
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("unicode_constant_count", {}, Int,
-      void_fn_ptr([]() -> int64_t {
-    return global->unicode_constants.size();
-  }), false);
+    {"unicode_constant_count", {}, Int, void_fn_ptr([]() -> int64_t {
+      return global->unicode_constants.size();
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("debug_flags", {}, Int,
-      void_fn_ptr([]() -> int64_t {
-    return debug_flags;
-  }), false);
+    {"debug_flags", {}, Int, void_fn_ptr([]() -> int64_t {
+      return debug_flags;
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("set_debug_flags", {Int}, None,
-      void_fn_ptr([](int64_t new_debug_flags) {
-    debug_flags = new_debug_flags;
-  }), false);
+    {"set_debug_flags", {Int}, None, void_fn_ptr([](int64_t new_debug_flags) {
+      debug_flags = new_debug_flags;
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("common_object_count", {}, Int,
-      void_fn_ptr([]() -> int64_t {
-    return common_object_count();
-  }), false);
+    {"common_object_count", {}, Int, void_fn_ptr([]() -> int64_t {
+      return common_object_count();
+    }), false, false},
 
-  __nemesys___module->create_builtin_function("errno", {}, Int,
-      void_fn_ptr([]() -> int64_t {
-    return errno;
-  }), false);
+    {"errno", {}, Int, void_fn_ptr([]() -> int64_t {
+      return errno;
+    }), false, false},
+  });
+
+  for (auto& def : module_function_defs) {
+    __nemesys___module->create_builtin_function(def);
+  }
 }

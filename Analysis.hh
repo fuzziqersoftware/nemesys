@@ -28,6 +28,44 @@ public:
 
 
 
+struct BuiltinFragmentDefinition {
+  std::vector<Variable> arg_types;
+  Variable return_type;
+  const void* compiled;
+
+  BuiltinFragmentDefinition(const std::vector<Variable>& arg_types,
+      Variable return_type, const void* compiled);
+};
+
+struct BuiltinFunctionDefinition {
+  const char* name;
+  std::vector<BuiltinFragmentDefinition> fragments;
+  bool pass_exception_block;
+  bool register_globally;
+
+  BuiltinFunctionDefinition(const char* name,
+      const std::vector<Variable>& arg_types, Variable return_type,
+      const void* compiled, bool pass_exception_block, bool register_globally);
+  BuiltinFunctionDefinition(const char* name,
+      const std::vector<BuiltinFragmentDefinition>& fragments,
+      bool pass_exception_block, bool register_globally);
+};
+
+struct BuiltinClassDefinition {
+  const char* name;
+  std::map<std::string, Variable> attributes;
+  std::vector<BuiltinFunctionDefinition> methods;
+  const void* destructor;
+  bool register_globally;
+
+  BuiltinClassDefinition(const char* name,
+      const std::map<std::string, Variable>& attributes,
+      const std::vector<BuiltinFunctionDefinition>& methods,
+      const void* destructor, bool register_globally);
+};
+
+
+
 class ModuleAnalysis;
 
 struct ClassContext {
@@ -42,7 +80,6 @@ struct ClassContext {
   std::map<std::string, Variable> attributes; // Annotated; values Analyzed
   std::unordered_map<std::string, int64_t> dynamic_attribute_indexes; // Analyzed
 
-  // constructor for dynamic classes (defined in .py files)
   ClassContext(ModuleAnalysis* module, int64_t id);
 
   void populate_dynamic_attributes();
@@ -97,25 +134,10 @@ struct FunctionContext {
   // constructor for dynamic functions (defined in .py files)
   FunctionContext(ModuleAnalysis* module, int64_t id);
 
-  // constructors for built-in functions. note that they don't take a type
-  // signature - this is provided through the arg_types field. each Variable
-  // should be either an unknown but typed value (for positional arguments) or
-  // a known value (for keyword arguments).
-  struct BuiltinFunctionFragmentDefinition {
-    std::vector<Variable> arg_types;
-    Variable return_type;
-    const void* compiled;
-    BuiltinFunctionFragmentDefinition(const std::vector<Variable>& arg_types,
-        Variable return_type, const void* compiled);
-  };
-  // built-in single-fragment constructor
+  // constructor for builtin functions
   FunctionContext(ModuleAnalysis* module, int64_t id, const char* name,
-      const std::vector<Variable>& arg_types, Variable return_type,
-      const void* compiled, bool pass_exception_block);
-  // built-in multiple-fragment constructor
-  FunctionContext(ModuleAnalysis* module, int64_t id, const char* name,
-      const std::vector<BuiltinFunctionFragmentDefinition>& fragments,
-      bool pass_exception_block);
+    const std::vector<BuiltinFragmentDefinition>& fragments,
+    bool pass_exception_block);
 
   bool is_class_init() const;
 };
@@ -162,16 +184,8 @@ public:
 
   ~ModuleAnalysis() = default;
 
-  int64_t create_builtin_function(const char* name,
-      const std::vector<Variable>& arg_types, const Variable& return_type,
-      const void* compiled, bool pass_exception_block);
-  int64_t create_builtin_function(const char* name,
-      const std::vector<FunctionContext::BuiltinFunctionFragmentDefinition>& fragments,
-      bool pass_exception_block);
-  int64_t create_builtin_class(const char* name,
-    const std::map<std::string, Variable>& attributes,
-    const std::vector<Variable>& init_arg_types, const void* init_compiled,
-    const void* destructor);
+  int64_t create_builtin_function(BuiltinFunctionDefinition& def);
+  int64_t create_builtin_class(BuiltinClassDefinition& def);
 };
 
 

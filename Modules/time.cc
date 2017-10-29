@@ -66,15 +66,19 @@ void time_initialize() {
   Variable Int(ValueType::Int);
   Variable Float(ValueType::Float);
 
-  time_module->create_builtin_function("time", {}, Float,
-      void_fn_ptr([]() -> double {
-    return static_cast<double>(now()) / 1000000.0;
-  }), false);
+  vector<BuiltinFunctionDefinition> module_function_defs({
+    {"time", {}, Float, void_fn_ptr([]() -> double {
+      return static_cast<double>(now()) / 1000000.0;
+    }), false, false},
 
-  time_module->create_builtin_function("utime", {}, Int, void_fn_ptr(&now), false);
+    {"utime", {}, Int, void_fn_ptr(&now), false, false},
 
-  time_module->create_builtin_function("sleep", {Float}, None,
-      void_fn_ptr([](double secs) {
-    usleep(static_cast<int64_t>(secs * 1000000));
-  }), false);
+    {"sleep", {Float}, None, void_fn_ptr([](double secs) {
+      usleep(static_cast<int64_t>(secs * 1000000));
+    }), false, false},
+  });
+
+  for (auto& def : module_function_defs) {
+    time_module->create_builtin_function(def);
+  }
 }

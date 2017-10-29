@@ -189,10 +189,6 @@ static map<string, Variable> globals({
   {"environ",                Variable(ValueType::Dict, get_environ())},
   {"sysconf_names",          Variable(ValueType::Dict, sysconf_names)},
 
-  // I'm lazy and don't want to write __init__ for this, so it's unavailable to
-  // python code
-  // {"stat_result", Variable()},
-
   // unimplemented stuff:
 
   // {"DirEntry", Variable()},
@@ -287,276 +283,7 @@ void posix_initialize() {
   Variable Dict_Unicode_Unicode(ValueType::Dict, vector<Variable>({Unicode, Unicode}));
   Variable None(ValueType::None);
 
-  posix_module->create_builtin_function("getpid", {}, Int,
-      void_fn_ptr(&getpid), false);
-  posix_module->create_builtin_function("getppid", {}, Int,
-      void_fn_ptr(&getppid), false);
-  posix_module->create_builtin_function("getpgid", {Int}, Int,
-      void_fn_ptr(&getpgid), false);
-  posix_module->create_builtin_function("getpgrp", {}, Int,
-      void_fn_ptr(&getpgrp), false);
-  posix_module->create_builtin_function("getsid", {Int}, Int,
-      void_fn_ptr(&getsid), false);
-
-  posix_module->create_builtin_function("getuid", {}, Int,
-      void_fn_ptr(&getuid), false);
-  posix_module->create_builtin_function("getgid", {}, Int,
-      void_fn_ptr(&getgid), false);
-  posix_module->create_builtin_function("geteuid", {}, Int,
-      void_fn_ptr(&geteuid), false);
-  posix_module->create_builtin_function("getegid", {}, Int,
-      void_fn_ptr(&getegid), false);
-
-  // these functions never return, so return type is technically unused
-  posix_module->create_builtin_function("_exit", {Int}, Int,
-      void_fn_ptr(&_exit), false);
-  posix_module->create_builtin_function("abort", {}, Int,
-      void_fn_ptr(&abort), false);
-
-  posix_module->create_builtin_function("close", {Int}, None,
-      simple_wrapper(close(fd), int64_t fd, ExceptionBlock* exc_block), true);
-  posix_module->create_builtin_function("closerange", {Int, Int}, None,
-      void_fn_ptr([](int64_t fd, int64_t end_fd) {
-    for (; fd < end_fd; fd++) {
-      close(fd);
-    }
-  }), false);
-
-  posix_module->create_builtin_function("dup", {Int}, Int,
-      simple_wrapper(dup(fd), int64_t fd, ExceptionBlock* exc_block), true);
-  posix_module->create_builtin_function("dup2", {Int}, Int,
-      simple_wrapper(dup2(fd, new_fd), int64_t fd, int64_t new_fd, ExceptionBlock* exc_block), true);
-
-  posix_module->create_builtin_function("fork", {}, Int,
-      simple_wrapper(fork(), ExceptionBlock* exc_block), true);
-
-  posix_module->create_builtin_function("kill", {Int, Int}, Int,
-      simple_wrapper(kill(pid, sig), int64_t pid, int64_t sig, ExceptionBlock* exc_block), true);
-  posix_module->create_builtin_function("killpg", {Int, Int}, Int,
-      simple_wrapper(killpg(pid, sig), int64_t pid, int64_t sig, ExceptionBlock* exc_block), true);
-
-  posix_module->create_builtin_function("open",
-      {Unicode, Int, Variable(ValueType::Int, 0777LL)}, Int,
-      void_fn_ptr([](UnicodeObject* path, int64_t flags, int64_t mode, ExceptionBlock* exc_block) -> int64_t {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
-
-    int64_t ret = open(path_bytes->data, flags, mode);
-    delete_reference(path_bytes);
-
-    if (ret < 0) {
-      raise_OSError(exc_block, errno);
-    }
-
-    return ret;
-  }), true);
-
-  posix_module->create_builtin_function("read", {Int, Int}, Bytes,
-      void_fn_ptr([](int64_t fd, int64_t buffer_size, ExceptionBlock* exc_block) -> BytesObject* {
-    BytesObject* ret = bytes_new(NULL, NULL, buffer_size);
-    ssize_t bytes_read = read(fd, ret->data, buffer_size);
-    if (bytes_read >= 0) {
-      ret->count = bytes_read;
-    } else {
-      delete_reference(ret);
-      raise_OSError(exc_block, errno);
-    }
-    return ret;
-  }), true);
-
-  posix_module->create_builtin_function("write", {Int, Bytes}, Int,
-      void_fn_ptr([](int64_t fd, BytesObject* data, ExceptionBlock* exc_block) -> int64_t {
-    ssize_t bytes_written = write(fd, data->data, data->count);
-    delete_reference(data);
-    if (bytes_written < 0) {
-      raise_OSError(exc_block, errno);
-    }
-    return bytes_written;
-  }), true);
-
-  posix_module->create_builtin_function("execv", {Unicode, List_Unicode}, None,
-      void_fn_ptr([](UnicodeObject* path, ListObject* args, ExceptionBlock* exc_block) {
-
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-
-    vector<BytesObject*> args_objects;
-    vector<char*> args_pointers;
-    for (size_t x = 0; x < args->count; x++) {
-      args_objects.emplace_back(unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(args->items[x])));
-      args_pointers.emplace_back(args_objects.back()->data);
-    }
-    args_pointers.emplace_back(nullptr);
-
-    execv(path_bytes->data, args_pointers.data());
-
-    // little optimization: we expect execv to succeed most of the time, so we
-    // don't bother deleting path until after it returns (and has failed)
-    delete_reference(path);
-    delete_reference(path_bytes);
-    for (auto& o : args_objects) {
-      delete_reference(o);
-    }
-
-    raise_OSError(exc_block, errno);
-  }), true);
-
-  posix_module->create_builtin_function("execve",
-      {Unicode, List_Unicode, Dict_Unicode_Unicode}, None,
-      void_fn_ptr([](UnicodeObject* path, ListObject* args,
-          DictionaryObject* env, ExceptionBlock* exc_block) {
-
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-
-    vector<BytesObject*> args_objects;
-    vector<char*> args_pointers;
-    for (size_t x = 0; x < args->count; x++) {
-      args_objects.emplace_back(unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(args->items[x])));
-      args_pointers.emplace_back(args_objects.back()->data);
-    }
-    args_pointers.emplace_back(nullptr);
-
-    vector<char*> envs_pointers;
-    DictionaryObject::SlotContents dsc;
-    while (dictionary_next_item(env, &dsc)) {
-      BytesObject* key_bytes = unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(dsc.key));
-      BytesObject* value_bytes = unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(dsc.value));
-
-      char* env_item = reinterpret_cast<char*>(malloc(key_bytes->count + value_bytes->count + 2));
-      memcpy(env_item, key_bytes->data, key_bytes->count);
-      env_item[key_bytes->count] = '=';
-      memcpy(&env_item[key_bytes->count + 1], value_bytes->data, value_bytes->count);
-      env_item[key_bytes->count + value_bytes->count + 1] = 0;
-      envs_pointers.emplace_back(env_item);
-
-      delete_reference(key_bytes);
-      delete_reference(value_bytes);
-    }
-    envs_pointers.emplace_back(nullptr);
-
-    execve(path_bytes->data, args_pointers.data(), envs_pointers.data());
-
-    // little optimization: we expect execve to succeed most of the time, so we
-    // don't bother deleting path until after it returns (and has failed)
-    delete_reference(path);
-    delete_reference(path_bytes);
-    for (auto& o : args_objects) {
-      delete_reference(o);
-    }
-    envs_pointers.pop_back(); // the last one is NULL
-    for (auto& ptr : envs_pointers) {
-      free(ptr);
-    }
-
-    raise_OSError(exc_block, errno);
-  }), true);
-
-  posix_module->create_builtin_function("strerror", {Int}, Unicode,
-      void_fn_ptr([](int64_t code) -> UnicodeObject* {
-    char buf[128];
-    strerror_r(code, buf, sizeof(buf));
-    return bytes_decode_ascii(buf);
-  }), false);
-
-  // TODO: most functions below here should raise OSError on failure instead of
-  // returning errno
-  posix_module->create_builtin_function("access", {Unicode, Int}, Int,
-      void_fn_ptr([](UnicodeObject* path, int64_t mode) -> int64_t {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
-
-    int64_t ret = access(path_bytes->data, mode);
-    delete_reference(path_bytes);
-    return ret;
-  }), false);
-
-  posix_module->create_builtin_function("chdir", {Unicode}, Int,
-      void_fn_ptr([](UnicodeObject* path) -> int64_t {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
-
-    int64_t ret = chdir(path_bytes->data);
-    delete_reference(path_bytes);
-    return ret;
-  }), false);
-
-  posix_module->create_builtin_function("fchdir", {Int}, Int,
-      void_fn_ptr(&fchdir), false);
-
-  posix_module->create_builtin_function("chmod", {Unicode, Int}, Int,
-      void_fn_ptr([](UnicodeObject* path, int64_t mode) -> int64_t {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
-
-    int64_t ret = chmod(path_bytes->data, mode);
-    delete_reference(path_bytes);
-    return ret;
-  }), false);
-
-  posix_module->create_builtin_function("fchmod", {Int, Int}, Int,
-      void_fn_ptr(&fchmod), false);
-
-#ifdef MACOSX
-  posix_module->create_builtin_function("chflags", {Unicode, Int}, Int,
-      void_fn_ptr([](UnicodeObject* path, int64_t flags) -> int64_t {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
-
-    int64_t ret = chflags(path_bytes->data, flags);
-    delete_reference(path_bytes);
-    return ret;
-  }), false);
-
-  posix_module->create_builtin_function("fchflags", {Int, Int}, Int,
-      void_fn_ptr(&fchflags), false);
-#endif
-
-  posix_module->create_builtin_function("chown", {Unicode, Int, Int}, Int,
-      void_fn_ptr([](UnicodeObject* path, int64_t uid, int64_t gid) -> int64_t {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
-
-    int64_t ret = chown(path_bytes->data, uid, gid);
-    delete_reference(path_bytes);
-    return ret;
-  }), false);
-
-  posix_module->create_builtin_function("lchown", {Unicode, Int, Int}, Int,
-      void_fn_ptr([](UnicodeObject* path, int64_t uid, int64_t gid) -> int64_t {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
-
-    int64_t ret = lchown(path_bytes->data, uid, gid);
-    delete_reference(path_bytes);
-    return ret;
-  }), false);
-
-  posix_module->create_builtin_function("fchown", {Int, Int, Int}, Int,
-      void_fn_ptr(&fchown), false);
-
-  posix_module->create_builtin_function("chroot", {Unicode}, Int,
-      void_fn_ptr([](UnicodeObject* path) -> int64_t {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
-
-    int64_t ret = chroot(path_bytes->data);
-    delete_reference(path_bytes);
-    return ret;
-  }), false);
-
-  posix_module->create_builtin_function("ctermid", {}, Unicode,
-      void_fn_ptr([]() -> UnicodeObject* {
-    char result[L_ctermid];
-    ctermid(result);
-    return bytes_decode_ascii(result);
-  }), false);
-
-  posix_module->create_builtin_function("cpu_count", {}, Int,
-      void_fn_ptr([]() -> int64_t {
-    // TODO: should we use procfs here instead?
-    return sysconf(_SC_NPROCESSORS_ONLN);
-  }), false);
-
-  static int64_t stat_result_class_id = create_builtin_class("stat_result", {
+  BuiltinClassDefinition stat_result_def("stat_result", {
         {"st_mode", Int},
         {"st_ino", Int},
         {"st_dev", Int},
@@ -573,7 +300,11 @@ void posix_initialize() {
         {"st_blocks", Int},
         {"st_blksize", Int},
         {"st_rdev", Int}},
-      {}, NULL, void_fn_ptr(&free), false);
+      {}, void_fn_ptr(&free), false);
+
+  // note: we don't create stat_result within posix_module because it doesn't
+  // have an __init__ function, so it isn't constructible from python code
+  static int64_t stat_result_class_id = create_builtin_class(stat_result_def);
   Variable StatResult(ValueType::Instance, stat_result_class_id, NULL);
   static ClassContext* stat_result_class = global->context_for_class(stat_result_class_id);
 
@@ -605,200 +336,432 @@ void posix_initialize() {
     return res;
   };
 
-  // TODO: support dir_fd
-  posix_module->create_builtin_function("stat", {Unicode, Bool_True}, StatResult,
-      void_fn_ptr([](UnicodeObject* path, bool follow_symlinks, ExceptionBlock* exc_block) -> void* {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
+  vector<BuiltinFunctionDefinition> module_function_defs({
+    {"getpid", {}, Int, void_fn_ptr(&getpid), false, false},
+    {"getppid", {}, Int, void_fn_ptr(&getppid), false, false},
+    {"getpgid", {Int}, Int, void_fn_ptr(&getpgid), false, false},
+    {"getpgrp", {}, Int, void_fn_ptr(&getpgrp), false, false},
+    {"getsid", {Int}, Int, void_fn_ptr(&getsid), false, false},
 
-    struct stat st;
-    int64_t ret = follow_symlinks ? stat(path_bytes->data, &st) : lstat(path_bytes->data, &st);
-    delete_reference(path_bytes);
+    {"getuid", {}, Int, void_fn_ptr(&getuid), false, false},
+    {"getgid", {}, Int, void_fn_ptr(&getgid), false, false},
+    {"geteuid", {}, Int, void_fn_ptr(&geteuid), false, false},
+    {"getegid", {}, Int, void_fn_ptr(&getegid), false, false},
 
-    if (ret) {
+    // these functions never return, so return type is technically unused
+    {"_exit", {Int}, Int, void_fn_ptr(&_exit), false, false},
+    {"abort", {}, Int, void_fn_ptr(&abort), false, false},
+
+    {"close", {Int}, None, simple_wrapper(close(fd), int64_t fd, ExceptionBlock* exc_block), true, false},
+
+    {"closerange", {Int, Int}, None, void_fn_ptr([](int64_t fd, int64_t end_fd) {
+      for (; fd < end_fd; fd++) {
+        close(fd);
+      }
+    }), false, false},
+
+    {"dup", {Int}, Int, simple_wrapper(dup(fd), int64_t fd, ExceptionBlock* exc_block), true, false},
+    {"dup2", {Int}, Int, simple_wrapper(dup2(fd, new_fd), int64_t fd, int64_t new_fd, ExceptionBlock* exc_block), true, false},
+
+    {"fork", {}, Int, simple_wrapper(fork(), ExceptionBlock* exc_block), true, false},
+
+    {"kill", {Int, Int}, Int, simple_wrapper(kill(pid, sig), int64_t pid, int64_t sig, ExceptionBlock* exc_block), true, false},
+    {"killpg", {Int, Int}, Int, simple_wrapper(killpg(pid, sig), int64_t pid, int64_t sig, ExceptionBlock* exc_block), true, false},
+
+    {"open", {Unicode, Int, Variable(ValueType::Int, 0777LL)}, Int,
+        void_fn_ptr([](UnicodeObject* path, int64_t flags, int64_t mode, ExceptionBlock* exc_block) -> int64_t {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
+
+      int64_t ret = open(path_bytes->data, flags, mode);
+      delete_reference(path_bytes);
+
+      if (ret < 0) {
+        raise_OSError(exc_block, errno);
+      }
+
+      return ret;
+    }), true, false},
+
+    {"read", {Int, Int}, Bytes, void_fn_ptr([](int64_t fd, int64_t buffer_size, ExceptionBlock* exc_block) -> BytesObject* {
+      BytesObject* ret = bytes_new(NULL, NULL, buffer_size);
+      ssize_t bytes_read = read(fd, ret->data, buffer_size);
+      if (bytes_read >= 0) {
+        ret->count = bytes_read;
+      } else {
+        delete_reference(ret);
+        raise_OSError(exc_block, errno);
+      }
+      return ret;
+    }), true, false},
+
+    {"write", {Int, Bytes}, Int, void_fn_ptr([](int64_t fd, BytesObject* data, ExceptionBlock* exc_block) -> int64_t {
+      ssize_t bytes_written = write(fd, data->data, data->count);
+      delete_reference(data);
+      if (bytes_written < 0) {
+        raise_OSError(exc_block, errno);
+      }
+      return bytes_written;
+    }), true, false},
+
+    {"execv", {Unicode, List_Unicode}, None, void_fn_ptr([](UnicodeObject* path, ListObject* args, ExceptionBlock* exc_block) {
+
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+
+      vector<BytesObject*> args_objects;
+      vector<char*> args_pointers;
+      for (size_t x = 0; x < args->count; x++) {
+        args_objects.emplace_back(unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(args->items[x])));
+        args_pointers.emplace_back(args_objects.back()->data);
+      }
+      args_pointers.emplace_back(nullptr);
+
+      execv(path_bytes->data, args_pointers.data());
+
+      // little optimization: we expect execv to succeed most of the time, so we
+      // don't bother deleting path until after it returns (and has failed)
+      delete_reference(path);
+      delete_reference(path_bytes);
+      for (auto& o : args_objects) {
+        delete_reference(o);
+      }
+
       raise_OSError(exc_block, errno);
-    }
-    return convert_stat_result(&st);
-  }), true);
+    }), true, false},
 
-  posix_module->create_builtin_function("fstat", {Int}, StatResult,
-      void_fn_ptr([](int64_t fd, ExceptionBlock* exc_block) -> void* {
-    struct stat st;
-    if (fstat(fd, &st)) {
+    {"execve", {Unicode, List_Unicode, Dict_Unicode_Unicode}, None,
+        void_fn_ptr([](UnicodeObject* path, ListObject* args,
+          DictionaryObject* env, ExceptionBlock* exc_block) {
+
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+
+      vector<BytesObject*> args_objects;
+      vector<char*> args_pointers;
+      for (size_t x = 0; x < args->count; x++) {
+        args_objects.emplace_back(unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(args->items[x])));
+        args_pointers.emplace_back(args_objects.back()->data);
+      }
+      args_pointers.emplace_back(nullptr);
+
+      vector<char*> envs_pointers;
+      DictionaryObject::SlotContents dsc;
+      while (dictionary_next_item(env, &dsc)) {
+        BytesObject* key_bytes = unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(dsc.key));
+        BytesObject* value_bytes = unicode_encode_ascii(reinterpret_cast<UnicodeObject*>(dsc.value));
+
+        char* env_item = reinterpret_cast<char*>(malloc(key_bytes->count + value_bytes->count + 2));
+        memcpy(env_item, key_bytes->data, key_bytes->count);
+        env_item[key_bytes->count] = '=';
+        memcpy(&env_item[key_bytes->count + 1], value_bytes->data, value_bytes->count);
+        env_item[key_bytes->count + value_bytes->count + 1] = 0;
+        envs_pointers.emplace_back(env_item);
+
+        delete_reference(key_bytes);
+        delete_reference(value_bytes);
+      }
+      envs_pointers.emplace_back(nullptr);
+
+      execve(path_bytes->data, args_pointers.data(), envs_pointers.data());
+
+      // little optimization: we expect execve to succeed most of the time, so we
+      // don't bother deleting path until after it returns (and has failed)
+      delete_reference(path);
+      delete_reference(path_bytes);
+      for (auto& o : args_objects) {
+        delete_reference(o);
+      }
+      envs_pointers.pop_back(); // the last one is NULL
+      for (auto& ptr : envs_pointers) {
+        free(ptr);
+      }
+
       raise_OSError(exc_block, errno);
-    }
-    return convert_stat_result(&st);
-  }), true);
+    }), true, false},
 
-  posix_module->create_builtin_function("truncate", {Unicode, Int}, Int,
-      void_fn_ptr([](UnicodeObject* path, int64_t size) -> int64_t {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
+    {"strerror", {Int}, Unicode, void_fn_ptr([](int64_t code) -> UnicodeObject* {
+      char buf[128];
+      strerror_r(code, buf, sizeof(buf));
+      return bytes_decode_ascii(buf);
+    }), false, false},
 
-    int64_t ret = truncate(path_bytes->data, size);
-    delete_reference(path_bytes);
-    return ret;
-  }), false);
+    // TODO: most functions below here should raise OSError on failure instead
+    // of returning errno
+    {"access", {Unicode, Int}, Int,
+        void_fn_ptr([](UnicodeObject* path, int64_t mode) -> int64_t {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
 
-  posix_module->create_builtin_function("ftruncate", {Int, Int}, Int,
-      void_fn_ptr(&ftruncate), false);
+      int64_t ret = access(path_bytes->data, mode);
+      delete_reference(path_bytes);
+      return ret;
+    }), false, false},
 
-  posix_module->create_builtin_function("getcwd", {}, Unicode,
-      void_fn_ptr([](ExceptionBlock* exc_block) -> UnicodeObject* {
-    char path[MAXPATHLEN];
-    if (!getcwd(path, MAXPATHLEN)) {
-      raise_OSError(exc_block, errno);
-    }
-    return bytes_decode_ascii(path);
-  }), true);
+    {"chdir", {Unicode}, Int, void_fn_ptr([](UnicodeObject* path) -> int64_t {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
 
-  posix_module->create_builtin_function("getcwdb", {}, Bytes,
-      void_fn_ptr([](ExceptionBlock* exc_block) -> BytesObject* {
-    BytesObject* ret = bytes_new(NULL, NULL, MAXPATHLEN);
-    if (!getcwd(ret->data, MAXPATHLEN)) {
-      delete_reference(ret);
-      raise_OSError(exc_block, errno);
-    } else {
-      ret->count = strlen(ret->data);
-    }
-    return ret;
-  }), true);
+      int64_t ret = chdir(path_bytes->data);
+      delete_reference(path_bytes);
+      return ret;
+    }), false, false},
 
-  posix_module->create_builtin_function("lseek", {Int, Int, Int}, Int,
-      void_fn_ptr(&lseek), false);
+    {"fchdir", {Int}, Int, void_fn_ptr(&fchdir), false, false},
 
-  posix_module->create_builtin_function("fsync", {Int}, Int,
-      void_fn_ptr(&fsync), false);
+    {"chmod", {Unicode, Int}, Int, void_fn_ptr([](UnicodeObject* path, int64_t mode) -> int64_t {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
 
-  posix_module->create_builtin_function("isatty", {Int}, Bool,
-      void_fn_ptr(&isatty), false);
+      int64_t ret = chmod(path_bytes->data, mode);
+      delete_reference(path_bytes);
+      return ret;
+    }), false, false},
 
-  posix_module->create_builtin_function("listdir", {Variable(ValueType::Unicode, L".")}, List_Unicode,
-      void_fn_ptr([](UnicodeObject* path) -> void* {
-    BytesObject* path_bytes = unicode_encode_ascii(path);
-    delete_reference(path);
+    {"fchmod", {Int, Int}, Int, void_fn_ptr(&fchmod), false, false},
 
-    // TODO: we shouldn't use list_directory here because it can throw c++
-    // exceptions; that will break nemesys-generated code
-    auto items = list_directory(path_bytes->data);
-    delete_reference(path_bytes);
+#ifdef MACOSX
+    {"chflags", {Unicode, Int}, Int,
+        void_fn_ptr([](UnicodeObject* path, int64_t flags) -> int64_t {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
 
-    ListObject* l = list_new(NULL, items.size(), true);
-    size_t x = 0;
-    for (const auto& item : items) {
-      l->items[x++] = bytes_decode_ascii(item.c_str());
-    }
+      int64_t ret = chflags(path_bytes->data, flags);
+      delete_reference(path_bytes);
+      return ret;
+    }), false, false},
 
-    return l;
-  }), false);
+    {"fchflags", {Int, Int}, Int, void_fn_ptr(&fchflags), false, false},
+#endif
 
-  // TODO: support passing names as strings
-  posix_module->create_builtin_function("sysconf", {Int}, Int,
-      void_fn_ptr(&sysconf), false);
+    {"chown", {Unicode, Int, Int}, Int, void_fn_ptr([](UnicodeObject* path, int64_t uid, int64_t gid) -> int64_t {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
 
-  // {"confstr", Variable()},
-  // {"confstr_names", Variable()},
-  // {"device_encoding", Variable()},
-  // {"error", Variable()},
-  // {"fdatasync", Variable()}, // linux only
-  // {"forkpty", Variable()},
-  // {"fpathconf", Variable()},
-  // {"fspath", Variable()},
-  // {"fstatvfs", Variable()},
-  // {"get_blocking", Variable()},
-  // {"get_inheritable", Variable()},
-  // {"get_terminal_size", Variable()},
-  // {"getgrouplist", Variable()},
-  // {"getgroups", Variable()},
-  // {"getloadavg", Variable()},
-  // {"getlogin", Variable()},
-  // {"getpriority", Variable()},
-  // {"getresgid", Variable()}, // linux only
-  // {"getresuid", Variable()}, // linux only
-  // {"getxattr", Variable()}, // linux only
-  // {"initgroups", Variable()},
-  // {"lchflags", Variable()}, // osx only
-  // {"lchmod", Variable()}, // osx only
-  // {"link", Variable()},
-  // {"listxattr", Variable()}, // linux only
-  // {"lockf", Variable()},
-  // {"major", Variable()},
-  // {"makedev", Variable()},
-  // {"minor", Variable()},
-  // {"mkdir", Variable()},
-  // {"mkfifo", Variable()},
-  // {"mknod", Variable()},
-  // {"nice", Variable()},
-  // {"openpty", Variable()},
-  // {"pathconf", Variable()},
-  // {"pathconf_names", Variable()},
-  // {"pipe", Variable()},
-  // {"pipe2", Variable()}, // linux only
-  // {"posix_fadvise", Variable()}, // linux only
-  // {"posix_fallocate", Variable()}, // linux only
-  // {"pread", Variable()},
-  // {"putenv", Variable()},
-  // {"pwrite", Variable()},
-  // {"readlink", Variable()},
-  // {"readv", Variable()},
-  // {"remove", Variable()},
-  // {"removexattr", Variable()}, // linux only
-  // {"rename", Variable()},
-  // {"replace", Variable()},
-  // {"rmdir", Variable()},
-  // {"scandir", Variable()},
-  // {"sched_get_priority_max", Variable()},
-  // {"sched_get_priority_min", Variable()},
-  // {"sched_getaffinity", Variable()}, // linux only
-  // {"sched_getparam", Variable()}, // linux only
-  // {"sched_getscheduler", Variable()}, // linux only
-  // {"sched_param", Variable()}, // linux only
-  // {"sched_rr_get_interval", Variable()}, // linux only
-  // {"sched_setaffinity", Variable()}, // linux only
-  // {"sched_setparam", Variable()}, // linux only
-  // {"sched_setscheduler", Variable()}, // linux only
-  // {"sched_yield", Variable()},
-  // {"sendfile", Variable()},
-  // {"set_blocking", Variable()},
-  // {"set_inheritable", Variable()},
-  // {"setegid", Variable()},
-  // {"seteuid", Variable()},
-  // {"setgid", Variable()},
-  // {"setgroups", Variable()},
-  // {"setpgid", Variable()},
-  // {"setpgrp", Variable()},
-  // {"setpriority", Variable()},
-  // {"setregid", Variable()},
-  // {"setresgid", Variable()}, // linux only
-  // {"setresuid", Variable()}, // linux only
-  // {"setreuid", Variable()},
-  // {"setsid", Variable()},
-  // {"setuid", Variable()},
-  // {"setxattr", Variable()}, // linux only
-  // {"stat_float_times", Variable()},
-  // {"statvfs", Variable()},
-  // {"statvfs_result", Variable()},
-  // {"symlink", Variable()},
-  // {"sync", Variable()},
-  // {"system", Variable()},
-  // {"tcgetpgrp", Variable()},
-  // {"tcsetpgrp", Variable()},
-  // {"terminal_size", Variable()},
-  // {"times", Variable()},
-  // {"times_result", Variable()},
-  // {"ttyname", Variable()},
-  // {"umask", Variable()},
-  // {"uname", Variable()},
-  // {"uname_result", Variable()},
-  // {"unlink", Variable()},
-  // {"unsetenv", Variable()},
-  // {"urandom", Variable()},
-  // {"utime", Variable()},
-  // {"wait", Variable()},
-  // {"wait3", Variable()},
-  // {"wait4", Variable()},
-  // {"waitid", Variable()}, // linux only
-  // {"waitid_result", Variable()}, // linux only
-  // {"waitpid", Variable()},
-  // {"writev", Variable()},
+      int64_t ret = chown(path_bytes->data, uid, gid);
+      delete_reference(path_bytes);
+      return ret;
+    }), false, false},
+
+    {"lchown", {Unicode, Int, Int}, Int,
+        void_fn_ptr([](UnicodeObject* path, int64_t uid, int64_t gid) -> int64_t {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
+
+      int64_t ret = lchown(path_bytes->data, uid, gid);
+      delete_reference(path_bytes);
+      return ret;
+    }), false, false},
+
+    {"fchown", {Int, Int, Int}, Int, void_fn_ptr(&fchown), false, false},
+
+    {"chroot", {Unicode}, Int, void_fn_ptr([](UnicodeObject* path) -> int64_t {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
+
+      int64_t ret = chroot(path_bytes->data);
+      delete_reference(path_bytes);
+      return ret;
+    }), false, false},
+
+    {"ctermid", {}, Unicode, void_fn_ptr([]() -> UnicodeObject* {
+      char result[L_ctermid];
+      ctermid(result);
+      return bytes_decode_ascii(result);
+    }), false, false},
+
+    {"cpu_count", {}, Int, void_fn_ptr([]() -> int64_t {
+      // TODO: should we use procfs here instead?
+      return sysconf(_SC_NPROCESSORS_ONLN);
+    }), false, false},
+
+    // TODO: support dir_fd
+    {"stat", {Unicode, Bool_True}, StatResult,
+        void_fn_ptr([](UnicodeObject* path, bool follow_symlinks, ExceptionBlock* exc_block) -> void* {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
+
+      struct stat st;
+      int64_t ret = follow_symlinks ? stat(path_bytes->data, &st) : lstat(path_bytes->data, &st);
+      delete_reference(path_bytes);
+
+      if (ret) {
+        raise_OSError(exc_block, errno);
+      }
+      return convert_stat_result(&st);
+    }), true, false},
+
+    {"fstat", {Int}, StatResult, void_fn_ptr([](int64_t fd, ExceptionBlock* exc_block) -> void* {
+      struct stat st;
+      if (fstat(fd, &st)) {
+        raise_OSError(exc_block, errno);
+      }
+      return convert_stat_result(&st);
+    }), true, false},
+
+    {"truncate", {Unicode, Int}, Int, void_fn_ptr([](UnicodeObject* path, int64_t size) -> int64_t {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
+
+      int64_t ret = truncate(path_bytes->data, size);
+      delete_reference(path_bytes);
+      return ret;
+    }), false, false},
+
+    {"ftruncate", {Int, Int}, Int, void_fn_ptr(&ftruncate), false, false},
+
+    {"getcwd", {}, Unicode,
+        void_fn_ptr([](ExceptionBlock* exc_block) -> UnicodeObject* {
+      char path[MAXPATHLEN];
+      if (!getcwd(path, MAXPATHLEN)) {
+        raise_OSError(exc_block, errno);
+      }
+      return bytes_decode_ascii(path);
+    }), true, false},
+
+    {"getcwdb", {}, Bytes, void_fn_ptr([](ExceptionBlock* exc_block) -> BytesObject* {
+      BytesObject* ret = bytes_new(NULL, NULL, MAXPATHLEN);
+      if (!getcwd(ret->data, MAXPATHLEN)) {
+        delete_reference(ret);
+        raise_OSError(exc_block, errno);
+      } else {
+        ret->count = strlen(ret->data);
+      }
+      return ret;
+    }), true, false},
+
+    {"lseek", {Int, Int, Int}, Int, void_fn_ptr(&lseek), false, false},
+    {"fsync", {Int}, Int, void_fn_ptr(&fsync), false, false},
+    {"isatty", {Int}, Bool, void_fn_ptr(&isatty), false, false},
+
+    {"listdir", {Variable(ValueType::Unicode, L".")}, List_Unicode,
+        void_fn_ptr([](UnicodeObject* path) -> void* {
+      BytesObject* path_bytes = unicode_encode_ascii(path);
+      delete_reference(path);
+
+      // TODO: we shouldn't use list_directory here because it can throw c++
+      // exceptions; that will break nemesys-generated code
+      auto items = list_directory(path_bytes->data);
+      delete_reference(path_bytes);
+
+      ListObject* l = list_new(NULL, items.size(), true);
+      size_t x = 0;
+      for (const auto& item : items) {
+        l->items[x++] = bytes_decode_ascii(item.c_str());
+      }
+
+      return l;
+    }), false, false},
+
+    // TODO: support passing names as strings
+    {"sysconf", {Int}, Int, void_fn_ptr(&sysconf), false, false},
+
+    // {"confstr", Variable()},
+    // {"confstr_names", Variable()},
+    // {"device_encoding", Variable()},
+    // {"error", Variable()},
+    // {"fdatasync", Variable()}, // linux only
+    // {"forkpty", Variable()},
+    // {"fpathconf", Variable()},
+    // {"fspath", Variable()},
+    // {"fstatvfs", Variable()},
+    // {"get_blocking", Variable()},
+    // {"get_inheritable", Variable()},
+    // {"get_terminal_size", Variable()},
+    // {"getgrouplist", Variable()},
+    // {"getgroups", Variable()},
+    // {"getloadavg", Variable()},
+    // {"getlogin", Variable()},
+    // {"getpriority", Variable()},
+    // {"getresgid", Variable()}, // linux only
+    // {"getresuid", Variable()}, // linux only
+    // {"getxattr", Variable()}, // linux only
+    // {"initgroups", Variable()},
+    // {"lchflags", Variable()}, // osx only
+    // {"lchmod", Variable()}, // osx only
+    // {"link", Variable()},
+    // {"listxattr", Variable()}, // linux only
+    // {"lockf", Variable()},
+    // {"major", Variable()},
+    // {"makedev", Variable()},
+    // {"minor", Variable()},
+    // {"mkdir", Variable()},
+    // {"mkfifo", Variable()},
+    // {"mknod", Variable()},
+    // {"nice", Variable()},
+    // {"openpty", Variable()},
+    // {"pathconf", Variable()},
+    // {"pathconf_names", Variable()},
+    // {"pipe", Variable()},
+    // {"pipe2", Variable()}, // linux only
+    // {"posix_fadvise", Variable()}, // linux only
+    // {"posix_fallocate", Variable()}, // linux only
+    // {"pread", Variable()},
+    // {"putenv", Variable()},
+    // {"pwrite", Variable()},
+    // {"readlink", Variable()},
+    // {"readv", Variable()},
+    // {"remove", Variable()},
+    // {"removexattr", Variable()}, // linux only
+    // {"rename", Variable()},
+    // {"replace", Variable()},
+    // {"rmdir", Variable()},
+    // {"scandir", Variable()},
+    // {"sched_get_priority_max", Variable()},
+    // {"sched_get_priority_min", Variable()},
+    // {"sched_getaffinity", Variable()}, // linux only
+    // {"sched_getparam", Variable()}, // linux only
+    // {"sched_getscheduler", Variable()}, // linux only
+    // {"sched_param", Variable()}, // linux only
+    // {"sched_rr_get_interval", Variable()}, // linux only
+    // {"sched_setaffinity", Variable()}, // linux only
+    // {"sched_setparam", Variable()}, // linux only
+    // {"sched_setscheduler", Variable()}, // linux only
+    // {"sched_yield", Variable()},
+    // {"sendfile", Variable()},
+    // {"set_blocking", Variable()},
+    // {"set_inheritable", Variable()},
+    // {"setegid", Variable()},
+    // {"seteuid", Variable()},
+    // {"setgid", Variable()},
+    // {"setgroups", Variable()},
+    // {"setpgid", Variable()},
+    // {"setpgrp", Variable()},
+    // {"setpriority", Variable()},
+    // {"setregid", Variable()},
+    // {"setresgid", Variable()}, // linux only
+    // {"setresuid", Variable()}, // linux only
+    // {"setreuid", Variable()},
+    // {"setsid", Variable()},
+    // {"setuid", Variable()},
+    // {"setxattr", Variable()}, // linux only
+    // {"stat_float_times", Variable()},
+    // {"statvfs", Variable()},
+    // {"statvfs_result", Variable()},
+    // {"symlink", Variable()},
+    // {"sync", Variable()},
+    // {"system", Variable()},
+    // {"tcgetpgrp", Variable()},
+    // {"tcsetpgrp", Variable()},
+    // {"terminal_size", Variable()},
+    // {"times", Variable()},
+    // {"times_result", Variable()},
+    // {"ttyname", Variable()},
+    // {"umask", Variable()},
+    // {"uname", Variable()},
+    // {"uname_result", Variable()},
+    // {"unlink", Variable()},
+    // {"unsetenv", Variable()},
+    // {"urandom", Variable()},
+    // {"utime", Variable()},
+    // {"wait", Variable()},
+    // {"wait3", Variable()},
+    // {"wait4", Variable()},
+    // {"waitid", Variable()}, // linux only
+    // {"waitid_result", Variable()}, // linux only
+    // {"waitpid", Variable()},
+    // {"writev", Variable()},
+  });
+
+  for (auto& def : module_function_defs) {
+    posix_module->create_builtin_function(def);
+  }
 }

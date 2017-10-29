@@ -11,21 +11,30 @@
 
 
 enum class ValueType {
-  Indeterminate = 0,
+  Indeterminate = 0, // unknown type
+
+  // trivial types
   None,
   Bool,
   Int,
   Float,
+
+  // built-in class types
   Bytes,
   Unicode,
   List,
   Tuple,
   Set,
   Dict,
+
+  // static object types
   Function,
   Class,
   Instance,
   Module,
+
+  // meta-types
+  ExtensionTypeReference, // reference to a class extension type
 };
 
 struct Variable {
@@ -41,6 +50,7 @@ struct Variable {
     std::unordered_map<Variable, std::shared_ptr<Variable>>* dict_value;
     int64_t function_id;
     int64_t class_id;
+    int64_t extension_type_index;
   };
   void* instance; // used for Instance only
   std::vector<Variable> extension_types;
