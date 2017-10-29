@@ -1525,7 +1525,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
         if (this->evaluating_instance_pointer) {
           throw compile_error("instance pointer evaluation failed", this->file_offset);
         }
-        if (this->current_type.type != ValueType::Instance) {
+        if (!type_has_refcount(this->current_type.type)) {
           throw compile_error("instance pointer evaluation resulted in " + this->current_type.str(),
               this->file_offset);
         }
@@ -1879,10 +1879,6 @@ void CompilationVisitor::visit(AttributeLookup* a) {
 
     this->as.write_label(string_printf("__AttributeLookup_%p_evaluate_instance", a));
     a->base->accept(this);
-    if (this->current_type.type != ValueType::Instance) {
-      throw compile_error("instance pointer evaluation resulted in non-instance",
-          this->file_offset);
-    }
     if (!this->holding_reference) {
       throw compile_error("instance pointer evaluation resulted in non-held reference",
           this->file_offset);

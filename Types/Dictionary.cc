@@ -28,11 +28,6 @@ static uint8_t dictionary_default_key_char(const void* k, size_t which) {
   return reinterpret_cast<const uint8_t*>(&k)[which];
 }
 
-static void dictionary_delete(void* d) {
-  dictionary_clear(reinterpret_cast<DictionaryObject*>(d));
-  free(d);
-}
-
 DictionaryObject* dictionary_new(DictionaryObject* d,
     size_t (*key_length)(const void* k),
     uint8_t (*key_char)(const void* k, size_t offset), uint64_t flags,
@@ -53,6 +48,11 @@ DictionaryObject* dictionary_new(DictionaryObject* d,
   d->flags = flags;
   d->root = NULL;
   return d;
+}
+
+void dictionary_delete(void* d) {
+  dictionary_clear(reinterpret_cast<DictionaryObject*>(d));
+  free(d);
 }
 
 

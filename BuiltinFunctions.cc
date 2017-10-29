@@ -15,6 +15,7 @@
 
 #include "Analysis.hh"
 #include "Types/Strings.hh"
+#include "Types/Dictionary.hh"
 #include "Types/List.hh"
 #include "Types/Instance.hh"
 #include "PythonLexer.hh" // for escape()
@@ -36,17 +37,19 @@ unordered_map<int64_t, ClassContext> builtin_class_definitions;
 unordered_map<string, Variable> builtin_names;
 
 InstanceObject MemoryError_instance;
-int64_t AssertionError_class_id;
-int64_t IndexError_class_id;
-int64_t KeyError_class_id;
-int64_t OSError_class_id;
-int64_t TypeError_class_id;
-int64_t ValueError_class_id;
+int64_t AssertionError_class_id = 0;
+int64_t IndexError_class_id = 0;
+int64_t KeyError_class_id = 0;
+int64_t OSError_class_id = 0;
+int64_t TypeError_class_id = 0;
+int64_t ValueError_class_id = 0;
 
-int64_t DictObject_class_id;
-int64_t ListObject_class_id;
-int64_t TupleObject_class_id;
-int64_t SetObject_class_id;
+int64_t BytesObject_class_id = 0;
+int64_t UnicodeObject_class_id = 0;
+int64_t DictObject_class_id = 0;
+int64_t ListObject_class_id = 0;
+int64_t TupleObject_class_id = 0;
+int64_t SetObject_class_id = 0;
 
 
 
@@ -58,15 +61,21 @@ static const Variable Bool_True(ValueType::Bool, true);
 static const Variable Bool_False(ValueType::Bool, false);
 static const Variable Int(ValueType::Int);
 static const Variable Int_Zero(ValueType::Int, 0LL);
+static const Variable Int_NegOne(ValueType::Int, -1LL);
 static const Variable Float(ValueType::Float);
 static const Variable Float_Zero(ValueType::Float, 0.0);
 static const Variable Bytes(ValueType::Bytes);
 static const Variable Unicode(ValueType::Unicode);
 static const Variable Unicode_Blank(ValueType::Unicode, L"");
-static const Variable List_Any(ValueType::List, vector<Variable>({Variable()}));
 static const Variable Extension0(ValueType::ExtensionTypeReference, 0LL);
 static const Variable Extension1(ValueType::ExtensionTypeReference, 1LL);
 static const Variable Self(ValueType::Instance, 0LL, nullptr);
+static const Variable List_Any(ValueType::List, vector<Variable>({Variable()}));
+static const Variable List_Same(ValueType::List, vector<Variable>({Extension0}));
+static const Variable Set_Any(ValueType::Set, vector<Variable>({Variable()}));
+static const Variable Set_Same(ValueType::Set, vector<Variable>({Extension0}));
+static const Variable Dict_Any(ValueType::Dict, vector<Variable>({Variable(), Variable()}));
+static const Variable Dict_Same(ValueType::Dict, vector<Variable>({Extension0, Extension1}));
 
 
 
@@ -102,6 +111,25 @@ int64_t create_builtin_class(BuiltinClassDefinition& def) {
   cls.attributes = def.attributes;
   cls.populate_dynamic_attributes();
 
+  // note: we modify cls.attributes after this point, but only to add methods,
+  // which doesn't affect the dynamic attribute set
+
+  // built-in types like Bytes, Unicode, List, Tuple, Set, and Dict don't take
+  // Instance as the first argument (instead they take their corresponding
+  // built-in types), so allow those if the clss being defined is one of those
+  static const unordered_map<string, unordered_set<Variable>> name_to_self_types({
+    {"bytes", {Bytes}},
+    {"unicode", {Unicode}},
+    {"list", {List_Any, List_Same}},
+    //{"tuple", ???}, // TODO: extension type refs won't work here
+    {"set", {Set_Any, Set_Same}},
+    {"dict", {Dict_Any, Dict_Same}},
+  });
+  unordered_set<Variable> self_types({{ValueType::Instance, 0LL, NULL}});
+  try {
+    self_types = name_to_self_types.at(def.name);
+  } catch (const out_of_range&) { }
+
   // register the methods
   for (auto& method_def : def.methods) {
     // __del__ must not be given in the methods; it must already be compiled
@@ -119,15 +147,22 @@ int64_t create_builtin_class(BuiltinClassDefinition& def) {
         throw logic_error(string_printf("%s.%s must take the class instance as an argument",
             def.name, method_def.name));
       }
-      if (frag_def.arg_types[0].type != ValueType::Instance) {
-        throw logic_error(string_printf("%s.%s must take the class instance as the first argument",
-            def.name, method_def.name));
+
+      if (!self_types.count(frag_def.arg_types[0])) {
+        string allowed_types_str;
+        for (const auto& self_type : self_types) {
+          if (!allowed_types_str.empty()) {
+            allowed_types_str += ", ";
+          }
+          allowed_types_str += self_type.str();
+        }
+        string type_str = frag_def.arg_types[0].str();
+        throw logic_error(string_printf("%s.%s cannot take %s as the first argument; one of [%s] is required",
+            def.name, method_def.name, type_str.c_str(), allowed_types_str.c_str()));
       }
-      if (frag_def.arg_types[0].class_id != 0) {
-        throw logic_error(string_printf("%s.%s must not have a predetermined class id",
-            def.name, method_def.name));
+      if (frag_def.arg_types[0].type == ValueType::Instance) {
+        frag_def.arg_types[0].class_id = class_id;
       }
-      frag_def.arg_types[0].class_id = class_id;
     }
 
     // __init__ has some special behaviors
@@ -152,11 +187,19 @@ int64_t create_builtin_class(BuiltinClassDefinition& def) {
 
     // register the function
     FunctionContext& fn = builtin_function_definitions.emplace(piecewise_construct,
-        forward_as_tuple(),
-        forward_as_tuple(nullptr, class_id, method_def.name, method_def.fragments, method_def.pass_exception_block)).first->second;
+        forward_as_tuple(function_id),
+        forward_as_tuple(nullptr, function_id, method_def.name, method_def.fragments, method_def.pass_exception_block)).first->second;
     fn.class_id = class_id;
+
+    // link the function as a class attribute
+    if (!cls.attributes.emplace(piecewise_construct, forward_as_tuple(method_def.name),
+        forward_as_tuple(ValueType::Function, function_id)).second) {
+      throw logic_error(string_printf("%s.%s overrides a non-method attribute",
+          def.name, method_def.name));
+    }
   }
 
+  // register the class name in the global scope if requested
   if (def.register_globally) {
     create_builtin_name(def.name, Variable(ValueType::Class, class_id));
   }
@@ -672,50 +715,173 @@ void create_default_builtin_classes() {
         {"__init__", {Self, Int}, Self, one_field_constructor, false, false},
       }, trivial_destructor, true},
 
-    /* TODO: implement built-in type classes like this one
+    {"bytes", {}, {
+      /* TODO: implement these
+      {"capitalize", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"center", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"count", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"decode", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"endswith", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"expandtabs", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"find", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"fromhex", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"hex", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"index", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isalnum", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isalpha", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isdigit", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"islower", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isspace", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"istitle", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isupper", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"join", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"ljust", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"lower", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"lstrip", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"maketrans", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"partition", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"replace", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rfind", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rindex", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rjust", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rpartition", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rsplit", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rstrip", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"split", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"splitlines", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"startswith", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"strip", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"swapcase", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"title", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"translate", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"upper", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"zfill", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      */
+    }, void_fn_ptr(&list_delete), true},
+
+    {"unicode", {}, {
+      /* TODO: implement these
+      {"capitalize", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"casefold", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"center", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"count", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"encode", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"endswith", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"expandtabs", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"find", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"format", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"format_map", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"index", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isalnum", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isalpha", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isdecimal", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isdigit", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isidentifier", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"islower", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isnumeric", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isprintable", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isspace", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"istitle", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"isupper", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"join", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"ljust", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"lower", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"lstrip", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"maketrans", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"partition", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"replace", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rfind", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rindex", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rjust", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rpartition", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rsplit", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"rstrip", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"split", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"splitlines", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"startswith", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"strip", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"swapcase", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"title", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"translate", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"upper", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      {"zfill", {Self, TODO}, TODO, void_fn_ptr(NULL), false, false},
+      */
+    }, void_fn_ptr(&list_delete), true},
+
     {"list", {}, {
-      {"append", {Self, Extension0}, None, void_fn_ptr([](ListObject* l, void* item) {
-        TODO
-      }), false, false},
-      {"clear", {Self}, None, void_fn_ptr([](ListObject* l) {
-        TODO
-      }), false, false},
-      {"copy", {Self}, Variable(ValueType::List, {Extension0}), void_fn_ptr([](
-          ListObject* l, ExceptionBlock* exc_block) -> ListObject* {
-        TODO
-      }), true, false},
-      {"count", {Self, Extension0}, Int, void_fn_ptr([](
-          ListObject* l, ExceptionBlock* exc_block) -> Int {
-        TODO
-      }), true, false},
-      {"extend", {Self, TODO}, None, void_fn_ptr([](
-          ListObject* l, TODO, ExceptionBlock* exc_block) {
-        TODO
-      }), true, false},
-      {"index", {Self, Extension0}, Int, void_fn_ptr([](
-          ListObject* l, TODO, ExceptionBlock* exc_block) -> int64_t {
-        TODO
-      }), true, false},
-      {"insert", {Self, Int, Extension0}, None, void_fn_ptr([](
-          ListObject* l, int64_t index, void* item, ExceptionBlock* exc_block) {
-        TODO
-      }), true, false},
-      {"pop", {Self, Int_NegOne}, Extension0, void_fn_ptr([](
-          ListObject* l, int64_t index, ExceptionBlock* exc_block) -> void* {
-        TODO
-      }), true, false},
-      {"remove", {Self, Extension0}, None, void_fn_ptr([](
-          ListObject* l, void* item, ExceptionBlock* exc_block) {
-        TODO
-      }), true, false},
-      {"reverse", {Self}, None, void_fn_ptr([](ListObject* l, ExceptionBlock* exc_block) {
-        TODO
-      }), true, false},
-      {"sort", {Self, key=TODO, Bool_False}, None, void_fn_ptr([](
-          ListObject* l, TODO* key_fn, bool reverse, ExceptionBlock* exc_block) {
-        TODO
-      }), true, false},
-    }, list_delete, true}, */
+      {"clear", {List_Any}, None, void_fn_ptr(&list_clear), false, false},
+      {"append", {List_Same, Extension0}, None, void_fn_ptr(&list_append), true, false},
+      {"insert", {List_Same, Int, Extension0}, None, void_fn_ptr(&list_insert), true, false},
+      {"pop", {List_Same, Int_NegOne}, Extension0, void_fn_ptr(&list_pop), true, false},
+
+      /* TODO: implement these
+      {"copy", {Self}, List_Same, void_fn_ptr(), true, false},
+      {"count", {Self, Extension0}, Int, void_fn_ptr(), true, false},
+      {"extend", {Self, TODO}, None, void_fn_ptr(), true, false},
+      {"index", {Self, Extension0}, Int, void_fn_ptr(), true, false},
+      {"remove", {Self, Extension0}, None, void_fn_ptr(), true, false},
+      {"reverse", {Self}, None, void_fn_ptr(), true, false},
+      {"sort", {Self, key=TODO, Bool_False}, None, void_fn_ptr(), true, false},
+      */
+    }, void_fn_ptr(&list_delete), true},
+
+    {"tuple", {}, {
+      /* TODO: implement these
+      {"count", {Self, Extension0}, Int, void_fn_ptr(), true, false},
+      {"index", {Self, Extension0}, Int, void_fn_ptr(), true, false},
+      */
+    }, void_fn_ptr(NULL), true},
+
+    {"set", {}, {
+      /* TODO: implement these
+      {"add", {Self, Extension0}, None, void_fn_ptr(), true, false},
+      {"clear", {Self}, None, void_fn_ptr(), true, false},
+      {"copy", {Self}, Set_Same, void_fn_ptr(), true, false},
+
+      // TODO: these should support variadic arguments
+      {"difference", {Self, Set_Same}, Set_Same, void_fn_ptr(), true, false},
+      {"difference_update", {Self, Set_Same}, None, void_fn_ptr(), true, false},
+      {"intersection", {Self, Set_Same}, Set_Same, void_fn_ptr(), true, false},
+      {"intersection_update", {Self, Set_Same}, None, void_fn_ptr(), true, false},
+      {"symmetric_difference", {Self, Set_Same}, Set_Same, void_fn_ptr(), true, false},
+      {"symmetric_difference_update", {Self, Set_Same}, None, void_fn_ptr(), true, false},
+      {"union", {Self, Set_Same}, Set_Same, void_fn_ptr(), true, false},
+      {"update", {Self, Set_Same}, None, void_fn_ptr(), true, false},
+
+      {"discard", {Self, Extension0}, None, void_fn_ptr(), true, false},
+      {"remove", {Self, Extension0}, None, void_fn_ptr(), true, false},
+
+      {"isdisjoint", {Self, Set_Same}, Bool, void_fn_ptr(), true, false},
+      {"issubset", {Self, Set_Same}, Bool, void_fn_ptr(), true, false},
+      {"issuperset", {Self, Set_Same}, Bool, void_fn_ptr(), true, false},
+      {"pop", {Self}, Extension0, void_fn_ptr(), true, false},
+      */
+    }, void_fn_ptr(NULL), true},
+
+    {"dict", {}, {
+      /* TODO: implement these
+      {"clear", {Self}, None, void_fn_ptr(), true, false},
+      {"copy", {Self}, Dict_Same, void_fn_ptr(), true, false},
+
+      // TODO: this should support all the other weird forms (e.g. kwargs)
+      {"update", {Self, Dict_Same}, None, void_fn_ptr(), true, false},
+
+      // TODO: these should support not passing default
+      {"get", {Self, Extension0, Extension1}, Extension1, void_fn_ptr(), true, false},
+      {"pop", {Self, Extension0, Extension1}, Extension1, void_fn_ptr(), true, false},
+      {"setdefault", {Self, Extension0, Extension1}, TODO, void_fn_ptr(), true, false},
+
+      {"popitem", {Self}, Variable(ValueType::Tuple, {Extension0, Extension1}), void_fn_ptr(), true, false},
+
+      // TODO: these need view object types
+      {"keys", {Self, TODO}, TODO, void_fn_ptr(), true, false},
+      {"values", {Self, TODO}, TODO, void_fn_ptr(), true, false},
+      {"items", {Self, TODO}, TODO, void_fn_ptr(), true, false},
+
+      // TODO: this is a classmethod
+      {"fromkeys", {Self, TODO}, TODO, void_fn_ptr(), true, false},
+      */
+    }, void_fn_ptr(&dictionary_delete), true},
   });
 
   for (auto& def : class_defs) {
@@ -729,6 +895,13 @@ void create_default_builtin_classes() {
   ValueError_class_id = builtin_names.at("ValueError").class_id;
   AssertionError_class_id = builtin_names.at("AssertionError").class_id;
   OSError_class_id = builtin_names.at("OSError").class_id;
+
+  BytesObject_class_id = builtin_names.at("bytes").class_id;
+  UnicodeObject_class_id = builtin_names.at("unicode").class_id;
+  ListObject_class_id = builtin_names.at("list").class_id;
+  TupleObject_class_id = builtin_names.at("tuple").class_id;
+  DictObject_class_id = builtin_names.at("dict").class_id;
+  SetObject_class_id = builtin_names.at("set").class_id;
 
   // create some common exception singletons. note that the MemoryError instance
   // probably can't be allocated when it's really needed, so instead it's a
@@ -764,7 +937,6 @@ void create_default_builtin_names() {
   create_builtin_name("copyright",       Variable(ValueType::Function));
   create_builtin_name("credits",         Variable(ValueType::Function));
   create_builtin_name("delattr",         Variable(ValueType::Function));
-  create_builtin_name("dict",            Variable(ValueType::Function));
   create_builtin_name("dir",             Variable(ValueType::Function));
   create_builtin_name("divmod",          Variable(ValueType::Function));
   create_builtin_name("enumerate",       Variable(ValueType::Function));
@@ -784,7 +956,6 @@ void create_default_builtin_names() {
   create_builtin_name("issubclass",      Variable(ValueType::Function));
   create_builtin_name("iter",            Variable(ValueType::Function));
   create_builtin_name("license",         Variable(ValueType::Function));
-  create_builtin_name("list",            Variable(ValueType::Function));
   create_builtin_name("locals",          Variable(ValueType::Function));
   create_builtin_name("map",             Variable(ValueType::Function));
   create_builtin_name("max",             Variable(ValueType::Function));
@@ -800,7 +971,6 @@ void create_default_builtin_names() {
   create_builtin_name("range",           Variable(ValueType::Function));
   create_builtin_name("reversed",        Variable(ValueType::Function));
   create_builtin_name("round",           Variable(ValueType::Function));
-  create_builtin_name("set",             Variable(ValueType::Function));
   create_builtin_name("setattr",         Variable(ValueType::Function));
   create_builtin_name("slice",           Variable(ValueType::Function));
   create_builtin_name("sorted",          Variable(ValueType::Function));
@@ -808,7 +978,6 @@ void create_default_builtin_names() {
   create_builtin_name("str",             Variable(ValueType::Function));
   create_builtin_name("sum",             Variable(ValueType::Function));
   create_builtin_name("super",           Variable(ValueType::Function));
-  create_builtin_name("tuple",           Variable(ValueType::Function));
   create_builtin_name("type",            Variable(ValueType::Function));
   create_builtin_name("vars",            Variable(ValueType::Function));
   create_builtin_name("zip",             Variable(ValueType::Function));

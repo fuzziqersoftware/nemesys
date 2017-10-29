@@ -639,8 +639,14 @@ bool Variable::truth_value() const {
 
 
 bool Variable::types_equal(const Variable& other) const {
-  return (this->type == other.type) &&
-         (this->extension_types == other.extension_types);
+  if (this->type != other.type) {
+    return false;
+  }
+  if (this->type == ValueType::Instance) {
+    return this->class_id == other.class_id;
+  }
+
+  return this->extension_types == other.extension_types;
 }
 
 bool Variable::operator==(const Variable& other) const {
@@ -648,6 +654,10 @@ bool Variable::operator==(const Variable& other) const {
     return false;
   }
   if (!this->value_known) {
+    // for Instance vars, the class id is part of the type
+    if ((this->type == ValueType::Instance) && (this->class_id != other.class_id)) {
+      return false;
+    }
     return true; // types match, values are unknown
   }
   switch (this->type) {
@@ -757,8 +767,12 @@ std::string type_signature_for_variables(const vector<Variable>& vars,
         throw invalid_argument("type signatures for Tuples not implemented");
 
       case ValueType::Set:
-        // TODO
-        throw invalid_argument("type signatures for Sets not implemented");
+        ret += 'S';
+        if (var.extension_types.size() != 1) {
+          throw invalid_argument("set does not have exactly one extension type");
+        }
+        ret += type_signature_for_variables(var.extension_types, allow_indeterminate);
+        break;
 
       case ValueType::Dict:
         ret += 'D';
@@ -781,7 +795,8 @@ std::string type_signature_for_variables(const vector<Variable>& vars,
         throw invalid_argument("type signatures for Classes not implemented");
 
       case ValueType::ExtensionTypeReference:
-        throw logic_error("unresolved extension type reference at compile time");
+        ret += string_printf("R%" PRId64, var.extension_type_index);
+        break;
 
       default:
         throw logic_error(string_printf("variable has invalid type for type signature: 0x%" PRIX64,
@@ -801,10 +816,13 @@ namespace std {
       return h;
     }
 
+    // for unknown values, the hash is just the hash of the type
     if (!var.value_known) {
-      // for unknown values, use the hash of the pointer... not great, but it
-      // prevents them from all hashing tothe same bucket
-      return h ^ hash<const Variable*>()(&var);
+      // for Instance vars, the class id is part of the type
+      if (var.type == ValueType::Instance) {
+        return h ^ hash<int64_t>()(var.class_id);
+      }
+      return h;
     }
 
     switch (var.type) {

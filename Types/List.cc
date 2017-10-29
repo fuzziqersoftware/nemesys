@@ -10,18 +10,6 @@
 using namespace std;
 
 
-static void list_delete(ListObject* l) {
-  if (l->items) {
-    if (l->items_are_objects) {
-      for (uint64_t x = 0; x < l->count; x++) {
-        delete_reference(l->items[x]);
-      }
-    }
-    free(l->items);
-  }
-  free(l);
-}
-
 ListObject* list_new(ListObject* l, uint64_t count, bool items_are_objects,
     ExceptionBlock* exc_block) {
   if (!l) {
@@ -41,6 +29,18 @@ ListObject* list_new(ListObject* l, uint64_t count, bool items_are_objects,
     l->items = NULL;
   }
   return l;
+}
+
+void list_delete(ListObject* l) {
+  if (l->items) {
+    if (l->items_are_objects) {
+      for (uint64_t x = 0; x < l->count; x++) {
+        delete_reference(l->items[x]);
+      }
+    }
+    free(l->items);
+  }
+  free(l);
 }
 
 
@@ -81,11 +81,11 @@ void list_append(ListObject* l, void* value, ExceptionBlock* exc_block) {
   list_insert(l, l->count, value, exc_block);
 }
 
-void* list_pop(ListObject* l, int64_t position) {
+void* list_pop(ListObject* l, int64_t position, ExceptionBlock* exc_block) {
   throw runtime_error("list_pop not yet implemented");
 }
 
-void list_resize(ListObject* l, uint64_t count) {
+void list_resize(ListObject* l, uint64_t count, ExceptionBlock* exc_block) {
   throw runtime_error("list_resize not yet implemented");
 }
 

@@ -437,6 +437,7 @@ void AnalysisVisitor::visit(VariableLookup* a) {
 void AnalysisVisitor::visit(AttributeLookup* a) {
   a->base->accept(this);
 
+  int64_t class_id;
   switch (this->current_value.type) {
     // this is technically a failure of the compiler
     case ValueType::Indeterminate:
@@ -456,30 +457,36 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
     case ValueType::Function:
       throw compile_error("attribute lookup on Function value", a->file_offset);
 
-    // these have attributes and we should implement them
-    // TODO: implement them
-    case ValueType::Bytes:
-      throw compile_error("attribute lookup on Bytes value", a->file_offset);
-    case ValueType::Unicode:
-      throw compile_error("attribute lookup on Unicode value", a->file_offset);
-    case ValueType::List:
-      throw compile_error("attribute lookup on List value", a->file_offset);
-    case ValueType::Tuple:
-      throw compile_error("attribute lookup on Tuple value", a->file_offset);
-    case ValueType::Set:
-      throw compile_error("attribute lookup on Set value", a->file_offset);
-    case ValueType::Dict:
-      throw compile_error("attribute lookup on Dict value", a->file_offset);
-    case ValueType::Class:
-      throw compile_error("attribute lookup on Class value", a->file_offset);
-
     // look up the class attribute
-    case ValueType::Instance: {
-      auto* cls = this->global->context_for_class(this->current_value.class_id);
+    case ValueType::Bytes:
+      class_id = BytesObject_class_id;
+      goto AttributeLookup_resume;
+    case ValueType::Unicode:
+      class_id = UnicodeObject_class_id;
+      goto AttributeLookup_resume;
+    case ValueType::List:
+      class_id = ListObject_class_id;
+      goto AttributeLookup_resume;
+    case ValueType::Tuple:
+      class_id = TupleObject_class_id;
+      goto AttributeLookup_resume;
+    case ValueType::Set:
+      class_id = SetObject_class_id;
+      goto AttributeLookup_resume;
+    case ValueType::Dict:
+      class_id = DictObject_class_id;
+      goto AttributeLookup_resume;
+    case ValueType::Class:
+    case ValueType::Instance:
+      class_id = this->current_value.class_id;
+      goto AttributeLookup_resume;
+    AttributeLookup_resume: {
+
+      auto* cls = this->global->context_for_class(class_id);
       if (!cls) {
         throw compile_error(string_printf(
-            "attribute lookup refers to missing class: %" PRId64,
-            this->current_value.class_id), a->file_offset);
+            "attribute lookup refers to missing class: %" PRId64, class_id),
+            a->file_offset);
       }
 
       try {
@@ -487,7 +494,7 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
       } catch (const out_of_range& e) {
         throw compile_error(string_printf(
               "class %" PRId64 " attribute lookup refers to missing attribute: %s",
-              this->current_value.class_id, a->name.c_str()),
+              class_id, a->name.c_str()),
             a->file_offset);
       }
 

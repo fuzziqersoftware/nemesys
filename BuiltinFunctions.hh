@@ -23,6 +23,8 @@ extern int64_t OSError_class_id;
 extern int64_t TypeError_class_id;
 extern int64_t ValueError_class_id;
 
+extern int64_t BytesObject_class_id;
+extern int64_t UnicodeObject_class_id;
 extern int64_t DictObject_class_id;
 extern int64_t ListObject_class_id;
 extern int64_t TupleObject_class_id;
