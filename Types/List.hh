@@ -13,6 +13,7 @@
 struct ListObject {
   BasicObject basic;
   uint64_t count;
+  uint64_t capacity;
   bool items_are_objects;
   void** items;
 };
@@ -29,7 +30,6 @@ void list_insert(ListObject* l, int64_t position, void* value,
     ExceptionBlock* exc_block = NULL);
 void list_append(ListObject* l, void* value, ExceptionBlock* exc_block = NULL);
 void* list_pop(ListObject* l, int64_t position, ExceptionBlock* exc_block);
-void list_resize(ListObject* l, uint64_t count, ExceptionBlock* exc_block);
 void list_clear(ListObject* l);
 
 size_t list_size(const ListObject* d);

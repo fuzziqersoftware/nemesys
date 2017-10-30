@@ -1221,7 +1221,7 @@ void CompilationVisitor::visit(ListConstructor* a) {
       int_args, {}, -1, this->target_register);
 
   // save the list items pointer
-  this->as.write_mov(rbx, MemoryReference(this->target_register, 0x20));
+  this->as.write_mov(rbx, MemoryReference(this->target_register, 0x28));
   this->write_push(Register::RAX);
 
   // generate code for each item and track the extension type
@@ -1250,7 +1250,7 @@ void CompilationVisitor::visit(ListConstructor* a) {
 
   // if the extension type is an object of some sort, set the destructor flag
   if (type_has_refcount(extension_type.type)) {
-    this->as.write_mov(MemoryReference(this->target_register, 0x18), 1);
+    this->as.write_mov(MemoryReference(this->target_register, 0x20), 1);
   }
 
   // restore the regs we saved
@@ -2514,7 +2514,7 @@ void CompilationVisitor::visit(ForStatement* a) {
     this->as.write_jge(end_label);
     // else, get the list items
     this->as.write_mov(MemoryReference(this->target_register),
-        MemoryReference(this->target_register, 0x20));
+        MemoryReference(this->target_register, 0x28));
     // get the current item from the list
     this->as.write_mov(MemoryReference(this->target_register),
         MemoryReference(this->target_register, 0, Register::RBX, 8));
