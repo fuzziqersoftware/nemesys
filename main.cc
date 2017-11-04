@@ -52,8 +52,8 @@ Options:\n\
         All - enable all behavior flags and debug info\n\
       -X may be used multiple times to enable multiple flags.\n\
 \n\
-All arguments after a filename or -c option are not parsed; instead, they are\n\
-available to the program in sys.argv.\n\
+All arguments after a filename, -c option, or -m option are not parsed;\n\
+instead, they are available to the program in sys.argv.\n\
 \n\
 The interactive shell is not yet implemented. Either a filename or the -c\n\
 option must be given.\n\
