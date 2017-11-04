@@ -231,18 +231,16 @@ void AnalysisVisitor::visit(ArrayIndex* a) {
       this->current_value = Variable(ValueType::Indeterminate);
       return;
     }
+
+    // annotate the AST node if we know the value
+    a->index_constant = true;
+    a->index_value = this->current_value.int_value;
   }
 
   if (array.type == ValueType::Bytes) {
     // if the array is empty, all subscript references throw IndexError
-    if (array.bytes_value->empty()) {
-      // TODO: we need to throw an exception inside the program, not a compiler
-      // error!
-      throw compile_error("bytes is empty", a->file_offset);
-    }
 
     // if we know the array value but not the index, we can know the result type
-    // TODO: this is technically not true; may need to throw IndexError instead
     if (!this->current_value.value_known) {
       this->current_value = Variable(ValueType::Bytes);
       return;
@@ -254,24 +252,16 @@ void AnalysisVisitor::visit(ArrayIndex* a) {
       index += static_cast<int64_t>(array.bytes_value->size());
     }
     if ((index < 0) || (index >= static_cast<int64_t>(array.bytes_value->size()))) {
-      // TODO: IndexError here too
-      throw compile_error("bytes index out of range");
+      this->current_value = Variable(ValueType::Indeterminate);
+    } else {
+      this->current_value = Variable(ValueType::Bytes,
+          array.bytes_value->substr(index, 1));
     }
-    this->current_value = Variable(ValueType::Bytes,
-        array.bytes_value->substr(index, 1));
 
   } else if (array.type == ValueType::Unicode) {
     // TODO: deduplicate with the above case somehow
 
-    // if the array is empty, all subscript references throw IndexError
-    if (array.unicode_value->empty()) {
-      // TODO: we need to throw an exception inside the program, not a compiler
-      // error!
-      throw compile_error("unicode is empty", a->file_offset);
-    }
-
     // if we know the array value but not the index, we can know the result type
-    // TODO: this is technically not true; may need to throw IndexError instead
     if (!this->current_value.value_known) {
       this->current_value = Variable(ValueType::Unicode);
       return;
@@ -283,23 +273,17 @@ void AnalysisVisitor::visit(ArrayIndex* a) {
       index += static_cast<int64_t>(array.unicode_value->size());
     }
     if ((index < 0) || (index >= static_cast<int64_t>(array.unicode_value->size()))) {
-      // TODO: IndexError here too
-      throw compile_error("unicode index out of range");
+      this->current_value = Variable(ValueType::Indeterminate);
+    } else {
+      this->current_value = Variable(ValueType::Unicode,
+          array.unicode_value->substr(index, 1));
     }
-    this->current_value = Variable(ValueType::Unicode,
-        array.unicode_value->substr(index, 1));
 
   } else if ((array.type == ValueType::List) || (array.type == ValueType::Tuple)) {
     // if the array is empty, all subscript references throw IndexError
-    if (array.list_value->empty()) {
-      // TODO: we need to throw an exception inside the program, not a compiler
-      // error!
-      throw compile_error("array is empty", a->file_offset);
-    }
 
     // if we know the array value but not the index, we can know the result type
     // if all items in the array have the same type
-    // TODO: this is technically not true; may need to throw IndexError instead
     if (!this->current_value.value_known) {
       // we know list_value isn't empty here
       ValueType return_type = (*array.list_value)[0]->type;
@@ -319,10 +303,10 @@ void AnalysisVisitor::visit(ArrayIndex* a) {
       index += static_cast<int64_t>(array.list_value->size());
     }
     if ((index < 0) || (index >= static_cast<int64_t>(array.list_value->size()))) {
-      // TODO: IndexError here too
-      throw compile_error("array index out of range");
+      this->current_value = Variable(ValueType::Indeterminate);
+    } else {
+      this->current_value = *(*array.list_value)[index];
     }
-    this->current_value = *(*array.list_value)[index];
 
   // arbitrary indexes
   } else if (array.type == ValueType::Dict) {
@@ -332,16 +316,8 @@ void AnalysisVisitor::visit(ArrayIndex* a) {
       return;
     }
 
-    // if the dict is empty, all subscript references throw KeyError
-    if (array.dict_value->empty()) {
-      // TODO: we need to throw an exception inside the program, not a compiler
-      // error!
-      throw compile_error("dict is empty", a->file_offset);
-    }
-
     // if we know the dict value but not the index, we can know the result type
     // if all values in the dict have the same type
-    // TODO: this is technically not true; may need to throw KeyError instead
     if (!this->current_value.value_known) {
       auto it = array.dict_value->begin();
       ValueType return_type = it->second->type;
@@ -359,7 +335,7 @@ void AnalysisVisitor::visit(ArrayIndex* a) {
     try {
       this->current_value = *array.dict_value->at(this->current_value);
     } catch (const out_of_range& e) {
-      throw compile_error("key does not exist in dict");
+      this->current_value = Variable(ValueType::Indeterminate);
     }
 
   // other types don't support subscripts

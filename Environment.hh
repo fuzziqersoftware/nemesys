@@ -57,7 +57,7 @@ struct Variable {
 
   // unknown value constructors
   Variable();
-  Variable(ValueType type);
+  explicit Variable(ValueType type);
   Variable(ValueType type, const std::vector<Variable>& extension_types);
   Variable(ValueType type, std::vector<Variable>&& extension_types);
 

@@ -5,6 +5,12 @@ for x in a:
 else:
   print('done')
 
+print('a[2] is ' + repr(a[2]))
+try:
+  print('a[5] is ' + repr(a[5]))
+except IndexError:
+  print('a[5] does not exist')
+
 b = ['a', 'b', 'c']
 print('b has ' + repr(len(b)) + ' items')
 for y in b:

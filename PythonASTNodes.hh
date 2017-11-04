@@ -356,6 +356,10 @@ struct ArrayIndex : Expression {
   std::shared_ptr<Expression> array;
   std::shared_ptr<Expression> index;
 
+  // annotations
+  bool index_constant;
+  int64_t index_value;
+
   ArrayIndex(std::shared_ptr<Expression> array,
       std::shared_ptr<Expression> index, size_t file_offset);
 

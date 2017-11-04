@@ -519,7 +519,7 @@ void FunctionCall::accept(ASTVisitor* v) {
 
 ArrayIndex::ArrayIndex(shared_ptr<Expression> array,
     shared_ptr<Expression> index, size_t file_offset) : Expression(file_offset),
-    array(array), index(index) { }
+    array(array), index(index), index_constant(false), index_value(0) { }
 
 string ArrayIndex::str() const {
   return this->array->str() + "[" + this->index->str() + "]";

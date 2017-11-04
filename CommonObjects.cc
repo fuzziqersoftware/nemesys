@@ -12,6 +12,7 @@
 #include "Types/Reference.hh"
 #include "Types/Strings.hh"
 #include "Types/List.hh"
+#include "Types/Tuple.hh"
 #include "Types/Dictionary.hh"
 
 using namespace std;
@@ -43,6 +44,11 @@ static const vector<const void*> objects({
   void_fn_ptr(&unicode_concat),
 
   void_fn_ptr(&list_new),
+  void_fn_ptr(&list_get_item),
+  void_fn_ptr(&list_set_item),
+
+  void_fn_ptr(&tuple_new),
+  void_fn_ptr(&tuple_get_item),
 
   void_fn_ptr(&dictionary_next_item),
 });

@@ -20,6 +20,7 @@
 #include "Types/Reference.hh"
 #include "Types/Strings.hh"
 #include "Types/List.hh"
+#include "Types/Tuple.hh"
 #include "Types/Dictionary.hh"
 
 using namespace std;
@@ -357,7 +358,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         this->as.write_setz(MemoryReference(byte_register_for_register(
             this->target_register)));
 
-      } else if (this->current_type == ValueType::Float) {
+      } else if (this->current_type.type == ValueType::Float) {
         // 0.0 and -0.0 are falsey, everything else is truthy
         // the sign bit is the highest bit; to truth-test floats, we just shift
         // out the sign bit and check if the rest is zero
@@ -368,12 +369,12 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         this->as.write_setz(MemoryReference(byte_register_for_register(
             this->target_register)));
 
-      } else if ((this->current_type == ValueType::Bytes) ||
-                 (this->current_type == ValueType::Unicode) ||
-                 (this->current_type == ValueType::List) ||
-                 (this->current_type == ValueType::Tuple) ||
-                 (this->current_type == ValueType::Set) ||
-                 (this->current_type == ValueType::Dict)) {
+      } else if ((this->current_type.type == ValueType::Bytes) ||
+                 (this->current_type.type == ValueType::Unicode) ||
+                 (this->current_type.type == ValueType::List) ||
+                 (this->current_type.type == ValueType::Tuple) ||
+                 (this->current_type.type == ValueType::Set) ||
+                 (this->current_type.type == ValueType::Dict)) {
         // load the size field, check if it's zero
         Register reg = this->available_register_except({this->target_register});
         MemoryReference mem(reg);
@@ -422,7 +423,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         this->as.write_neg(target_mem);
         this->current_type = Variable(ValueType::Int);
 
-      } else if (this->current_type == ValueType::Float) {
+      } else if (this->current_type.type == ValueType::Float) {
         // this is totally cheating. here we manually flip the sign bit
         // TODO: there's probably a not-stupid way to do this
         MemoryReference tmp(this->available_register());
@@ -1216,7 +1217,7 @@ void CompilationVisitor::visit(ListConstructor* a) {
   });
   this->as.write_xor(int_args[0], int_args[0]);
   this->as.write_mov(int_args[1], a->items.size());
-  this->as.write_xor(int_args[2], int_args[0]);
+  this->as.write_xor(int_args[2], int_args[2]); // we'll set items_are_objects later
   this->write_function_call(common_object_reference(void_fn_ptr(&list_new)),
       int_args, {}, -1, this->target_register);
 
@@ -1230,8 +1231,13 @@ void CompilationVisitor::visit(ListConstructor* a) {
   for (const auto& item : a->items) {
     this->as.write_label(string_printf("__ListConstructor_%p_item_%zu", a, item_index));
     item->accept(this);
-    this->as.write_mov(MemoryReference(Register::RBX, item_index * 8),
-        MemoryReference(this->target_register));
+    if (this->current_type.type == ValueType::Float) {
+      this->as.write_movsd(MemoryReference(Register::RBX, item_index * 8),
+          MemoryReference(this->float_target_register));
+    } else {
+      this->as.write_mov(MemoryReference(Register::RBX, item_index * 8),
+          MemoryReference(this->target_register));
+    }
     item_index++;
 
     // merge the type with the known extension type
@@ -1283,8 +1289,73 @@ void CompilationVisitor::visit(TupleConstructor* a) {
   this->file_offset = a->file_offset;
   this->assert_not_evaluating_instance_pointer();
 
-  // TODO: generate malloc call, item constructor code
-  throw compile_error("TupleConstructor not yet implemented", this->file_offset);
+  this->as.write_label(string_printf("__TupleConstructor_%p_setup", a));
+
+  // we'll use rbx to store the tuple ptr while constructing items and I'm lazy
+  if (this->target_register == Register::RBX) {
+    throw compile_error("cannot use rbx as target register for tuple construction");
+  }
+  this->write_push(Register::RBX);
+  int64_t previously_reserved_registers = this->write_push_reserved_registers();
+
+  // allocate the tuple object
+  this->as.write_label(string_printf("__TupleConstructor_%p_allocate", a));
+  vector<const MemoryReference> int_args({
+    MemoryReference(int_argument_register_order[0]),
+    MemoryReference(int_argument_register_order[1]),
+    r14,
+  });
+  this->as.write_xor(int_args[0], int_args[0]);
+  this->as.write_mov(int_args[1], a->items.size());
+  this->write_function_call(common_object_reference(void_fn_ptr(&tuple_new)),
+      int_args, {}, -1, this->target_register);
+
+  // save the tuple items pointer
+  this->as.write_lea(Register::RBX, MemoryReference(this->target_register, 0x18));
+  this->write_push(Register::RAX);
+
+  // generate code for each item and track the extension type
+  vector<Variable> extension_types;
+  for (const auto& item : a->items) {
+    this->as.write_label(string_printf("__TupleConstructor_%p_item_%zu", a, extension_types.size()));
+    item->accept(this);
+    if (this->current_type.type == ValueType::Float) {
+      this->as.write_movsd(MemoryReference(Register::RBX, extension_types.size() * 8),
+          MemoryReference(this->float_target_register));
+    } else {
+      this->as.write_mov(MemoryReference(Register::RBX, extension_types.size() * 8),
+          MemoryReference(this->target_register));
+    }
+    extension_types.emplace_back(move(this->current_type));
+  }
+
+  // generate code to write the has_refcount map
+  // TODO: we can coalesce these writes for tuples larger than 8 items
+  this->as.write_label(string_printf("__TupleConstructor_%p_has_refcount_map", a));
+  size_t types_handled = 0;
+  while (types_handled < extension_types.size()) {
+    uint8_t value = 0;
+    for (size_t x = 0; (x < 8) && ((types_handled + x) < extension_types.size()); x++) {
+      if (type_has_refcount(extension_types[types_handled + x].type)) {
+        value |= (0x80 >> x);
+      }
+    }
+    this->as.write_mov(MemoryReference(Register::RBX,
+        extension_types.size() * 8 + (types_handled / 8)), value, OperandSize::Byte);
+    types_handled += 8;
+  }
+
+  // get the tuple pointer back
+  this->as.write_label(string_printf("__TupleConstructor_%p_finalize", a));
+  this->write_pop(this->target_register);
+
+  // restore the regs we saved
+  this->write_pop_reserved_registers(previously_reserved_registers);
+  this->write_pop(Register::RBX);
+
+  // the result type is a new reference to a Tuple[extension_types]
+  this->current_type = Variable(ValueType::Tuple, extension_types);
+  this->holding_reference = true;
 }
 
 void CompilationVisitor::visit(ListComprehension* a) {
@@ -1731,8 +1802,79 @@ void CompilationVisitor::visit(ArrayIndex* a) {
   this->file_offset = a->file_offset;
   this->assert_not_evaluating_instance_pointer();
 
-  // TODO
-  throw compile_error("ArrayIndex not yet implemented", this->file_offset);
+  // get the collection
+  a->array->accept(this);
+  Variable collection_type = move(this->current_type);
+
+  if ((collection_type.type != ValueType::List) && (collection_type.type != ValueType::Tuple)) {
+    // TODO
+    throw compile_error("ArrayIndex not yet implemented for collections of type " + collection_type.str(),
+        this->file_offset);
+  }
+
+  // I'm lazy and don't want to duplicate work - just call the appropriate
+  // get_item function
+
+  Register original_target_register = this->target_register;
+  int64_t previously_reserved_registers = this->write_push_reserved_registers();
+
+  // arg 1 is the list/tuple object
+  if (this->target_register != Register::RDI) {
+    this->as.write_mov(rdi, MemoryReference(this->target_register));
+  }
+
+  // for lists, the index can be dynamic; compute it now
+  int64_t tuple_index = a->index_value;
+  if (collection_type.type == ValueType::List) {
+    this->target_register = Register::RSI;
+    this->reserve_register(Register::RDI);
+    a->index->accept(this);
+    if (this->current_type.type != ValueType::Int) {
+      throw compile_error("list index must be Int; here it\'s " + this->current_type.str(),
+          this->file_offset);
+    }
+    this->release_register(Register::RDI);
+
+  // for tuples, the index must be static since the result type depends on it.
+  // for this reason, it also needs to be in range of the extension types
+  } else {
+    if (!a->index_constant) {
+      throw compile_error("tuple indexes must be constants", this->file_offset);
+    }
+    if (tuple_index < 0) {
+      tuple_index += collection_type.extension_types.size();
+    }
+    if ((tuple_index < 0) || (tuple_index >= collection_type.extension_types.size())) {
+      throw compile_error("tuple index out of range", this->file_offset);
+    }
+    this->as.write_mov(Register::RSI, tuple_index);
+  }
+
+  // now call the function
+  const void* fn = (collection_type.type == ValueType::List) ?
+      void_fn_ptr(&list_get_item) : void_fn_ptr(&tuple_get_item);
+  this->write_function_call(common_object_reference(fn), {rdi, rsi, r14}, {},
+      -1, original_target_register);
+
+  // for lists, the return type is the extension type
+  if (collection_type.type == ValueType::List) {
+    this->current_type = collection_type.extension_types[0];
+  // for tuples, the return type is one of the extension types, determined by
+  // the static index value
+  } else {
+    this->current_type = collection_type.extension_types[tuple_index];
+  }
+
+  // if the return value is a float, it's currently in an int register; move it
+  // to an xmm reg if needed
+  if (this->current_type.type == ValueType::Float) {
+    this->as.write_movq_to_xmm(this->float_target_register,
+        MemoryReference(this->target_register));
+  }
+
+  // restore state
+  this->write_pop_reserved_registers(previously_reserved_registers);
+  this->target_register = original_target_register;
 }
 
 void CompilationVisitor::visit(ArraySlice* a) {
@@ -2502,27 +2644,61 @@ void CompilationVisitor::visit(ForStatement* a) {
   string end_label = string_printf("__ForStatement_%p_complete", a);
   string break_label = string_printf("__ForStatement_%p_broken", a);
 
-  if (collection_type.type == ValueType::List) {
+  if ((collection_type.type == ValueType::List) ||
+      (collection_type.type == ValueType::Tuple)) {
+
+    // tuples containing disparate types can't be iterated
+    if ((collection_type.type == ValueType::Tuple) &&
+        (!collection_type.extension_types.empty())) {
+      Variable uniform_extension_type = collection_type.extension_types[0];
+      for (const Variable& extension_type : collection_type.extension_types) {
+        if (uniform_extension_type != extension_type) {
+          string uniform_str = uniform_extension_type.str();
+          string other_str = extension_type.str();
+          throw compile_error(string_printf(
+              "can\'t iterate over Tuple with disparate types (contains %s and %s)",
+              uniform_str.c_str(), other_str.c_str()), this->file_offset);
+        }
+      }
+    }
+
+    ValueType item_type = collection_type.extension_types[0].type;
 
     this->as.write_label(next_label);
-    // get the list object
+    // get the list/tuple object
     this->as.write_mov(MemoryReference(this->target_register),
         MemoryReference(Register::RSP, 8));
-    // check if we're at the end
+
+    // check if we're at the end and skip the body if so
     this->as.write_cmp(rbx, MemoryReference(this->target_register, 0x10));
-    // if we are, skip the loop body
     this->as.write_jge(end_label);
-    // else, get the list items
-    this->as.write_mov(MemoryReference(this->target_register),
-        MemoryReference(this->target_register, 0x28));
-    // get the current item from the list
-    this->as.write_mov(MemoryReference(this->target_register),
-        MemoryReference(this->target_register, 0, Register::RBX, 8));
+
+    // get the next item
+    if (collection_type.type == ValueType::List) {
+      this->as.write_mov(MemoryReference(this->target_register),
+          MemoryReference(this->target_register, 0x28));
+      if (item_type == ValueType::Float) {
+        this->as.write_movq_to_xmm(this->float_target_register,
+            MemoryReference(this->target_register, 0, Register::RBX, 8));
+      } else {
+        this->as.write_mov(MemoryReference(this->target_register),
+            MemoryReference(this->target_register, 0, Register::RBX, 8));
+      }
+    } else {
+      if (item_type == ValueType::Float) {
+        this->as.write_movq_to_xmm(this->float_target_register,
+            MemoryReference(this->target_register, 0x18, Register::RBX, 8));
+      } else {
+        this->as.write_mov(MemoryReference(this->target_register),
+            MemoryReference(this->target_register, 0x18, Register::RBX, 8));
+      }
+    }
+
     // increment the item index
     this->as.write_inc(rbx);
 
     // if the extension type has a refcount, add a reference
-    if (type_has_refcount(collection_type.extension_types[0].type)) {
+    if (type_has_refcount(item_type)) {
       this->write_add_reference(this->target_register);
     }
 

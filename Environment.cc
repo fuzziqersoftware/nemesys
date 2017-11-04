@@ -763,8 +763,9 @@ std::string type_signature_for_variables(const vector<Variable>& vars,
         break;
 
       case ValueType::Tuple:
-        // TODO
-        throw invalid_argument("type signatures for Tuples not implemented");
+        ret += string_printf("T%zu", var.extension_types.size());
+        ret += type_signature_for_variables(var.extension_types, allow_indeterminate);
+        break;
 
       case ValueType::Set:
         ret += 'S';
