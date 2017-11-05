@@ -1,3 +1,5 @@
+import sys
+
 def is_prime(a):
   i = 2
   limit = a // 2
@@ -7,9 +9,9 @@ def is_prime(a):
     i = i + 1
   return True
 
-
+limit = int(sys.argv[1])
 a = 2
-while a < 100000:
+while a < limit:
   if is_prime(a):
     print('%d is prime' % a)
   else:

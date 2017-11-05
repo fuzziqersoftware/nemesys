@@ -54,7 +54,11 @@ void* list_get_item(const ListObject* l, int64_t position,
     raise_python_exception(exc_block, create_instance(IndexError_class_id));
     throw out_of_range("index out of range for list object");
   }
-  return l->items[position];
+  void* ret = l->items[position];
+  if (l->items_are_objects) {
+    add_reference(ret);
+  }
+  return ret;
 }
 
 void list_set_item(ListObject* l, int64_t position, void* value,
@@ -70,7 +74,6 @@ void list_set_item(ListObject* l, int64_t position, void* value,
     delete_reference(l->items[position]);
   }
   l->items[position] = value;
-  add_reference(l->items[position]);
 }
 
 void list_insert(ListObject* l, int64_t position, void* value,

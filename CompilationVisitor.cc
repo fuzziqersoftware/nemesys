@@ -1907,6 +1907,10 @@ void CompilationVisitor::visit(ArrayIndex* a) {
     this->current_type = collection_type.extension_types[tuple_index];
   }
 
+  // if the return value has a refcount, then the function returned a new
+  // reference to it
+  this->holding_reference = type_has_refcount(this->current_type.type);
+
   // if the return value is a float, it's currently in an int register; move it
   // to an xmm reg if needed
   if (this->current_type.type == ValueType::Float) {
