@@ -3,7 +3,7 @@ x = 0
 def f(delta=0):
   global x
   x = x + delta
-  print('x is now ' + repr(x) + '; delta is ' + repr(delta))
+  print('x is now %d; delta is %d' % (x, delta))
 
 f(1)
 f(2)

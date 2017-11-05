@@ -10,5 +10,5 @@ if 2 + 2 == 5:
 # there should be no condition check in the generated assembly for this block.
 # we test this by deliberately writing code that doesn't compile (as above) but
 # will never execute anyway
-if (2 + 2 == 4) or print(5):
+if (2 + 2 == 4) or hex('lol'):
   print("you should always see this message")
