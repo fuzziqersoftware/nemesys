@@ -1,8 +1,8 @@
 .intel_syntax noprefix
 
-// exponentiation algorithm by repeated squaring. this is O(log(exponent value))
+# exponentiation algorithm by repeated squaring. this is O(log(exponent value))
 
-// in c: int64_t ipow(int64_t base, int64_t exponent);
+# in c: int64_t ipow(int64_t base, int64_t exponent);
 
 _ipow:
   mov   rax, 1
