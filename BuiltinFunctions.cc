@@ -23,6 +23,7 @@
 // builtin module implementations
 #include "Modules/__nemesys__.hh"
 #include "Modules/errno.hh"
+#include "Modules/math.hh"
 #include "Modules/posix.hh"
 #include "Modules/sys.hh"
 #include "Modules/time.hh"
@@ -1005,6 +1006,7 @@ struct BuiltinModule {
 static unordered_map<string, BuiltinModule> builtin_modules({
   DECLARE_MODULE(__nemesys__),
   DECLARE_MODULE(errno),
+  DECLARE_MODULE(math),
   DECLARE_MODULE(posix),
   DECLARE_MODULE(sys),
   DECLARE_MODULE(time),

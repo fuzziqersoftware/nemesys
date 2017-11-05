@@ -8,7 +8,7 @@ OBJECTS=Main.o Debug.o \
 	Exception.o Exception-Assembly.o \
 	Types/Reference.o Types/Strings.o Types/Format.o Types/Tuple.o Types/List.o Types/Dictionary.o Types/Instance.o \
 	AnnotationVisitor.o AnalysisVisitor.o CompilationVisitor.o \
-	Modules/__nemesys__.o Modules/sys.o Modules/posix.o Modules/errno.o Modules/time.o
+	Modules/__nemesys__.o Modules/sys.o Modules/math.o Modules/posix.o Modules/errno.o Modules/time.o
 CXXFLAGS=-g -Wall -Werror -std=c++14 -I/opt/local/include
 LDFLAGS=-L/opt/local/lib -lphosg
 

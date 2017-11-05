@@ -1,8 +1,9 @@
+import math
 import sys
 
 def is_prime(a):
   i = 2
-  limit = a // 2
+  limit = a // math.sqrt(a)
   while i <= limit:
     if a % i == 0:
       return False
