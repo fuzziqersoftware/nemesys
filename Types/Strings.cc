@@ -45,6 +45,10 @@ BytesObject* bytes_new(BytesObject* s, const char* data, ssize_t count,
   return s;
 }
 
+BytesObject* bytes_from_cxx_string(BytesObject* s, const string& data) {
+  return bytes_new(s, data.data(), data.size());
+}
+
 BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b,
     ExceptionBlock* exc_block) {
   uint64_t count = a->count + b->count;
@@ -138,6 +142,10 @@ UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count,
   }
 
   return s;
+}
+
+UnicodeObject* unicode_from_cxx_wstring(UnicodeObject* s, const wstring& data) {
+  return unicode_new(s, data.data(), data.size());
 }
 
 UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b,

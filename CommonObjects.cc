@@ -11,6 +11,7 @@
 #include "Exception.hh"
 #include "Types/Reference.hh"
 #include "Types/Strings.hh"
+#include "Types/Format.hh"
 #include "Types/List.hh"
 #include "Types/Tuple.hh"
 #include "Types/Dictionary.hh"
@@ -37,11 +38,15 @@ static const vector<const void*> objects({
   void_fn_ptr(&bytes_compare),
   void_fn_ptr(&bytes_contains),
   void_fn_ptr(&bytes_concat),
+  void_fn_ptr(&bytes_format),
+  void_fn_ptr(&bytes_format_one),
 
   void_fn_ptr(&unicode_equal),
   void_fn_ptr(&unicode_compare),
   void_fn_ptr(&unicode_contains),
   void_fn_ptr(&unicode_concat),
+  void_fn_ptr(&unicode_format),
+  void_fn_ptr(&unicode_format_one),
 
   void_fn_ptr(&list_new),
   void_fn_ptr(&list_get_item),

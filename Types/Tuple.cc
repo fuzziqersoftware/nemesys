@@ -70,7 +70,7 @@ void* tuple_get_item(const TupleObject* t, int64_t position,
   }
   if ((position < 0) || (position >= t->count)) {
     raise_python_exception(exc_block, create_instance(IndexError_class_id));
-    throw out_of_range("index out of range for list object");
+    throw out_of_range("index out of range for tuple object");
   }
 
   // return a new reference to ret if it's an object
@@ -88,7 +88,7 @@ void tuple_set_item(TupleObject* t, int64_t position, void* value,
   }
   if ((position < 0) || (position >= t->count)) {
     raise_python_exception(exc_block, create_instance(IndexError_class_id));
-    throw out_of_range("index out of range for list object");
+    throw out_of_range("index out of range for tuple object");
   }
 
   // delete the previous object (if it was an object) and set the refcount

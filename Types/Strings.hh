@@ -31,6 +31,7 @@ struct UnicodeObject {
 
 BytesObject* bytes_new(BytesObject* s, const char* data, ssize_t count,
     ExceptionBlock* exc_block = NULL);
+BytesObject* bytes_from_cxx_string(BytesObject* s, const std::string& data);
 BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b,
     ExceptionBlock* exc_block = NULL);
 char bytes_at(const BytesObject* s, size_t which,
@@ -43,6 +44,7 @@ std::string bytes_to_cxx_string(const BytesObject* s);
 
 UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count,
     ExceptionBlock* exc_block = NULL);
+UnicodeObject* unicode_from_cxx_wstring(UnicodeObject* s, const std::wstring& data);
 UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b,
     ExceptionBlock* exc_block = NULL);
 wchar_t unicode_at(const UnicodeObject* s, size_t which,

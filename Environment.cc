@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "Types/Format.hh"
 #include "Types/Reference.hh"
 
 using namespace std;
@@ -714,7 +715,7 @@ bool type_has_refcount(ValueType type) {
 
 
 
-std::string type_signature_for_variables(const vector<Variable>& vars,
+string type_signature_for_variables(const vector<Variable>& vars,
     bool allow_indeterminate) {
   string ret;
   for (const Variable& var : vars) {
@@ -1741,11 +1742,19 @@ Variable execute_binary_operator(BinaryOperator oper, const Variable& left,
       }
 
       if (left.type == ValueType::Bytes) {
-        // TODO
+        if (right.type != ValueType::Tuple) {
+          bytes_typecheck_format(*left.bytes_value, {right});
+        } else {
+          bytes_typecheck_format(*left.bytes_value, right.extension_types);
+        }
         return Variable(ValueType::Bytes);
       }
       if (left.type == ValueType::Unicode) {
-        // TODO
+        if (right.type != ValueType::Tuple) {
+          unicode_typecheck_format(*left.unicode_value, {right});
+        } else {
+          unicode_typecheck_format(*left.unicode_value, right.extension_types);
+        }
         return Variable(ValueType::Unicode);
       }
 

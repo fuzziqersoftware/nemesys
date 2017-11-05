@@ -19,6 +19,7 @@
 #include "AMD64Assembler.hh"
 #include "Types/Reference.hh"
 #include "Types/Strings.hh"
+#include "Types/Format.hh"
 #include "Types/List.hh"
 #include "Types/Tuple.hh"
 #include "Types/Dictionary.hh"
@@ -578,7 +579,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     this->as.write_movq_from_xmm(target_mem, this->float_target_register);
   }
   this->write_push(this->target_register); // so right doesn't clobber it
-  if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+  bool left_holding_reference = type_has_refcount(this->current_type.type);
+  if (left_holding_reference && !this->holding_reference) {
     throw compile_error("non-held reference to left binary operator argument",
         this->file_offset);
   }
@@ -590,7 +592,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     this->as.write_movq_from_xmm(target_mem, this->float_target_register);
   }
   this->write_push(this->target_register); // for the destructor call later
-  if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+  bool right_holding_reference = type_has_refcount(this->current_type.type);
+  if (right_holding_reference && !this->holding_reference) {
     throw compile_error("non-held reference to right binary operator argument",
         this->file_offset);
   }
@@ -613,6 +616,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   bool right_bytes = (right_type.type == ValueType::Bytes);
   bool left_unicode = (left_type.type == ValueType::Unicode);
   bool right_unicode = (right_type.type == ValueType::Unicode);
+  bool right_tuple = (right_type.type == ValueType::Tuple);
 
   this->as.write_label(string_printf("__BinaryOperation_%p_combine", a));
   switch (a->oper) {
@@ -958,6 +962,44 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     }
 
     case BinaryOperator::Modulus:
+      if (left_bytes || left_unicode) {
+        // AnalysisVisitor should have already done the typechecking - all we
+        // have to do is call the right format function
+        if (right_tuple) {
+          const void* fn = left_bytes ?
+              void_fn_ptr(&bytes_format) : void_fn_ptr(&unicode_format);
+          this->write_function_call(common_object_reference(fn),
+              {left_mem, right_mem, r14}, {}, -1, this->target_register);
+
+        } else {
+          // in this case (unlike above) right might not be an object, so we
+          // have to tell the callee whether it is or not
+          Register r = available_register(Register::RDX);
+          MemoryReference r_mem(r);
+          if (!right_holding_reference) {
+            this->as.write_xor(r_mem, r_mem);
+          } else {
+            this->as.write_mov(r_mem, 1);
+          }
+
+          const void* fn = left_bytes ?
+              void_fn_ptr(&bytes_format_one) : void_fn_ptr(&unicode_format_one);
+          this->write_function_call(common_object_reference(fn),
+              {left_mem, right_mem, r_mem, r14}, {}, -1, this->target_register);
+        }
+
+        // if returned a new reference to a string of some sort
+        this->current_type = Variable(left_bytes ?
+            ValueType::Bytes : ValueType::Unicode);
+        this->holding_reference = true;
+
+        // we pass the references we're holding directly into the function, and
+        // it will delete them for us, so we don't need to do it ourselves later
+        left_holding_reference = false;
+        right_holding_reference = false;
+        break;
+      }
+
     case BinaryOperator::IntegerDivision: {
       bool is_mod = (a->oper == BinaryOperator::Modulus);
 
@@ -1117,7 +1159,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   this->as.write_label(string_printf("__BinaryOperation_%p_cleanup", a));
 
   // if either value requires destruction, do so now
-  if (type_has_refcount(left_type.type) || type_has_refcount(right_type.type)) {
+  if (left_holding_reference || right_holding_reference) {
     // save the return value before destroying the temp values
     this->write_push(this->target_register);
 
