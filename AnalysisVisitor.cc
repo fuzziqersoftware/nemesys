@@ -226,15 +226,17 @@ void AnalysisVisitor::visit(ArrayIndex* a) {
       throw compile_error("array subscript is not Bool or Int", a->file_offset);
     }
 
+    // annotate the AST node if we know the value
+    if (this->current_value.value_known) {
+      a->index_constant = true;
+      a->index_value = this->current_value.int_value;
+    }
+
     // if we don't know the array value, we can't know the result type
     if (!array.value_known) {
       this->current_value = Variable(ValueType::Indeterminate);
       return;
     }
-
-    // annotate the AST node if we know the value
-    a->index_constant = true;
-    a->index_value = this->current_value.int_value;
   }
 
   if (array.type == ValueType::Bytes) {
