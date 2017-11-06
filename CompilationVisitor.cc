@@ -2043,9 +2043,13 @@ void CompilationVisitor::visit(AttributeLookup* a) {
     bool has_refcount = type_has_refcount(loc.type.type);
 
     // if this is an object, add a reference to it; otherwise just load it
-    this->as.write_mov(MemoryReference(this->target_register), loc.mem);
-    if (has_refcount) {
-      this->write_add_reference(this->target_register);
+    if (loc.type.type == ValueType::Float) {
+      this->as.write_movsd(MemoryReference(this->float_target_register), loc.mem);
+    } else {
+      this->as.write_mov(MemoryReference(this->target_register), loc.mem);
+      if (has_refcount) {
+        this->write_add_reference(this->target_register);
+      }
     }
 
     this->current_type = loc.type;
