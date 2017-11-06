@@ -49,7 +49,6 @@ static map<string, Variable> globals({
   // {"float_info",           Variable()},
   // {"float_repr_style",     Variable()},
   // {"getrecursionlimit",    Variable()},
-  // {"getrefcount",          Variable()},
   // {"getsizeof",            Variable()},
   // {"hash_info",            Variable()},
   {"hexversion",           Variable(ValueType::Int, 0LL)},
@@ -93,5 +92,31 @@ void sys_set_argv(const vector<const char*>& sys_argv) {
 }
 
 void sys_initialize() {
-  // nothing to do (yet)
+  Variable Indeterminate(ValueType::Indeterminate);
+  Variable Int(ValueType::Int);
+  Variable Bytes(ValueType::Bytes);
+  Variable Unicode(ValueType::Unicode);
+  Variable List(ValueType::List, vector<Variable>({Indeterminate}));
+  Variable Tuple(ValueType::Tuple, vector<Variable>({Indeterminate}));
+  Variable Set(ValueType::Set, vector<Variable>({Indeterminate}));
+  Variable Dict(ValueType::Dict, vector<Variable>({Indeterminate, Indeterminate}));
+
+  static auto getrefcount = +[](BasicObject* a) -> int64_t {
+    return a->refcount;
+  };
+
+  vector<BuiltinFunctionDefinition> module_function_defs({
+    // TODO: this should support Instance also, but this will require some
+    // typecheck hax
+    {"getrefcount", {{{Bytes}, Int, void_fn_ptr(getrefcount)},
+        {{Unicode}, Int, void_fn_ptr(getrefcount)},
+        {{List}, Int, void_fn_ptr(getrefcount)},
+        {{Tuple}, Int, void_fn_ptr(getrefcount)},
+        {{Set}, Int, void_fn_ptr(getrefcount)},
+        {{Dict}, Int, void_fn_ptr(getrefcount)}}, false, false},
+  });
+
+  for (auto& def : module_function_defs) {
+    sys_module->create_builtin_function(def);
+  }
 }
