@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "PythonOperators.hh"
-#include "Environment.hh"
 
 
 

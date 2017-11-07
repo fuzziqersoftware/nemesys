@@ -7,10 +7,10 @@
 #include <phosg/Strings.hh>
 
 #include "Debug.hh"
-#include "PythonLexer.hh"
-#include "PythonParser.hh"
-#include "PythonASTNodes.hh"
-#include "PythonASTVisitor.hh"
+#include "Parser/PythonLexer.hh"
+#include "Parser/PythonParser.hh"
+#include "Parser/PythonASTNodes.hh"
+#include "Parser/PythonASTVisitor.hh"
 #include "Environment.hh"
 #include "BuiltinFunctions.hh"
 

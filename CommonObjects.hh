@@ -1,6 +1,6 @@
 #pragma once
 
-#include "AMD64Assembler.hh" // for MemoryReference
+#include "Assembler/AMD64Assembler.hh" // for MemoryReference
 
 const void* common_object_base();
 size_t common_object_count();

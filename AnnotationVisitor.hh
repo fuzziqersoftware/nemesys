@@ -8,9 +8,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include "SourceFile.hh"
-#include "PythonASTNodes.hh"
-#include "PythonASTVisitor.hh"
+#include "Parser/SourceFile.hh"
+#include "Parser/PythonASTNodes.hh"
+#include "Parser/PythonASTVisitor.hh"
 #include "Environment.hh"
 #include "Analysis.hh"
 

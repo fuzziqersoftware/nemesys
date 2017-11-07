@@ -6,9 +6,9 @@
 #include <phosg/Strings.hh>
 
 #include "Debug.hh"
-#include "SourceFile.hh"
-#include "PythonLexer.hh"
-#include "PythonParser.hh"
+#include "Parser/SourceFile.hh"
+#include "Parser/PythonLexer.hh"
+#include "Parser/PythonParser.hh"
 #include "Environment.hh"
 #include "Analysis.hh"
 #include "BuiltinFunctions.hh"

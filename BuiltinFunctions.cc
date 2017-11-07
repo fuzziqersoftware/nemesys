@@ -18,7 +18,7 @@
 #include "Types/Dictionary.hh"
 #include "Types/List.hh"
 #include "Types/Instance.hh"
-#include "PythonLexer.hh" // for escape()
+#include "Parser/PythonLexer.hh" // for escape()
 
 // builtin module implementations
 #include "Modules/__nemesys__.hh"

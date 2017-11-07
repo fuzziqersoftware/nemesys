@@ -10,11 +10,11 @@
 #include <unordered_set>
 #include <vector>
 
-#include "SourceFile.hh"
-#include "PythonASTNodes.hh"
-#include "Environment.hh"
-#include "CodeBuffer.hh"
+#include "Parser/SourceFile.hh"
+#include "Parser/PythonASTNodes.hh"
+#include "Assembler/CodeBuffer.hh"
 #include "Types/Strings.hh"
+#include "Environment.hh"
 
 
 
