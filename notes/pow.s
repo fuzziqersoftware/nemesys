@@ -4,6 +4,7 @@
 
 # in c: int64_t ipow(int64_t base, int64_t exponent);
 
+.globl _ipow
 _ipow:
   mov   rax, 1
 

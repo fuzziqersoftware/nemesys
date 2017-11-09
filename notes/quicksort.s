@@ -7,8 +7,8 @@
 
 # in c: void quicksort(int64_t* items, size_t count);
 
-.globl quicksort
-quicksort:
+.globl _quicksort
+_quicksort:
   # we use rdx as the array ptr everywhere (in recursive calls too). in the rest
   # of the implementation, rdi is the start index and rsi is the end index
   mov   rdx, rdi
