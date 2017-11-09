@@ -442,7 +442,8 @@ void AMD64Assembler::write_label(const std::string& name) {
 
 
 string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
-    Register reg, OperandSize size, uint32_t extra_prefixes) {
+    Register reg, OperandSize size, uint32_t extra_prefixes,
+    bool skip_64bit_prefix) {
   uint32_t opcode = static_cast<uint32_t>(op);
 
   string ret;
@@ -466,7 +467,8 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
     }
 
     uint8_t prefix_byte = 0x40 | (mem_ext ? 0x01 : 0) | (reg_ext ? 0x04 : 0);
-    if ((size == OperandSize::QuadWord) || (size == OperandSize::QuadWordXMM)) {
+    if (!skip_64bit_prefix &&
+        ((size == OperandSize::QuadWord) || (size == OperandSize::QuadWordXMM))) {
       prefix_byte |= 0x08;
     }
     if ((size == OperandSize::Word) || (size == OperandSize::QuadWordXMM)) {
@@ -586,19 +588,24 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
 }
 
 string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
-    uint8_t z, OperandSize size, uint32_t extra_prefixes) {
+    uint8_t z, OperandSize size, uint32_t extra_prefixes,
+    bool skip_64bit_prefix) {
   return AMD64Assembler::generate_rm(op, mem, static_cast<Register>(z), size,
-      extra_prefixes);
+      extra_prefixes, skip_64bit_prefix);
 }
 
 void AMD64Assembler::write_rm(Operation op, const MemoryReference& mem,
-    Register reg, OperandSize size, uint32_t extra_prefixes) {
-  this->write(this->generate_rm(op, mem, reg, size, extra_prefixes));
+    Register reg, OperandSize size, uint32_t extra_prefixes,
+    bool skip_64bit_prefix) {
+  this->write(this->generate_rm(op, mem, reg, size, extra_prefixes,
+      skip_64bit_prefix));
 }
 
 void AMD64Assembler::write_rm(Operation op, const MemoryReference& mem,
-    uint8_t z, OperandSize size, uint32_t extra_prefixes) {
-  this->write(this->generate_rm(op, mem, z, size, extra_prefixes));
+    uint8_t z, OperandSize size, uint32_t extra_prefixes,
+    bool skip_64bit_prefix) {
+  this->write(this->generate_rm(op, mem, z, size, extra_prefixes,
+      skip_64bit_prefix));
 }
 
 
@@ -671,6 +678,10 @@ void AMD64Assembler::write_pop(Register r) {
     data += r | 0x58;
   }
   this->write(data);
+}
+
+void AMD64Assembler::write_pop(const MemoryReference& mem) {
+  this->write_rm(Operation::POP_RM, mem, 6, OperandSize::QuadWord);
 }
 
 
@@ -1977,6 +1988,12 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
     } else if (opcode == 0x8D) {
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, "lea",
           true, NULL, ext, reg_ext, base_ext, index_ext, operand_size);
+
+    } else if (opcode == 0x8F) {
+      static const char* names[] = {
+          "pop", NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+      opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
+          false, names, ext, reg_ext, base_ext, index_ext, OperandSize::QuadWord);
 
     } else if ((opcode & 0xF8) == 0xB8) {
       Register reg = make_reg(reg_ext, opcode & 7);

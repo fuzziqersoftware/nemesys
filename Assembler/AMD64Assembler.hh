@@ -101,6 +101,7 @@ enum Operation {
   MOV_LOAD8  = 0x8A,
   MOV_LOAD   = 0x8B,
   LEA        = 0x8D,
+  POP_RM     = 0x8F,
   SHIFT8_IMM = 0xC0,
   SHIFT_IMM  = 0xC1,
   RET_IMM    = 0xC2,
@@ -382,6 +383,7 @@ public:
   void write_push(int64_t value);
   void write_push(const MemoryReference& mem);
   void write_pop(Register r);
+  void write_pop(const MemoryReference& mem);
 
   // move opcodes
   void write_lea(Register r, const MemoryReference& mem);
@@ -583,13 +585,17 @@ private:
   static std::string generate_jmp(Operation op8, Operation op32,
     int64_t opcode_address, int64_t target_address, OperandSize* offset_size = NULL);
   static std::string generate_rm(Operation op, const MemoryReference& mem,
-      Register reg, OperandSize size, uint32_t extra_prefixes = 0);
+      Register reg, OperandSize size, uint32_t extra_prefixes = 0,
+      bool skip_64bit_prefix = false);
   static std::string generate_rm(Operation op, const MemoryReference& mem,
-      uint8_t z, OperandSize size, uint32_t extra_prefixes = 0);
+      uint8_t z, OperandSize size, uint32_t extra_prefixes = 0,
+      bool skip_64bit_prefix = false);
   void write_rm(Operation op, const MemoryReference& mem, Register reg,
-      OperandSize size, uint32_t extra_prefixes = 0);
+      OperandSize size, uint32_t extra_prefixes = 0,
+      bool skip_64bit_prefix = false);
   void write_rm(Operation op, const MemoryReference& mem, uint8_t z,
-      OperandSize size, uint32_t extra_prefixes = 0);
+      OperandSize size, uint32_t extra_prefixes = 0,
+      bool skip_64bit_prefix = false);
   static Operation load_store_oper_for_args(Operation op,
       const MemoryReference& to, const MemoryReference& from, OperandSize size);
   void write_load_store(Operation base_op, const MemoryReference& to,
