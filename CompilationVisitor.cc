@@ -28,69 +28,6 @@ using namespace std;
 
 
 
-/* in general we follow the system v calling convention:
- * - int arguments in rdi, rsi, rdx, rcx, r8, r9 (in that order); more on stack
- * - float arguments in xmm0-7 (in that order); more floats on stack
- * - some special handling for variadic functions (need to look this up)
- * - return in rax (+rdx for 128-bit returns), and xmm0 (+xmm1 if needed)
- *
- * space for all local variables is initialized at the beginning of the
- * function's scope. temporary variables may only live during a statement's
- * execution; when a statement is completed, they are either copied to a
- * local/global variable or destroyed.
- *
- * the nemesys calling convention is a little more complex than the system v
- * convention, but is mostly compatible with it, so nemesys functions can
- * directly call c functions (e.g. built-in functions in nemesys itself). the
- * nemesys register assignment is as follows:
- *   reg     = callee-save? = purpose
- *   RAX     =      no      = int return value
- *   RCX     =      no      = 4th int arg
- *   RDX     =      no      = 3rd int arg, int return value (high)
- *   RBX     =      yes     = unused
- *   RSP     =              = stack pointer
- *   RBP     =      yes     = frame pointer
- *   RSI     =      no      = 2nd int arg
- *   RDI     =      no      = 1st int arg
- *   R8      =      no      = 5th int arg
- *   R9      =      no      = 6th int arg
- *   R10     =      no      = temp values
- *   R11     =      no      = temp values
- *   R12     =      yes     = common object pointer
- *   R13     =      yes     = global space pointer
- *   R14     =      yes     = exception block pointer
- *   R15     =      yes     = active exception instance
- *   XMM0    =      no      = 1st float arg, float return value
- *   XMM1    =      no      = 2st float arg, float return value (high)
- *   XMM2-7  =      no      = 3rd-8th float args (in register order)
- *   XMM8-15 =      no      = temp values
- *
- * the special registers (r12-r15) are used as follows:
- * - common objects are stored in a statically-allocated array pointed to by
- *   r12. this array contains handy stuff like pointers to malloc() and free(),
- *   the preallocated MemoryError singleton instance, etc.
- * - global variables are referenced by offsets from r13. each module has a
- *   statically-assigned space above r13, and should read/write globals with
- *   e.g. `mov [r13 + X]` opcodes.
- * - the active exception block pointer is stored in r14. except ad the very
- *   beginning and end of module root scope functions, r14 must never be NULL.
- *   the exception block defines where control should return to when an
- *   exception is raised. this includes all `except Something` blocks, but also
- *   all `finally` blocks and all function scopes (so destructors are properly
- *   called). see the definition of the ExceptionBlock structure in Exception.hh
- *   for more information.
- * - the active exception object is stored in r15. most of the time this should
- *   be NULL; it's only non-NULL when a raise statement is being executed and is
- *   in the proces of transferring control to an except block, or when a finally
- *   block or function destructor call block is running and there is an active
- *   exception.
- *
- * module root scopes compile into functions that take no arguments and return
- * the active exception object if one was raised, or NULL if no exception was
- * raised. functions defined within modules expect r12-r14 to already be set up
- * properly.
- */
-
 static const vector<Register> int_argument_register_order = {
   Register::RDI, Register::RSI, Register::RDX, Register::RCX, Register::R8,
   Register::R9,

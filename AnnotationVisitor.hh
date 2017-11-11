@@ -17,18 +17,6 @@
 
 
 class AnnotationVisitor : public RecursiveASTVisitor {
-  // this visitor does multiple things:
-  // - it assigns function IDs for all functions and lambdas defined in the file
-  // - it collects global names for the module and local names for all functions
-  //   defined in the file (indexed by function ID), as well as if each global
-  //   is mutable (named in a `global` statement or written in multiple places)
-  // - it collects all import statements so the relevant modules can be loaded
-  //   and collected
-  // this visitor modifies the AST by adding annotations for function ID. it
-  // does this only for FunctionDefinition and LambdaDefinition nodes; it does
-  // not do this for FunctionCall nodes since they may refer to modules that are
-  // not yet imported.
-
 public:
   AnnotationVisitor(GlobalAnalysis* global, ModuleAnalysis* module);
   ~AnnotationVisitor() = default;

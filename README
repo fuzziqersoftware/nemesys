@@ -1,0 +1,48 @@
+nemesys
+
+nemesys is a just-in-time (JIT) compiler for the Python programming language. I
+know that PyPy exists; The point of this project is only my personal learning
+and enjoyment.
+
+This project is what happens when someone who has never written a compiler or
+taken a computer languages or compilers class writes a compiler. The goals of
+this project are fun and learning, not necessarily to contribute anything of
+value to the world. If you're a student looking for an example of well-designed
+compiler, this is not such an example.
+
+Here's what nemesys does:
+- Function calls and control flow statements like if, for, while, etc.
+- Fast integer math.
+- Floating-point math.
+- Strings, lists, and tuples.
+- Non-inherited classes.
+- Refcounted garbage collection.
+- Custom class destructors (__del__).
+- Exceptions.
+- Lambdas and non-closure private functions.
+- Function polymorphism.
+
+Here's what nemesys doesn't do yet, but will in the future:
+- Dicts and sets.
+- Variadic functions.
+- Recursion.
+- Class inheritance.
+- Decorators.
+- Most built-in functions.
+- Generators and coroutines.
+- Magic methods on classes (except __init__ and __del__, which are implemented).
+
+Here's what nemesys doesn't do yet, but might in the future:
+- Closures.
+- Return statements inside finally blocks.
+- Support the CPython C API.
+- Optimize its generated assembly code.
+- Build and run on architectures other than AMD64.
+
+Here's what nemesys will probably never be able to do:
+- Assign arbitrary attributes to objects after construction time.
+- Polymorphic variables within a scope (except to/from None).
+- Metaclasses.
+- Negative exponents for integer bases. Just do 1/(a**b) instead.
+
+Have fun. Don't complain to me if you run this and it breaks your computer.

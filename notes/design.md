@@ -1,0 +1,111 @@
+# nemesys design
+
+## Principles
+
+Guiding ideas behind this project:
+- nemesys does not aim to support everything that CPython supports. Reasonable restrictions can be placed on the language that make it easier to statically analyze and compile; it is explicitly a non-goal of this project to support all existing Python code.
+- With the above in mind, nemesys should operate on pure, unmodified Python code, without any auxiliary information (for example, like Cython's .pxd files). All code that runs in nemesys should also run in CPython, unless it uses the __nemesys__ built-in module.
+
+## Conventions
+
+### Refcounting semantics
+
+Unlike CPython, not everything is an object. Trivial types (None, booleans, integers, and floats) do not have reference counts - they're passed by value. Modules, functions, and classes also do not have reference counts; they are never deleted. Everything else has a reference count - this includes bytes objects, unicode objects, lists, tuples, sets, dicts, and class instance objects.
+
+The reference count of an object includes all instances of pointers to that object, including instances in CPU registers. All functions that return references to objects return owned references. All functions compiled by nemesys that take objects as arguments accept only owned references, and will delete those references before returning. Some built-in functions take borrowed references as arguments; most notably, the built-in data structure functions take borrowed references to all of their arguments, and will not delete those references before returning.
+
+### Calling convention
+
+The nemesys calling convention is similar to the System V calling convention used by Linux and Mac OS, but is a little more complex. nemesys' convention is mostly compatible with the System V convention, so nemesys functions can directly call C functions (e.g. built-in functions in nemesys itself). nemesys' register assignment is as follows:
+    register = callee-save? = purpose
+    rax      =      no      = int return value
+    rcx      =      no      = 4th int arg
+    rdx      =      no      = 3rd int arg, int return value (high)
+    rbx      =      yes     = unused
+    rsp      =              = stack pointer
+    rbp      =      yes     = frame pointer
+    rsi      =      no      = 2nd int arg
+    rdi      =      no      = 1st int arg
+    r8       =      no      = 5th int arg
+    r9       =      no      = 6th int arg
+    r10      =      no      = temp values
+    r11      =      no      = temp values
+    r12      =      yes     = common object pointer
+    r13      =      yes     = global space pointer
+    r14      =      yes     = exception block pointer
+    r15      =      yes     = active exception instance
+    xmm0     =      no      = 1st float arg, float return value
+    xmm1     =      no      = 2st float arg, float return value (high)
+    xmm2-7   =      no      = 3rd-8th float args (in register order)
+    xmm8-15  =      no      = temp values
+
+Integer arguments beyond the 6th and floating-point arguments beyond the 8th are passed on the stack.
+
+The special registers (r12-r15) are used as follows:
+- Common objects are stored in a statically-allocated array pointed to by r12. this array contains handy stuff like pointers to malloc() and free(), the preallocated MemoryError singleton instance, etc.
+- Global variables are referenced by offsets from r13. Each module has a statically-assigned space above r13, and should read/write globals with e.g. `mov [r13 + X]` opcodes.
+- The active exception block pointer is stored in r14. Except at the very beginning and end of module root scope functions, r14 must never be zero. The exception block defines where control should return to when an exception is raised. This includes all `except Something` blocks, but also all `finally` blocks and all function scopes (so destructors are properly called). See the definition of the ExceptionBlock structure in Exception.hh for more information.
+- The active exception object is stored in r15. Most of the time this should be zero; it's only nonzero when a raise statement is being executed and is in the process of transferring control to an except block, or when a finally block or function destructor call block is running and there is an active exception.
+
+### Function and class model
+
+nemesys doesn't have class inheritance yet.
+
+Every function and class has a unique ID that identifies it. These IDs share the same space. The `__init__` function for a class has a function ID equal to the class' ID, but otherwise, no function may have the same ID as a class.
+
+Negative function and class IDs are assigned to built-in functions and classes. Functions and classes defined in Python source are assigned positive IDs dynamically. Zero is not a valid function or class ID.
+
+A class does not have to define __init__. If a class doesn't define __init__, then it can't be instantiated, and attempting to do so will give a weird compiler error about missing function contexts. Please consider the environment and always define __init__ for your classes. This will probably be fixed in the future.
+
+If a built-in class doesn't define __init__, though, then it doesn't appear in the global namespace at all, so it can't be instantiated because Python code can't even refer to it.
+
+A function may have multiple fragments. A fragment is a compiled implementation of a function with completely-defined types. This is how nemesys implements function polymorphism - a function's argument types can't be known at definition time, so those variables are left as indeterminate during static analysis. Then at call time, the types of all arguments are known, and this signature is used to refer to the correct fragment, which can then be compiled if necessary and called.
+
+For example, the function sum_all_arguments in tests/functions.py ends up having 3 fragments - one that takes all ints, one that takes all unicode objects, and one that takes all ints except arguments 2, 3, and 4, whcih are floats. If another module later imports this module and calls the function with different argument types, more fragments will be generated and compiled for this function.
+
+## Compilation procedure
+
+nemesys compiles modules in multiple phases. Roughly described, the phases are as follows:
+- Search (finding the source file on disk)
+- Loading (loading the source file into memory)
+- Parsing (converting the source file to an abstract syntax tree)
+- Annotation (annotating the tree with function/class IDs and collecting variable names)
+- Analysis (inferring variable types)
+- Compilation (generating abstract assembly code)
+- Assembly (converting abstract assembly into executable assembly)
+- Execution (exactly what it sounds like)
+
+The top-level implementation of all of these phases is in GlobalAnalysis::advance_module_phase in Analysis.cc. Some of these phases are very simple; the more complex phases are described in detail below.
+
+### Parsing phase
+
+We use a custom parser written specifically for this project. This is because I thought it was easier to do this than to re-learn flex and bison. Also I wrote this lexer and parser several years before I did any real compilation with this project. Many lolz; wow. Such code.
+
+### Annotation phase
+
+This is mostly implemented by AnnotationVisitor. This visitor walks the AST and does a few basic things:
+- It assigns class IDs to all classes defined in the file.
+- It assigns function IDs to all functions and lambdas defined in the file.
+- It collects global names for the module and local names for all functions defined in the file (indexed by function ID), as well as if each global is mutable (named in a `global` statement or written in multiple places).
+- It collects attribute names for all class definitions.
+- It collects all import statements so the relevant modules can be loaded and collected.
+
+This visitor modifies the AST by adding annotations for function ID. it does this only for definition nodes (ClassDefinition, FunctionDefinition, LambdaDefinition); it does not do this for FunctionCall nodes since they may refer to modules that are not yet imported.
+
+### Analysis phase
+
+This is implemented by AnalysisVisitor. This visitor walks the AST and attempts to infer the type and value of all variables. For some variables this won't be possible; it leaves those as Indeterminate or with an unknown value (but this will likely cause compilation errors in the next phase).
+
+The compilation phase uses this information to know which fragment to call for a FunctionCall node, to short-circuit `if` statements that are always true or false, and other useful things.
+
+### Compilation phase
+
+This is implemented by CompilationVisitor. This visitor walks the AST for a specific execution path - that is, it does not recur into definitions of any type. This is by far the most complex visitor; it maintains a lot of state as it follows the execution path. Multiple invocations of this visitor are often required to compile a single source file; one for the module root scope, one for each fragment called from the root scope (including fragments for functions defined in other modules).
+
+Module root scopes compile into functions that take no arguments and return the active exception object if one was raised, or NULL if no exception was raised. Functions defined within modules expect r12-r14 to already be set up properly; see the calling convention description below for more information.
+
+Space for all local variables is initialized at the beginning of the function's scope. Temporary variables may only live during a statement's execution; when a statement is completed, they are either copied to a local/global variable or destroyed. This means that no registers should be reserved across statement boundaries, and no references should be held in registers either.
+
+### Assembly phase
+
+This doesn't walk the AST, so it doesn't have a Visitor class. This is done by AMD64Assembler, using the stream produced by CompilationVisitor. (CompilationVisitor actually generates the stream directly in the AMD64Assembler object as it works.)

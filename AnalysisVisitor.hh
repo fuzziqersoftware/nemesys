@@ -17,10 +17,6 @@
 
 
 class AnalysisVisitor : public RecursiveASTVisitor {
-  // this visitor does multiple things:
-  // - it finds the type of each variable (global and local)
-  // - it finds the values of constants (global and local)
-
 public:
   AnalysisVisitor(GlobalAnalysis* global, ModuleAnalysis* module);
   ~AnalysisVisitor() = default;
