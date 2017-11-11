@@ -72,6 +72,9 @@ void list_set_item(ListObject* l, int64_t position, void* value,
     delete_reference(l->items[position]);
   }
   l->items[position] = value;
+  if (l->items_are_objects) {
+    add_reference(value);
+  }
 }
 
 void list_insert(ListObject* l, int64_t position, void* value,
@@ -110,6 +113,10 @@ void list_insert(ListObject* l, int64_t position, void* value,
     l->capacity = new_capacity;
     l->count++;
   }
+
+  if (l->items_are_objects) {
+    add_reference(value);
+  }
 }
 
 void list_append(ListObject* l, void* value, ExceptionBlock* exc_block) {
@@ -144,6 +151,8 @@ void* list_pop(ListObject* l, int64_t position, ExceptionBlock* exc_block) {
     l->count--;
   }
 
+  // no need to mess with references - the reference formerly owned by the list
+  // is now returned by this function
   return ret;
 }
 

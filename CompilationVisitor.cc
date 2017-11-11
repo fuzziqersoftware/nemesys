@@ -743,6 +743,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       }
 
       this->current_type = Variable(ValueType::Bool);
+      this->holding_reference = false;
       break;
 
     case BinaryOperator::In:
@@ -752,6 +753,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
             left_bytes ? void_fn_ptr(&bytes_contains) : void_fn_ptr(&unicode_contains));
         this->write_function_call(target_function, {target_mem, left_mem}, {},
             -1, this->target_register);
+
       } else {
         // TODO
         throw compile_error("In/NotIn not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
@@ -801,6 +803,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       }
 
       this->current_type = Variable(ValueType::Bool);
+      this->holding_reference = false;
       break;
     }
 
@@ -829,10 +832,9 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::RightShift:
       if (left_int && right_int) {
         // we can only use cl apparently
-        if (this->reserve_register(Register::RCX) != Register::RCX) {
+        if (this->available_register(Register::RCX) != Register::RCX) {
           throw compile_error("RCX not available for shift operation", this->file_offset);
         }
-        this->release_register(Register::RCX);
         this->as.write_mov(rcx, target_mem);
         this->as.write_mov(target_mem, left_mem);
         if (a->oper == BinaryOperator::LeftShift) {
@@ -845,8 +847,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       throw compile_error("bit shift not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     case BinaryOperator::Addition:
-      if ((left_type.type == ValueType::Bytes) &&
-          (right_type.type == ValueType::Bytes)) {
+      if (left_bytes && right_bytes) {
         this->write_function_call(common_object_reference(void_fn_ptr(&bytes_concat)),
             {left_mem, target_mem, r14}, {}, -1, this->target_register);
 
@@ -992,11 +993,6 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->current_type = Variable(left_bytes ?
             ValueType::Bytes : ValueType::Unicode);
         this->holding_reference = true;
-
-        // we pass the references we're holding directly into the function, and
-        // it will delete them for us, so we don't need to do it ourselves later
-        left_holding_reference = false;
-        right_holding_reference = false;
         break;
       }
 
@@ -1835,67 +1831,109 @@ void CompilationVisitor::visit(ArrayIndex* a) {
   this->file_offset = a->file_offset;
   this->assert_not_evaluating_instance_pointer();
 
+  // TODO: this leakes a reference! need to delete the reference to the
+  // collection (and key if it's a dict). maybe can fix this by using reference-
+  // absorbing functions instead?
+
   // get the collection
   a->array->accept(this);
   Variable collection_type = move(this->current_type);
-
-  if ((collection_type.type != ValueType::List) && (collection_type.type != ValueType::Tuple)) {
-    // TODO
-    throw compile_error("ArrayIndex not yet implemented for collections of type " + collection_type.str(),
-        this->file_offset);
+  if (!this->holding_reference) {
+    throw compile_error("not holding reference to collection", this->file_offset);
   }
+
+  // save regs (all cases below need to evaluate more expressions)
+  Register original_target_register = this->target_register;
+  int64_t previously_reserved_registers = this->write_push_reserved_registers();
 
   // I'm lazy and don't want to duplicate work - just call the appropriate
   // get_item function
 
-  Register original_target_register = this->target_register;
-  int64_t previously_reserved_registers = this->write_push_reserved_registers();
+  if (collection_type.type == ValueType::Dict) {
 
-  // arg 1 is the list/tuple object
-  if (this->target_register != Register::RDI) {
-    this->as.write_mov(rdi, MemoryReference(this->target_register));
-  }
+    // arg 1 is the dict object
+    if (this->target_register != Register::RDI) {
+      this->as.write_mov(rdi, MemoryReference(this->target_register));
+    }
 
-  // for lists, the index can be dynamic; compute it now
-  int64_t tuple_index = a->index_value;
-  if (collection_type.type == ValueType::List) {
+    // compute the key
     this->target_register = Register::RSI;
     this->reserve_register(Register::RDI);
     a->index->accept(this);
-    if (this->current_type.type != ValueType::Int) {
-      throw compile_error("list index must be Int; here it\'s " + this->current_type.str(),
+    if (!this->current_type.types_equal(collection_type.extension_types[0])) {
+      string expr_key_type = this->current_type.str();
+      string dict_key_type = collection_type.extension_types[0].str();
+      string dict_value_type = collection_type.extension_types[1].str();
+      throw compile_error(string_printf("lookup for key of type %s on Dict[%s, %s]",
+          expr_key_type.c_str(), dict_key_type.c_str(), dict_value_type.c_str()),
           this->file_offset);
+    }
+    if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+      throw compile_error("not holding reference to key", this->file_offset);
     }
     this->release_register(Register::RDI);
 
-  // for tuples, the index must be static since the result type depends on it.
-  // for this reason, it also needs to be in range of the extension types
-  } else {
-    if (!a->index_constant) {
-      throw compile_error("tuple indexes must be constants", this->file_offset);
-    }
-    if (tuple_index < 0) {
-      tuple_index += collection_type.extension_types.size();
-    }
-    if ((tuple_index < 0) || (tuple_index >= collection_type.extension_types.size())) {
-      throw compile_error("tuple index out of range", this->file_offset);
-    }
-    this->as.write_mov(Register::RSI, tuple_index);
-  }
+    // get the dict item
+    this->write_function_call(common_object_reference(void_fn_ptr(&dictionary_at)),
+        {rdi, rsi, r14}, {}, -1, original_target_register);
 
-  // now call the function
-  const void* fn = (collection_type.type == ValueType::List) ?
-      void_fn_ptr(&list_get_item) : void_fn_ptr(&tuple_get_item);
-  this->write_function_call(common_object_reference(fn), {rdi, rsi, r14}, {},
-      -1, original_target_register);
+    // the return type is the value extension type
+    this->current_type = collection_type.extension_types[1];
 
-  // for lists, the return type is the extension type
-  if (collection_type.type == ValueType::List) {
-    this->current_type = collection_type.extension_types[0];
-  // for tuples, the return type is one of the extension types, determined by
-  // the static index value
+  } else if ((collection_type.type == ValueType::List) ||
+             (collection_type.type == ValueType::Tuple)) {
+
+    // arg 1 is the list/tuple object
+    if (this->target_register != Register::RDI) {
+      this->as.write_mov(rdi, MemoryReference(this->target_register));
+    }
+
+    // for lists, the index can be dynamic; compute it now
+    int64_t tuple_index = a->index_value;
+    if (collection_type.type == ValueType::List) {
+      this->target_register = Register::RSI;
+      this->reserve_register(Register::RDI);
+      a->index->accept(this);
+      if (this->current_type.type != ValueType::Int) {
+        throw compile_error("list index must be Int; here it\'s " + this->current_type.str(),
+            this->file_offset);
+      }
+      this->release_register(Register::RDI);
+
+    // for tuples, the index must be static since the result type depends on it.
+    // for this reason, it also needs to be in range of the extension types
+    } else {
+      if (!a->index_constant) {
+        throw compile_error("tuple indexes must be constants", this->file_offset);
+      }
+      if (tuple_index < 0) {
+        tuple_index += collection_type.extension_types.size();
+      }
+      if ((tuple_index < 0) || (tuple_index >= collection_type.extension_types.size())) {
+        throw compile_error("tuple index out of range", this->file_offset);
+      }
+      this->as.write_mov(Register::RSI, tuple_index);
+    }
+
+    // now call the function
+    const void* fn = (collection_type.type == ValueType::List) ?
+        void_fn_ptr(&list_get_item) : void_fn_ptr(&tuple_get_item);
+    this->write_function_call(common_object_reference(fn), {rdi, rsi, r14}, {},
+        -1, original_target_register);
+
+    // for lists, the return type is the extension type
+    if (collection_type.type == ValueType::List) {
+      this->current_type = collection_type.extension_types[0];
+    // for tuples, the return type is one of the extension types, determined by
+    // the static index value
+    } else {
+      this->current_type = collection_type.extension_types[tuple_index];
+    }
+
   } else {
-    this->current_type = collection_type.extension_types[tuple_index];
+    // TODO
+    throw compile_error("ArrayIndex not yet implemented for collections of type " + collection_type.str(),
+        this->file_offset);
   }
 
   // if the return value has a refcount, then the function returned a new
@@ -2763,6 +2801,8 @@ void CompilationVisitor::visit(ForStatement* a) {
     int64_t previously_reserved_registers = this->write_push_reserved_registers();
 
     // create a SlotContents structure
+    // TODO: figure out how this structure interacts with refcounting and
+    // exceptions (or if it does at all)
     this->adjust_stack(-sizeof(DictionaryObject::SlotContents));
     this->as.write_mov(MemoryReference(Register::RSP, 0), 0);
     this->as.write_mov(MemoryReference(Register::RSP, 8), 0);
@@ -2775,6 +2815,7 @@ void CompilationVisitor::visit(ForStatement* a) {
     this->as.write_mov(rsi, rsp);
 
     // call dictionary_next_item
+    this->write_add_reference(Register::RDI);
     this->write_function_call(
         common_object_reference(void_fn_ptr(&dictionary_next_item)), {rdi, rsi}, {});
 

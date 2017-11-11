@@ -80,9 +80,8 @@ void dictionary_insert(DictionaryObject* d, void* k, void* v,
   } else {
     d->count++;
   }
-  t.node->set_slot(t.ch, k, v, true, false);
 
-  // track the new reference
+  t.node->set_slot(t.ch, k, v, true, false);
   if (d->flags & DictionaryFlag::KeysAreObjects) {
     add_reference(k);
   }
@@ -209,6 +208,7 @@ void dictionary_clear(DictionaryObject* d) {
 
 bool dictionary_exists(const DictionaryObject* d, void* k) {
   auto t = d->traverse(k, false);
+
   if (!t.node) {
     return false;
   }

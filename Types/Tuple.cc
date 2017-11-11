@@ -106,8 +106,11 @@ void tuple_set_item(TupleObject* t, int64_t position, void* value,
 
   t->items()[position] = value;
 
-  // note: we don't call add_reference here because an added reference was
-  // passed into this function; we just store that reference in the tuple object
+  // the input reference was a borrowed reference so we can't just move it into
+  // the tuple
+  if (has_refcount) {
+    add_reference(value);
+  }
 }
 
 size_t tuple_size(const TupleObject* t) {
