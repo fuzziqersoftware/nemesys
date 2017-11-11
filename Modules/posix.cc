@@ -384,7 +384,7 @@ void posix_initialize() {
     }), true, false},
 
     {"read", {Int, Int}, Bytes, void_fn_ptr([](int64_t fd, int64_t buffer_size, ExceptionBlock* exc_block) -> BytesObject* {
-      BytesObject* ret = bytes_new(NULL, NULL, buffer_size);
+      BytesObject* ret = bytes_new(NULL, buffer_size);
       ssize_t bytes_read = read(fd, ret->data, buffer_size);
       if (bytes_read >= 0) {
         ret->count = bytes_read;
@@ -618,7 +618,7 @@ void posix_initialize() {
     }), true, false},
 
     {"getcwdb", {}, Bytes, void_fn_ptr([](ExceptionBlock* exc_block) -> BytesObject* {
-      BytesObject* ret = bytes_new(NULL, NULL, MAXPATHLEN);
+      BytesObject* ret = bytes_new(NULL, MAXPATHLEN);
       if (!getcwd(ret->data, MAXPATHLEN)) {
         delete_reference(ret);
         raise_OSError(exc_block, errno);
@@ -642,7 +642,7 @@ void posix_initialize() {
       auto items = list_directory(path_bytes->data);
       delete_reference(path_bytes);
 
-      ListObject* l = list_new(NULL, items.size(), true);
+      ListObject* l = list_new(items.size(), true);
       size_t x = 0;
       for (const auto& item : items) {
         l->items[x++] = bytes_decode_ascii(item.c_str());

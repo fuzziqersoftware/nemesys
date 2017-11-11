@@ -18,7 +18,7 @@ struct ListObject {
   void** items;
 };
 
-ListObject* list_new(ListObject* l, uint64_t count, bool items_are_objects,
+ListObject* list_new(uint64_t count, bool items_are_objects,
     ExceptionBlock* exc_block = NULL);
 void list_delete(ListObject* l);
 

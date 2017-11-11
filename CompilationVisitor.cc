@@ -1251,15 +1251,9 @@ void CompilationVisitor::visit(ListConstructor* a) {
 
   // allocate the list object
   this->as.write_label(string_printf("__ListConstructor_%p_allocate", a));
-  vector<const MemoryReference> int_args({
-    MemoryReference(int_argument_register_order[0]),
-    MemoryReference(int_argument_register_order[1]),
-    MemoryReference(int_argument_register_order[2]),
-    r14,
-  });
-  this->as.write_xor(int_args[0], int_args[0]);
-  this->as.write_mov(int_args[1], a->items.size());
-  this->as.write_xor(int_args[2], int_args[2]); // we'll set items_are_objects later
+  vector<const MemoryReference> int_args({rdi, rsi, r14});
+  this->as.write_mov(int_args[0], a->items.size());
+  this->as.write_xor(int_args[1], int_args[1]); // we'll set items_are_objects later
   this->write_function_call(common_object_reference(void_fn_ptr(&list_new)),
       int_args, {}, -1, this->target_register);
 
@@ -1328,6 +1322,8 @@ void CompilationVisitor::visit(DictConstructor* a) {
 }
 
 void CompilationVisitor::visit(TupleConstructor* a) {
+  // TODO: deduplicate this with ListConstructor
+
   this->file_offset = a->file_offset;
   this->assert_not_evaluating_instance_pointer();
 
@@ -1342,13 +1338,8 @@ void CompilationVisitor::visit(TupleConstructor* a) {
 
   // allocate the tuple object
   this->as.write_label(string_printf("__TupleConstructor_%p_allocate", a));
-  vector<const MemoryReference> int_args({
-    MemoryReference(int_argument_register_order[0]),
-    MemoryReference(int_argument_register_order[1]),
-    r14,
-  });
-  this->as.write_xor(int_args[0], int_args[0]);
-  this->as.write_mov(int_args[1], a->items.size());
+  vector<const MemoryReference> int_args({rdi, r14});
+  this->as.write_mov(rdi, a->items.size());
   this->write_function_call(common_object_reference(void_fn_ptr(&tuple_new)),
       int_args, {}, -1, this->target_register);
 

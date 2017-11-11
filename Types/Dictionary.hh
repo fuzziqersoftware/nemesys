@@ -76,8 +76,7 @@ struct DictionaryObject {
   std::string structure_for_node(const Node* n) const;
 };
 
-DictionaryObject* dictionary_new(DictionaryObject* d,
-    size_t (*key_length)(const void* k),
+DictionaryObject* dictionary_new(size_t (*key_length)(const void* k),
     uint8_t (*key_char)(const void* k, size_t which), uint64_t flags,
     ExceptionBlock* exc_block = NULL);
 void dictionary_delete(void* d);

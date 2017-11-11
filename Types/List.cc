@@ -10,11 +10,9 @@
 using namespace std;
 
 
-ListObject* list_new(ListObject* l, uint64_t count, bool items_are_objects,
+ListObject* list_new(uint64_t count, bool items_are_objects,
     ExceptionBlock* exc_block) {
-  if (!l) {
-    l = reinterpret_cast<ListObject*>(malloc(sizeof(ListObject)));
-  }
+  ListObject* l = reinterpret_cast<ListObject*>(malloc(sizeof(ListObject)));
   if (!l) {
     raise_python_exception(exc_block, &MemoryError_instance);
     throw bad_alloc();

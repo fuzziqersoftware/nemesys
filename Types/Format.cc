@@ -411,8 +411,9 @@ void execute_format_spec(wstring& output, struct FormatSpecifier spec,
 
 // TODO: this is a stupid template; make it require fewer arguments
 template <typename ObjectType, typename StringType,
-    ObjectType* (*string_new)(ObjectType*, const StringType&)>
-ObjectType* string_format(ObjectType* format, TupleObject* args, ExceptionBlock* exc_block) {
+    ObjectType* (*string_new)(const StringType&)>
+ObjectType* string_format(ObjectType* format, TupleObject* args,
+    ExceptionBlock* exc_block, bool delete_tuple_reference = false) {
   ObjectType* ret = NULL;
   try {
     auto specs = extract_formats(format->data, format->count);
@@ -433,44 +434,46 @@ ObjectType* string_format(ObjectType* format, TupleObject* args, ExceptionBlock*
       }
     }
 
-    ret = string_new(NULL, output);
+    ret = string_new(output);
 
   } catch (const exception& e) {
-    delete_reference(format);
-    delete_reference(args);
+    if (delete_tuple_reference) {
+      delete_reference(args);
+    }
     raise_python_exception(exc_block, create_instance(TypeError_class_id));
     throw;
   }
 
-  delete_reference(format);
-  delete_reference(args);
+  if (delete_tuple_reference) {
+    delete_reference(args);
+  }
   return ret;
 }
 
 BytesObject* bytes_format(BytesObject* format, TupleObject* args,
     ExceptionBlock* exc_block) {
-  return string_format<BytesObject, string, bytes_from_cxx_string>(format, args, exc_block);
+  return string_format<BytesObject, string, bytes_from_cxx_string>(
+      format, args, exc_block);
 }
 
 UnicodeObject* unicode_format(UnicodeObject* format, TupleObject* args,
     ExceptionBlock* exc_block) {
-  return string_format<UnicodeObject, wstring, unicode_from_cxx_wstring>(format, args, exc_block);
+  return string_format<UnicodeObject, wstring, unicode_from_cxx_wstring>(
+      format, args, exc_block);
 }
 
 BytesObject* bytes_format_one(BytesObject* format, void* arg, bool is_object,
     ExceptionBlock* exc_block) {
-  // note: string_format will delete this tuple internally since this is the
-  // only reference to it
-  TupleObject* t = tuple_new(NULL, 1, exc_block);
+  TupleObject* t = tuple_new(1, exc_block);
   tuple_set_item(t, 0, arg, is_object, exc_block);
-  return string_format<BytesObject, string, bytes_from_cxx_string>(format, t, exc_block);
+  return string_format<BytesObject, string, bytes_from_cxx_string>(
+      format, t, exc_block, true);
 }
 
 UnicodeObject* unicode_format_one(UnicodeObject* format, void* arg, bool is_object,
     ExceptionBlock* exc_block) {
-  // note: string_format will delete this tuple internally since this is the
-  // only reference to it
-  TupleObject* t = tuple_new(NULL, 1, exc_block);
+  TupleObject* t = tuple_new(1, exc_block);
   tuple_set_item(t, 0, arg, is_object, exc_block);
-  return string_format<UnicodeObject, wstring, unicode_from_cxx_wstring>(format, t, exc_block);
+  return string_format<UnicodeObject, wstring, unicode_from_cxx_wstring>(
+      format, t, exc_block, true);
 }

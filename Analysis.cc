@@ -662,14 +662,14 @@ ClassContext* GlobalAnalysis::context_for_class(int64_t class_id,
 const BytesObject* GlobalAnalysis::get_or_create_constant(const string& s,
     bool use_shared_constants) {
   if (!use_shared_constants) {
-    return bytes_new(NULL, s.data(), s.size());
+    return bytes_new(s.data(), s.size());
   }
 
   BytesObject* o = NULL;
   try {
     o = this->bytes_constants.at(s);
   } catch (const out_of_range& e) {
-    o = bytes_new(NULL, s.data(), s.size());
+    o = bytes_new(s.data(), s.size());
     this->bytes_constants.emplace(s, o);
   }
   return o;
@@ -678,14 +678,14 @@ const BytesObject* GlobalAnalysis::get_or_create_constant(const string& s,
 const UnicodeObject* GlobalAnalysis::get_or_create_constant(const wstring& s,
     bool use_shared_constants) {
   if (!use_shared_constants) {
-    return unicode_new(NULL, s.data(), s.size());
+    return unicode_new(s.data(), s.size());
   }
 
   UnicodeObject* o = NULL;
   try {
     o = this->unicode_constants.at(s);
   } catch (const out_of_range& e) {
-    o = unicode_new(NULL, s.data(), s.size());
+    o = unicode_new(s.data(), s.size());
     this->unicode_constants.emplace(s, o);
   }
   return o;
@@ -758,7 +758,7 @@ int64_t GlobalAnalysis::construct_value(const Variable& value,
       return 0;
 
     case ValueType::List: {
-      ListObject* l = list_new(NULL, value.list_value->size(),
+      ListObject* l = list_new(value.list_value->size(),
           type_has_refcount(value.extension_types[0].type));
       for (size_t x = 0; x < value.list_value->size(); x++) {
         l->items[x] = reinterpret_cast<void*>(
@@ -780,7 +780,7 @@ int64_t GlobalAnalysis::construct_value(const Variable& value,
 
       uint64_t flags = (type_has_refcount(value.extension_types[0].type) ? DictionaryFlag::KeysAreObjects : 0) |
           (type_has_refcount(value.extension_types[1].type) ? DictionaryFlag::ValuesAreObjects : 0);
-      DictionaryObject* d = dictionary_new(NULL, key_length, key_at, flags);
+      DictionaryObject* d = dictionary_new(key_length, key_at, flags);
 
       for (const auto& item : *value.dict_value) {
         dictionary_insert(d,

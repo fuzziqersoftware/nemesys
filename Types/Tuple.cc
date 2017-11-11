@@ -29,11 +29,9 @@ const uint8_t* TupleObject::has_refcount_map() const {
 
 
 
-TupleObject* tuple_new(TupleObject* t, uint64_t count, ExceptionBlock* exc_block) {
-  if (!t) {
-    t = reinterpret_cast<TupleObject*>(malloc(sizeof(TupleObject) + (count * sizeof(void*)) +
-        ((count + 7) / 8)));
-  }
+TupleObject* tuple_new(uint64_t count, ExceptionBlock* exc_block) {
+  TupleObject* t = reinterpret_cast<TupleObject*>(malloc(
+      sizeof(TupleObject) + (count * sizeof(void*)) + ((count + 7) / 8)));
   if (!t) {
     raise_python_exception(exc_block, &MemoryError_instance);
     throw bad_alloc();

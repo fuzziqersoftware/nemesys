@@ -316,7 +316,7 @@ static void create_default_builtin_functions() {
         add_reference(empty_unicode);
         return empty_unicode;
       }
-      return unicode_new(NULL, data.data(), data.size());
+      return unicode_new(data.data(), data.size());
     }), false, true},
 
     // Bool bool(Bool=False)
@@ -431,20 +431,20 @@ static void create_default_builtin_functions() {
     // Unicode repr(Bytes)
     // Unicode repr(Unicode)
     {"repr", {FragDef({None}, Unicode, void_fn_ptr([](void*) -> UnicodeObject* {
-      static UnicodeObject* ret = unicode_new(NULL, L"None", 4);
+      static UnicodeObject* ret = unicode_new(L"None", 4);
       add_reference(ret);
       return ret;
 
     })), FragDef({Bool}, Unicode, void_fn_ptr([](bool v) -> UnicodeObject* {
-      static UnicodeObject* true_str = unicode_new(NULL, L"True", 4);
-      static UnicodeObject* false_str = unicode_new(NULL, L"False", 5);
+      static UnicodeObject* true_str = unicode_new(L"True", 4);
+      static UnicodeObject* false_str = unicode_new(L"False", 5);
       UnicodeObject* ret = v ? true_str : false_str;
       add_reference(ret);
       return ret;
 
     })), FragDef({Int}, Unicode, void_fn_ptr([](int64_t v) -> UnicodeObject* {
       wchar_t buf[24];
-      return unicode_new(NULL, buf, swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%" PRId64, v));
+      return unicode_new(buf, swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%" PRId64, v));
 
     })), FragDef({Float}, Unicode, void_fn_ptr([](double v) -> UnicodeObject* {
       wchar_t buf[60]; // TODO: figure out how long this actually needs to be
@@ -463,11 +463,11 @@ static void create_default_builtin_functions() {
         buf[count + 2] = 0;
       }
 
-      return unicode_new(NULL, buf, wcslen(buf));
+      return unicode_new(buf, wcslen(buf));
 
     })), FragDef({Bytes}, Unicode, void_fn_ptr([](BytesObject* v) -> UnicodeObject* {
       string escape_ret = escape(reinterpret_cast<const char*>(v->data), v->count);
-      UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 3);
+      UnicodeObject* ret = unicode_new(NULL, escape_ret.size() + 3);
       ret->data[0] = L'b';
       ret->data[1] = L'\'';
       for (size_t x = 0; x < escape_ret.size(); x++) {
@@ -480,7 +480,7 @@ static void create_default_builtin_functions() {
 
     })), FragDef({Unicode}, Unicode, void_fn_ptr([](UnicodeObject* v) -> UnicodeObject* {
       string escape_ret = escape(v->data, v->count);
-      UnicodeObject* ret = unicode_new(NULL, NULL, escape_ret.size() + 2);
+      UnicodeObject* ret = unicode_new(NULL, escape_ret.size() + 2);
       ret->data[0] = L'\'';
       for (size_t x = 0; x < escape_ret.size(); x++) {
         ret->data[x + 1] = escape_ret[x];
@@ -526,7 +526,7 @@ static void create_default_builtin_functions() {
         raise_python_exception(exc_block, create_instance(ValueError_class_id));
       }
 
-      UnicodeObject* s = unicode_new(NULL, NULL, 1);
+      UnicodeObject* s = unicode_new(NULL, 1);
       s->data[0] = i;
       s->data[1] = 0;
       return s;
@@ -556,10 +556,10 @@ static void create_default_builtin_functions() {
     // Unicode bin(Int)
     {"bin", {Int}, Unicode, void_fn_ptr([](int64_t i) -> UnicodeObject* {
       if (!i) {
-        return unicode_new(NULL, L"0b0", 3);
+        return unicode_new(L"0b0", 3);
       }
 
-      UnicodeObject* s = unicode_new(NULL, NULL, 67);
+      UnicodeObject* s = unicode_new(NULL, 67);
       size_t x = 0;
       if (i < 0) {
         i = -i;
@@ -587,16 +587,16 @@ static void create_default_builtin_functions() {
     // Unicode oct(Int)
     {"oct", {Int}, Unicode, void_fn_ptr([](int64_t i) -> UnicodeObject* {
       if (!i) {
-        return unicode_new(NULL, L"0o0", 3);
+        return unicode_new(L"0o0", 3);
       }
 
       // this value is its own negative, so special-case it here so we can assume
       // below that the sign bit is never set
       if (i == 0x8000000000000000) {
-        return unicode_new(NULL, L"-0o1000000000000000000000", 25);
+        return unicode_new(L"-0o1000000000000000000000", 25);
       }
 
-      UnicodeObject* s = unicode_new(NULL, NULL, 25);
+      UnicodeObject* s = unicode_new(NULL, 25);
       size_t x = 0;
       if (i < 0) {
         i = -i;
@@ -624,7 +624,7 @@ static void create_default_builtin_functions() {
 
     // Unicode hex(Int)
     {"hex", {Int}, Unicode, void_fn_ptr([](int64_t i) -> UnicodeObject* {
-      UnicodeObject* s = unicode_new(NULL, NULL, 19);
+      UnicodeObject* s = unicode_new(NULL, 19);
       s->count = swprintf(s->data, 19, L"%s0x%x", (i < 0) ? "-" : "", (i < 0) ? -i : i);
       return s;
     }), false, true},

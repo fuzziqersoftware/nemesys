@@ -83,22 +83,22 @@ static void tracked_bytes_delete(void* o) {
   free(o);
 }
 
-BytesObject* tracked_bytes_new(BytesObject* o, const char* data, size_t count) {
+BytesObject* tracked_bytes_new(const char* data, size_t count) {
   num_bytes_objects++;
-  BytesObject* b = bytes_new(o, data, count);
+  BytesObject* b = bytes_new(data, count);
   b->basic.destructor = tracked_bytes_delete;
   return b;
 }
 
 BytesObject* tracked_bytes_new(const char* text) {
-  return tracked_bytes_new(NULL, text, strlen(text));
+  return tracked_bytes_new(text, strlen(text));
 }
 
 
 void run_basic_test() {
   printf("-- basic\n");
 
-  DictionaryObject* d = dictionary_new(NULL,
+  DictionaryObject* d = dictionary_new(
       reinterpret_cast<size_t (*)(const void*)>(bytes_length),
       reinterpret_cast<uint8_t (*)(const void*, size_t)>(bytes_at),
       DictionaryFlag::KeysAreObjects | DictionaryFlag::ValuesAreObjects);
@@ -217,7 +217,7 @@ void run_basic_test() {
 void run_reorganization_test() {
   printf("-- reorganization\n");
 
-  DictionaryObject* d = dictionary_new(NULL,
+  DictionaryObject* d = dictionary_new(
       reinterpret_cast<size_t (*)(const void*)>(bytes_length),
       reinterpret_cast<uint8_t (*)(const void*, size_t)>(bytes_at),
       DictionaryFlag::KeysAreObjects | DictionaryFlag::ValuesAreObjects);

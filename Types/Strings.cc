@@ -15,18 +15,17 @@ using namespace std;
 
 BytesObject::BytesObject() : basic(free), count(0) { }
 
-BytesObject* bytes_new(BytesObject* s, const char* data, ssize_t count,
+BytesObject* bytes_new(const char* data, ssize_t count,
     ExceptionBlock* exc_block) {
   if (count < 0) {
     count = strlen(data);
   }
+
+  size_t size = sizeof(BytesObject) + sizeof(char) * (count + 1);
+  BytesObject* s = reinterpret_cast<BytesObject*>(malloc(size));
   if (!s) {
-    size_t size = sizeof(BytesObject) + sizeof(char) * (count + 1);
-    s = reinterpret_cast<BytesObject*>(malloc(size));
-    if (!s) {
-      raise_python_exception(exc_block, &MemoryError_instance);
-      throw bad_alloc();
-    }
+    raise_python_exception(exc_block, &MemoryError_instance);
+    throw bad_alloc();
   }
   s->basic.refcount = 1;
   s->basic.destructor = free;
@@ -45,14 +44,14 @@ BytesObject* bytes_new(BytesObject* s, const char* data, ssize_t count,
   return s;
 }
 
-BytesObject* bytes_from_cxx_string(BytesObject* s, const string& data) {
-  return bytes_new(s, data.data(), data.size());
+BytesObject* bytes_from_cxx_string(const string& data) {
+  return bytes_new(data.data(), data.size());
 }
 
 BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b,
     ExceptionBlock* exc_block) {
   uint64_t count = a->count + b->count;
-  BytesObject* s = bytes_new(NULL, NULL, count, exc_block);
+  BytesObject* s = bytes_new(NULL, count, exc_block);
   memcpy(s->data, a->data, sizeof(char) * a->count);
   memcpy(&s->data[a->count], b->data, sizeof(char) * b->count);
   s->data[s->count] = 0;
@@ -113,18 +112,16 @@ string bytes_to_cxx_string(const BytesObject* s) {
 
 UnicodeObject::UnicodeObject() : basic(free), count(0) { }
 
-UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count,
+UnicodeObject* unicode_new(const wchar_t* data, ssize_t count,
     ExceptionBlock* exc_block) {
   if (count < 0) {
     count = wcslen(data);
   }
+  size_t size = sizeof(UnicodeObject) + sizeof(wchar_t) * (count + 1);
+  UnicodeObject* s = reinterpret_cast<UnicodeObject*>(malloc(size));
   if (!s) {
-    size_t size = sizeof(UnicodeObject) + sizeof(wchar_t) * (count + 1);
-    s = reinterpret_cast<UnicodeObject*>(malloc(size));
-    if (!s) {
-      raise_python_exception(exc_block, &MemoryError_instance);
-      throw bad_alloc();
-    }
+    raise_python_exception(exc_block, &MemoryError_instance);
+    throw bad_alloc();
   }
   s->basic.refcount = 1;
   s->basic.destructor = free;
@@ -144,14 +141,14 @@ UnicodeObject* unicode_new(UnicodeObject* s, const wchar_t* data, ssize_t count,
   return s;
 }
 
-UnicodeObject* unicode_from_cxx_wstring(UnicodeObject* s, const wstring& data) {
-  return unicode_new(s, data.data(), data.size());
+UnicodeObject* unicode_from_cxx_wstring(const wstring& data) {
+  return unicode_new(data.data(), data.size());
 }
 
 UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b,
     ExceptionBlock* exc_block) {
   uint64_t count = a->count + b->count;
-  UnicodeObject* s = unicode_new(NULL, NULL, count, exc_block);
+  UnicodeObject* s = unicode_new(NULL, count, exc_block);
   memcpy(s->data, a->data, sizeof(wchar_t) * a->count);
   memcpy(&s->data[a->count], b->data, sizeof(wchar_t) * b->count);
   s->data[s->count] = 0;
@@ -218,7 +215,7 @@ BytesObject* unicode_encode_ascii(const wchar_t* s, ssize_t count) {
   if (count < 0) {
     count = wcslen(s);
   }
-  BytesObject* ret = bytes_new(NULL, NULL, count);
+  BytesObject* ret = bytes_new(NULL, count);
   for (int64_t x = 0; x < count; x++) {
     ret->data[x] = s[x];
   }
@@ -234,7 +231,7 @@ UnicodeObject* bytes_decode_ascii(const char* s, ssize_t count) {
   if (count < 0) {
     count = strlen(s);
   }
-  UnicodeObject* ret = unicode_new(NULL, NULL, count);
+  UnicodeObject* ret = unicode_new(NULL, count);
   for (int64_t x = 0; x < count; x++) {
     ret->data[x] = s[x];
   }

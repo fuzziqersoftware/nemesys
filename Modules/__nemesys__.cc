@@ -87,13 +87,13 @@ void __nemesys___initialize() {
       auto module = get_module(module_name);
       delete_reference(module_name);
       if (!module.get()) {
-        return bytes_new(NULL, NULL, 0);
+        return bytes_new(NULL, 0);
       }
       if (!module->source.get()) {
-        return bytes_new(NULL, NULL, 0);
+        return bytes_new(NULL, 0);
       }
       const string& data = module->source->data();
-      return bytes_new(NULL, data.data(), data.size());
+      return bytes_new(data.data(), data.size());
     }), false, false},
 
     {"code_buffer_size", {}, Int, void_fn_ptr([]() -> int64_t {

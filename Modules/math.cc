@@ -139,7 +139,7 @@ void math_initialize() {
       int64_t m64 = *reinterpret_cast<const int64_t*>(&m);
       int64_t e64 = e;
 
-      TupleObject* t = tuple_new(NULL, 2, exc_block);
+      TupleObject* t = tuple_new(2, exc_block);
       tuple_set_item(t, 0, reinterpret_cast<void*>(m64), false, exc_block);
       tuple_set_item(t, 1, reinterpret_cast<void*>(e64), false, exc_block);
       return t;
@@ -152,7 +152,7 @@ void math_initialize() {
       int64_t fractional64 = *reinterpret_cast<const int64_t*>(&fractional);
       int64_t integral64 = *reinterpret_cast<const int64_t*>(&integral);
 
-      TupleObject* t = tuple_new(NULL, 2, exc_block);
+      TupleObject* t = tuple_new(2, exc_block);
       tuple_set_item(t, 0, reinterpret_cast<void*>(fractional64), false, exc_block);
       tuple_set_item(t, 1, reinterpret_cast<void*>(integral64), false, exc_block);
       return t;

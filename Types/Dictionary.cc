@@ -28,13 +28,11 @@ static uint8_t dictionary_default_key_char(const void* k, size_t which) {
   return reinterpret_cast<const uint8_t*>(&k)[which];
 }
 
-DictionaryObject* dictionary_new(DictionaryObject* d,
-    size_t (*key_length)(const void* k),
+DictionaryObject* dictionary_new(size_t (*key_length)(const void* k),
     uint8_t (*key_char)(const void* k, size_t offset), uint64_t flags,
     ExceptionBlock* exc_block) {
-  if (!d) {
-    d = reinterpret_cast<DictionaryObject*>(malloc(sizeof(DictionaryObject)));
-  }
+  DictionaryObject* d = reinterpret_cast<DictionaryObject*>(malloc(
+      sizeof(DictionaryObject)));
   if (!d) {
     raise_python_exception(exc_block, &MemoryError_instance);
     throw bad_alloc();
