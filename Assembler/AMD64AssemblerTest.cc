@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <sys/mman.h>
 
+#include <phosg/Hash.hh>
 #include <phosg/Strings.hh>
 
 #include "AMD64Assembler.hh"
@@ -199,6 +200,41 @@ void test_quicksort() {
 }
 
 
+void test_hash_fnv1a64() {
+  printf("-- hash_fnv1a64\n");
+
+  AMD64Assembler as;
+  CodeBuffer code;
+
+  // this mirrors the implementation in notes/hash.s
+  as.write_mov(Register::RDX, 0xCBF29CE484222325);
+  as.write_add(rsi, rdi);
+  as.write_xor(rax, rax);
+  as.write_mov(Register::RCX, 0x00000100000001B3);
+  as.write_jmp("check_end");
+
+  as.write_label("continue");
+  as.write_mov(al, MemoryReference(Register::RDI, 0), OperandSize::Byte);
+  as.write_xor(rdx, rax);
+  as.write_imul(Register::RDX, rcx);
+  as.write_inc(rdi);
+  as.write_label("check_end");
+  as.write_cmp(rdi, rsi);
+  as.write_jne("continue");
+
+  as.write_mov(rax, rdx);
+  as.write_ret();
+
+  void* function = assemble(code, as);
+  int64_t (*hash)(const void*, size_t) = reinterpret_cast<int64_t (*)(const void*, size_t)>(function);
+
+  assert(hash("", 0) == fnv1a64("", 0));
+  assert(hash("omg", 3) == fnv1a64("omg", 3));
+  // we intentionally include the \0 at the end of the string here
+  assert(hash("0123456789", 11) == fnv1a64("0123456789", 11));
+}
+
+
 void test_float_move_load_multiply() {
   printf("-- floating move + load + multiply\n");
 
@@ -260,6 +296,7 @@ void test_absolute_patches() {
 int main(int argc, char** argv) {
   test_trivial_function();
   test_pow();
+  test_hash_fnv1a64();
   test_quicksort();
   test_float_move_load_multiply();
   test_float_neg();
