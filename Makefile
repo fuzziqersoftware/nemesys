@@ -32,6 +32,6 @@ Types/DictionaryTest: Types/DictionaryTest.o Debug.o Types/Dictionary.o Types/St
 	$(CXXLD) $(LDFLAGS) -o Types/DictionaryTest $^
 
 clean:
-	rm -rf *.o nemesys AMD64AssemblerTest nemesys.dSYM Assembler/*.o Assembler/*Test Parser/*.o Modules/*.o Types/*.o Types/*Test
+	rm -rf *.o nemesys nemesys.dSYM Assembler/*.o Assembler/*Test Assembler/amd64dasm Parser/*.o Modules/*.o Types/*.o Types/*Test
 
 .PHONY: all clean test
