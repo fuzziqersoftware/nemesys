@@ -10,7 +10,14 @@ OBJECTS=Main.o Debug.o \
 	Exception.o Exception-Assembly.o \
 	AnnotationVisitor.o AnalysisVisitor.o CompilationVisitor.o
 CXXFLAGS=-g -Wall -Werror -std=c++14 -I/opt/local/include
-LDFLAGS=-L/opt/local/lib -lphosg
+LDFLAGS=-L/opt/local/lib
+LIBS=-lphosg -lpthread
+
+ifeq ($(shell uname -s),Darwin)
+	CXXFLAGS += -DMACOSX
+else
+	CXXFLAGS += -DLINUX
+endif
 
 all: Assembler/amd64dasm test
 
@@ -20,16 +27,16 @@ test: nemesys Assembler/AMD64AssemblerTest Types/DictionaryTest
 	(cd tests ; ./run_tests.sh)
 
 nemesys: $(OBJECTS)
-	$(CXXLD) $(LDFLAGS) -o nemesys $^
+	$(CXXLD) $(LDFLAGS) -o nemesys $^ $(LIBS)
 
 Assembler/AMD64AssemblerTest: Assembler/CodeBuffer.o Assembler/AMD64Assembler.o Assembler/AMD64AssemblerTest.o
-	$(CXXLD) $(LDFLAGS) -o Assembler/AMD64AssemblerTest $^
+	$(CXXLD) $(LDFLAGS) -o Assembler/AMD64AssemblerTest $^ $(LIBS)
 
 Assembler/amd64dasm: Assembler/AMD64Assembler.o Assembler/Main.o
-	$(CXXLD) $(LDFLAGS) -o Assembler/amd64dasm $^
+	$(CXXLD) $(LDFLAGS) -o Assembler/amd64dasm $^ $(LIBS)
 
 Types/DictionaryTest: Types/DictionaryTest.o Debug.o Types/Dictionary.o Types/Strings.o Types/Reference.o Types/Instance.o Exception.o Exception-Assembly.o
-	$(CXXLD) $(LDFLAGS) -o Types/DictionaryTest $^
+	$(CXXLD) $(LDFLAGS) -o Types/DictionaryTest $^ $(LIBS)
 
 clean:
 	rm -rf *.o nemesys nemesys.dSYM Assembler/*.o Assembler/*Test Assembler/amd64dasm Parser/*.o Modules/*.o Types/*.o Types/*Test

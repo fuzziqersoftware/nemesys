@@ -103,7 +103,7 @@ pair<ssize_t, ssize_t> PythonParser::find_bracketed_any(
   for (ssize_t offset = this->token_num; offset < end_offset; offset++) {
     // check if it matches any of the given tokens
     if (open_stack.empty()) {
-      for (ssize_t x = 0; x < types.size(); x++) {
+      for (size_t x = 0; x < types.size(); x++) {
         if (this->token_at(offset).type != types[x]) {
           continue;
         }
@@ -1009,7 +1009,7 @@ shared_ptr<SimpleStatement> PythonParser::parse_simple_statement(
   ssize_t operator_type;
   ssize_t operator_offset = this->find_bracketed_end(TokenType::_Equals, end_offset);
   for (operator_type = 0;
-       (operator_type < static_cast<size_t>(AugmentOperator::_AugmentOperatorCount)) &&
+       (operator_type < static_cast<ssize_t>(AugmentOperator::_AugmentOperatorCount)) &&
          (operator_offset == -1);
        operator_type++) {
     operator_offset = this->find_bracketed_end(

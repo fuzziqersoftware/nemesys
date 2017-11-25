@@ -3,7 +3,7 @@
 
 #include <phosg/Strings.hh>
 #include <string>
-#include <unordered_set>
+#include <set>
 
 #include "PythonLexer.hh"
 
@@ -559,7 +559,7 @@ bool PythonLexer::Token::is_static_token(TokenType type) {
 }
 
 bool PythonLexer::Token::is_operator_token(TokenType type) {
-  static const unordered_set<TokenType> operator_tokens({
+  static const set<TokenType> operator_tokens({
     TokenType::In, TokenType::NotIn, TokenType::Not, TokenType::And,
     TokenType::Or, TokenType::_Asterisk, TokenType::_DoubleAsterisk,
     TokenType::_LeftShift, TokenType::_RightShift, TokenType::_Dot,

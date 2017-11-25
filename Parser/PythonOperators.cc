@@ -1,24 +1,24 @@
 #include "PythonOperators.hh"
 
-#include <unordered_map>
+#include <vector>
 
 using namespace std;
 
 
 BinaryOperator binary_operator_for_augment_operator(AugmentOperator oper) {
-  static const unordered_map<AugmentOperator, BinaryOperator> m({
-    {AugmentOperator::Addition, BinaryOperator::Addition},
-    {AugmentOperator::Subtraction, BinaryOperator::Subtraction},
-    {AugmentOperator::Multiplication, BinaryOperator::Multiplication},
-    {AugmentOperator::Division, BinaryOperator::Division},
-    {AugmentOperator::Modulus, BinaryOperator::Modulus},
-    {AugmentOperator::And, BinaryOperator::And},
-    {AugmentOperator::Or, BinaryOperator::Or},
-    {AugmentOperator::Xor, BinaryOperator::Xor},
-    {AugmentOperator::LeftShift, BinaryOperator::LeftShift},
-    {AugmentOperator::RightShift, BinaryOperator::RightShift},
-    {AugmentOperator::Exponentiation, BinaryOperator::Exponentiation},
-    {AugmentOperator::IntegerDivision, BinaryOperator::IntegerDivision},
+  static const vector<BinaryOperator> m({
+    BinaryOperator::Addition,
+    BinaryOperator::Subtraction,
+    BinaryOperator::Multiplication,
+    BinaryOperator::Division,
+    BinaryOperator::Modulus,
+    BinaryOperator::And,
+    BinaryOperator::Or,
+    BinaryOperator::Xor,
+    BinaryOperator::LeftShift,
+    BinaryOperator::RightShift,
+    BinaryOperator::Exponentiation,
+    BinaryOperator::IntegerDivision,
   });
-  return m.at(oper);
+  return m.at(static_cast<size_t>(oper));
 }

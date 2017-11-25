@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
   vector<const char*> sys_argv;
   bool module_is_code = false;
   bool module_is_filename = true;
-  size_t x;
+  int x;
   for (x = 1; x < argc; x++) {
     if (!strncmp(argv[x], "-X", 2)) {
       vector<string> debug_flag_strs = split(&argv[x][2], ',');

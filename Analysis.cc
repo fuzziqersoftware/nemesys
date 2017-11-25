@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
@@ -279,8 +280,9 @@ void GlobalAnalysis::advance_module_phase(shared_ptr<ModuleAnalysis> module,
             const auto& tokens = lexer->get_tokens();
             for (size_t y = 0; y < tokens.size(); y++) {
               const auto& token = tokens[y];
-              fprintf(stderr, "      n:%5lu type:%16s s:%s f:%lf i:%lld off:%lu len:%lu\n",
-                  y, PythonLexer::Token::name_for_token_type(token.type),
+              fprintf(stderr, "      n:%5lu type:%16s s:%s f:%lf i:%" PRId64
+                  " off:%lu len:%lu\n", y,
+                  PythonLexer::Token::name_for_token_type(token.type),
                   token.string_data.c_str(), token.float_data, token.int_data,
                   token.text_offset, token.text_length);
             }

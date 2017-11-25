@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <inttypes.h>
+#include <string.h>
 #include <unistd.h>
 
 #include <phosg/Filesystem.hh>

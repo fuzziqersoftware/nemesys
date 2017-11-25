@@ -12,7 +12,7 @@ using namespace std;
 
 
 template <typename T> void ASTVisitor::visit_list(vector<shared_ptr<T>>& list) {
-  for (int x = 0; x < list.size(); x++) {
+  for (size_t x = 0; x < list.size(); x++) {
     list[x]->accept(this);
   }
 }

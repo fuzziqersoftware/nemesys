@@ -2220,11 +2220,8 @@ string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
       return "<<unknown-name>>";
     }
     if (mem_str[0] == '[') {
-      static const unordered_map<OperandSize, const char*> size_names({
-          {OperandSize::Byte, "byte"},
-          {OperandSize::Word, "word"},
-          {OperandSize::DoubleWord, "dword"},
-          {OperandSize::QuadWord, "qword"}});
+      static const vector<const char*> size_names({
+          "byte", "word", "dword", "qword", "float", "double"});
       return string_printf("%-8s %s ptr %s", name, size_names.at(operand_size),
           mem_str.c_str());
     } else {

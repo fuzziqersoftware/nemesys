@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <phosg/Strings.hh>
 
@@ -66,7 +67,7 @@ void* tuple_get_item(const TupleObject* t, int64_t position,
   if (position < 0) {
     position += t->count;
   }
-  if ((position < 0) || (position >= t->count)) {
+  if ((position < 0) || (position >= static_cast<ssize_t>(t->count))) {
     raise_python_exception(exc_block, create_instance(IndexError_class_id));
     throw out_of_range("index out of range for tuple object");
   }
@@ -84,7 +85,7 @@ void tuple_set_item(TupleObject* t, int64_t position, void* value,
   if (position < 0) {
     position += t->count;
   }
-  if ((position < 0) || (position >= t->count)) {
+  if ((position < 0) || (position >= static_cast<ssize_t>(t->count))) {
     raise_python_exception(exc_block, create_instance(IndexError_class_id));
     throw out_of_range("index out of range for tuple object");
   }

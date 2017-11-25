@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <phosg/Strings.hh>
 
@@ -48,7 +49,7 @@ void* list_get_item(const ListObject* l, int64_t position,
   if (position < 0) {
     position += l->count;
   }
-  if ((position < 0) || (position >= l->count)) {
+  if ((position < 0) || (position >= static_cast<ssize_t>(l->count))) {
     raise_python_exception(exc_block, create_instance(IndexError_class_id));
     throw out_of_range("index out of range for list object");
   }
@@ -64,7 +65,7 @@ void list_set_item(ListObject* l, int64_t position, void* value,
   if (position < 0) {
     position += l->count;
   }
-  if ((position < 0) || (position >= l->count)) {
+  if ((position < 0) || (position >= static_cast<ssize_t>(l->count))) {
     raise_python_exception(exc_block, create_instance(IndexError_class_id));
     throw out_of_range("index out of range for list object");
   }
@@ -83,7 +84,7 @@ void list_insert(ListObject* l, int64_t position, void* value,
   if (position < 0) {
     position += l->count;
   }
-  if (position < 0 || position > l->count) {
+  if (position < 0 || position > static_cast<ssize_t>(l->count)) {
     raise_python_exception(exc_block, create_instance(IndexError_class_id));
     throw out_of_range("index out of range for list insert");
   }
@@ -127,7 +128,7 @@ void* list_pop(ListObject* l, int64_t position, ExceptionBlock* exc_block) {
   if (position < 0) {
     position += l->count;
   }
-  if (position < 0 || position >= l->count) {
+  if (position < 0 || position >= static_cast<ssize_t>(l->count)) {
     raise_python_exception(exc_block, create_instance(IndexError_class_id));
     throw out_of_range("index out of range for list pop");
   }

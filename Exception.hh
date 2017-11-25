@@ -37,7 +37,7 @@ extern const size_t return_exception_block_size;
 
 extern "C" {
 
-// everything in here is implemented in CompilationVisitorFunctions-Assembly.s
+// everything in here is implemented in Exception-Assembly.s
 
 // raise a python exception. exc_block should be the exception block passed to
 // the c function, and exc should be an instance of the exception class. this

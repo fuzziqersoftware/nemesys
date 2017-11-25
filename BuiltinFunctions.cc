@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <memory>
 #include <phosg/Strings.hh>
@@ -54,22 +55,21 @@ int64_t SetObject_class_id = 0;
 
 
 
-static BytesObject* empty_bytes = bytes_new(NULL, NULL, 0);
-static UnicodeObject* empty_unicode = unicode_new(NULL, NULL, 0);
+static UnicodeObject* empty_unicode = unicode_new(NULL, 0);
 static const Variable None(ValueType::None);
 static const Variable Bool(ValueType::Bool);
 static const Variable Bool_True(ValueType::Bool, true);
 static const Variable Bool_False(ValueType::Bool, false);
 static const Variable Int(ValueType::Int);
-static const Variable Int_Zero(ValueType::Int, 0LL);
-static const Variable Int_NegOne(ValueType::Int, -1LL);
+static const Variable Int_Zero(ValueType::Int, static_cast<int64_t>(0));
+static const Variable Int_NegOne(ValueType::Int, static_cast<int64_t>(-1));
 static const Variable Float(ValueType::Float);
 static const Variable Float_Zero(ValueType::Float, 0.0);
 static const Variable Bytes(ValueType::Bytes);
 static const Variable Unicode(ValueType::Unicode);
 static const Variable Unicode_Blank(ValueType::Unicode, L"");
-static const Variable Extension0(ValueType::ExtensionTypeReference, 0LL);
-static const Variable Extension1(ValueType::ExtensionTypeReference, 1LL);
+static const Variable Extension0(ValueType::ExtensionTypeReference, static_cast<int64_t>(0));
+static const Variable Extension1(ValueType::ExtensionTypeReference, static_cast<int64_t>(1));
 static const Variable Self(ValueType::Instance, 0LL, nullptr);
 static const Variable List_Any(ValueType::List, vector<Variable>({Variable()}));
 static const Variable List_Same(ValueType::List, vector<Variable>({Extension0}));
@@ -126,7 +126,7 @@ int64_t create_builtin_class(BuiltinClassDefinition& def) {
     {"set", {Set_Any, Set_Same}},
     {"dict", {Dict_Any, Dict_Same}},
   });
-  unordered_set<Variable> self_types({{ValueType::Instance, 0LL, NULL}});
+  unordered_set<Variable> self_types({{ValueType::Instance, static_cast<int64_t>(0), NULL}});
   try {
     self_types = name_to_self_types.at(def.name);
   } catch (const out_of_range&) { }
@@ -171,7 +171,7 @@ int64_t create_builtin_class(BuiltinClassDefinition& def) {
     if (!strcmp(method_def.name, "__init__")) {
       // if it's __init__, the return type must be the class instance, not None
       for (auto& frag_def : method_def.fragments) {
-        if (frag_def.return_type != Variable(ValueType::Instance, 0LL, NULL)) {
+        if (frag_def.return_type != Variable(ValueType::Instance, static_cast<int64_t>(0), NULL)) {
           throw logic_error(string_printf("%s.__init__ must return the class instance",
               def.name));
         }
@@ -590,9 +590,9 @@ static void create_default_builtin_functions() {
         return unicode_new(L"0o0", 3);
       }
 
-      // this value is its own negative, so special-case it here so we can assume
+      // 1<<63 is its own negative, so special-case it here so we can assume
       // below that the sign bit is never set
-      if (i == 0x8000000000000000) {
+      if (i == -i) {
         return unicode_new(L"-0o1000000000000000000000", 25);
       }
 
@@ -831,7 +831,7 @@ void create_default_builtin_classes() {
       {"count", {Self, Extension0}, Int, void_fn_ptr(), true, false},
       {"index", {Self, Extension0}, Int, void_fn_ptr(), true, false},
       */
-    }, void_fn_ptr(NULL), true},
+    }, NULL, true},
 
     {"set", {}, {
       /* TODO: implement these
@@ -857,7 +857,7 @@ void create_default_builtin_classes() {
       {"issuperset", {Self, Set_Same}, Bool, void_fn_ptr(), true, false},
       {"pop", {Self}, Extension0, void_fn_ptr(), true, false},
       */
-    }, void_fn_ptr(NULL), true},
+    }, NULL, true},
 
     {"dict", {}, {
       /* TODO: implement these

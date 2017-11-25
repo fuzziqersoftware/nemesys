@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <phosg/Strings.hh>
 
@@ -100,7 +101,7 @@ bool bytes_contains(const BytesObject* haystack, const BytesObject* needle) {
   if (needle->count == 0) {
     return true;
   }
-  return memmem(haystack->data, haystack->count * sizeof(char),
+  return !!memmem(haystack->data, haystack->count * sizeof(char),
       needle->data, needle->count * sizeof(char));
 }
 
@@ -197,8 +198,12 @@ bool unicode_contains(const UnicodeObject* haystack, const UnicodeObject* needle
   if (needle->count == 0) {
     return true;
   }
-  return memmem(haystack->data, haystack->count * sizeof(wchar_t),
-      needle->data, needle->count * sizeof(wchar_t));
+  if (memmem(haystack->data, haystack->count * sizeof(wchar_t),
+      needle->data, needle->count * sizeof(wchar_t)) != NULL) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 wstring unicode_to_cxx_wstring(const UnicodeObject* s) {

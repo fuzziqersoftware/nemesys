@@ -382,11 +382,11 @@ void execute_format_spec(wstring& output, struct FormatSpecifier spec,
     wstring format = (spec.wstr(false) + L"ll") + static_cast<wchar_t>(spec.format_code);
 
     wchar_t buf[64]; // this is plenty of space, right?
-    if (spec.width > sizeof(buf) / sizeof(buf[0])) {
+    if (spec.width > static_cast<ssize_t>(sizeof(buf) / sizeof(buf[0]))) {
       throw invalid_argument("formatted Ints may not be longer than 64 characters");
     }
     int len = swprintf(buf, sizeof(buf) / sizeof(buf[0]), format.c_str(), x);
-    if ((len < 0) || (len >= sizeof(buf) / sizeof(buf[0]))) {
+    if ((len < 0) || (len >= static_cast<ssize_t>(sizeof(buf) / sizeof(buf[0])))) {
       throw invalid_argument("formatted Int is too long");
     }
     output.append(buf, len);
@@ -398,11 +398,11 @@ void execute_format_spec(wstring& output, struct FormatSpecifier spec,
     wstring format = spec.wstr(false) + static_cast<wchar_t>(spec.format_code);
 
     wchar_t buf[64]; // this is plenty of space, right?
-    if (spec.width > sizeof(buf) / sizeof(buf[0])) {
+    if (spec.width > static_cast<ssize_t>(sizeof(buf) / sizeof(buf[0]))) {
       throw invalid_argument("formatted Floats may not be longer than 64 characters");
     }
     int len = swprintf(buf, sizeof(buf) / sizeof(buf[0]), format.c_str(), f);
-    if ((len < 0) || (len >= sizeof(buf) / sizeof(buf[0]))) {
+    if ((len < 0) || (len >= static_cast<ssize_t>(sizeof(buf) / sizeof(buf[0])))) {
       throw invalid_argument("formatted Float is too long");
     }
     output.append(buf, len);

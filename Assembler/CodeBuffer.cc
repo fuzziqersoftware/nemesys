@@ -1,6 +1,7 @@
 #include "CodeBuffer.hh"
 
 #include <errno.h>
+#include <string.h>
 #include <sys/mman.h>
 
 #include <phosg/Strings.hh>

@@ -38,7 +38,8 @@ void AnnotationVisitor::visit(ImportStatement* a) {
 
     // copy the module's globals (names only) into the current scope
     for (const auto& it : module->globals) {
-      if (!scope->emplace(it.first, ValueType::Indeterminate).second) {
+      if (!scope->emplace(piecewise_construct, forward_as_tuple(it.first),
+          forward_as_tuple(ValueType::Indeterminate)).second) {
         throw compile_error("name overwritten by import", a->file_offset);
       }
     }
@@ -68,7 +69,8 @@ void AnnotationVisitor::visit(ImportStatement* a) {
     if (!module->globals.count(it.first)) {
       throw compile_error("imported name " + it.first + " not defined in source module", a->file_offset);
     }
-    if (!scope->emplace(it.second, ValueType::Indeterminate).second) {
+    if (!scope->emplace(piecewise_construct, forward_as_tuple(it.second),
+        forward_as_tuple(ValueType::Indeterminate)).second) {
       throw compile_error("name overwritten by import", a->file_offset);
     }
   }
@@ -276,5 +278,6 @@ void AnnotationVisitor::record_write(const string& name, size_t file_offset) {
   }
 
   // we're writing a global
-  this->module->globals.emplace(name, ValueType::Indeterminate);
+  this->module->globals.emplace(piecewise_construct, forward_as_tuple(name),
+      forward_as_tuple(ValueType::Indeterminate));
 }

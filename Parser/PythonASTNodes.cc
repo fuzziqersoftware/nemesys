@@ -19,7 +19,7 @@ using namespace std;
 template<typename T>
 static string comma_str_list(const vector<shared_ptr<T>>& l) {
   string ret;
-  for (int x = 0; x < l.size(); x++) {
+  for (size_t x = 0; x < l.size(); x++) {
     if (x > 0) {
       ret += ", ";
     }
@@ -35,7 +35,7 @@ static string comma_str_list(const vector<shared_ptr<T>>& l) {
 template<typename T>
 static string comma_str_list(const vector<T>& l) {
   string ret;
-  for (int x = 0; x < l.size(); x++) {
+  for (size_t x = 0; x < l.size(); x++) {
     if (x > 0) {
       ret += ", ";
     }
@@ -46,7 +46,7 @@ static string comma_str_list(const vector<T>& l) {
 
 static string comma_list(const vector<string>& l) {
   string ret;
-  for (int x = 0; x < l.size(); x++) {
+  for (size_t x = 0; x < l.size(); x++) {
     if (x > 0) {
       ret += ", ";
     }

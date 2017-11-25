@@ -8,19 +8,22 @@
 # exception blocks for one that matches the active exception and rewinds the
 # stack to that point. this function never returns to the point where it was
 # called - it returns to somewhere further up the call stack.
+.globl raise_python_exception
 .globl _raise_python_exception
+raise_python_exception:
 _raise_python_exception:
   # c entry point for raising a nemesys exception. exc block ptr is rdi, exc
   # object is rsi. just move them into the right places and go to
   # __unwind_exception_internal. if the exception block or exception object is
   # NULL, return without doing anything
   test rdi, rdi
-  jnz 1f # _raise_python_exception__continue
+  jnz 1f # _raise_python_exception__block_valid
   ret
+1: _raise_python_exception__block_valid:
   test rsi, rsi
-  jnz 1f # _raise_python_exception__continue
+  jnz 1f # _raise_python_exception__exc_valid
   ret
-1: _raise_python_exception__continue:
+1: _raise_python_exception__exc_valid:
   mov r14, rdi
   mov r15, rsi
 
@@ -28,7 +31,9 @@ _raise_python_exception:
 # function does not follow the system v calling convention that we adhere to in
 # the rest of this project! it expects its arguments in r14 (the exception block
 # chain) and r15 (the active exception).
+.globl _unwind_exception_internal
 .globl __unwind_exception_internal
+_unwind_exception_internal:
 __unwind_exception_internal:
   # get the exception class id
   mov rdx, [r15 + 16]

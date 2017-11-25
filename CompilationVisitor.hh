@@ -163,8 +163,8 @@ private:
 
   ssize_t write_function_call_stack_prep(size_t arg_count = 0);
   void write_function_call(const MemoryReference& function_loc,
-      const std::vector<const MemoryReference>& args,
-      const std::vector<const MemoryReference>& float_args,
+      const std::vector<MemoryReference>& args,
+      const std::vector<MemoryReference>& float_args,
       ssize_t arg_stack_bytes = -1, Register return_register = Register::None,
       bool return_float = false);
   void write_function_setup(const std::string& base_label);

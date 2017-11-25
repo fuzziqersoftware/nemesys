@@ -1,6 +1,7 @@
 #include "CompilationVisitor.hh"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -1184,7 +1185,7 @@ void CompilationVisitor::visit(ListConstructor* a) {
 
   // allocate the list object
   this->as.write_label(string_printf("__ListConstructor_%p_allocate", a));
-  vector<const MemoryReference> int_args({rdi, rsi, r14});
+  vector<MemoryReference> int_args({rdi, rsi, r14});
   this->as.write_mov(int_args[0], a->items.size());
   this->as.write_xor(int_args[1], int_args[1]); // we'll set items_are_objects later
   this->write_function_call(common_object_reference(void_fn_ptr(&list_new)),
@@ -1271,7 +1272,7 @@ void CompilationVisitor::visit(TupleConstructor* a) {
 
   // allocate the tuple object
   this->as.write_label(string_printf("__TupleConstructor_%p_allocate", a));
-  vector<const MemoryReference> int_args({rdi, r14});
+  vector<MemoryReference> int_args({rdi, r14});
   this->as.write_mov(rdi, a->items.size());
   this->write_function_call(common_object_reference(void_fn_ptr(&tuple_new)),
       int_args, {}, -1, this->target_register);
@@ -1846,7 +1847,8 @@ void CompilationVisitor::visit(ArrayIndex* a) {
       if (tuple_index < 0) {
         tuple_index += collection_type.extension_types.size();
       }
-      if ((tuple_index < 0) || (tuple_index >= collection_type.extension_types.size())) {
+      if ((tuple_index < 0) || (tuple_index >= static_cast<ssize_t>(
+          collection_type.extension_types.size()))) {
         throw compile_error("tuple index out of range", this->file_offset);
       }
       this->as.write_mov(Register::RSI, tuple_index);
@@ -2422,9 +2424,13 @@ void CompilationVisitor::visit(AssertStatement* a) {
         this->file_offset);
   }
 
+  // allocate the AssertionError instance and put the message in it
   this->as.write_label(string_printf("__AssertStatement_%p_allocate_instance", a));
   this->write_alloc_class_instance(AssertionError_class_id, false);
-  this->as.write_mov(MemoryReference(this->target_register, 24), rax);
+  Register tmp = this->available_register_except({this->target_register});
+  this->write_pop(tmp);
+  this->as.write_mov(MemoryReference(this->target_register, 24),
+      MemoryReference(tmp));
 
   // we should have filled everything in
   if (cls->instance_size() != 32) {
@@ -2435,7 +2441,6 @@ void CompilationVisitor::visit(AssertStatement* a) {
   // now jump to unwind_exception
   this->as.write_label(string_printf("__AssertStatement_%p_unwind", a));
   this->as.write_mov(r15, MemoryReference(this->target_register));
-  this->write_pop(Register::RAX);
   this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
 
   // if we get here, then the expression was truthy, but we may still need to
@@ -3373,8 +3378,8 @@ ssize_t CompilationVisitor::write_function_call_stack_prep(size_t arg_count) {
 
 void CompilationVisitor::write_function_call(
     const MemoryReference& function_loc,
-    const std::vector<const MemoryReference>& int_args,
-    const std::vector<const MemoryReference>& float_args,
+    const std::vector<MemoryReference>& int_args,
+    const std::vector<MemoryReference>& float_args,
     ssize_t arg_stack_bytes, Register return_register, bool return_float) {
 
   if (float_args.size() > 8) {
@@ -3742,7 +3747,7 @@ void CompilationVisitor::write_alloc_class_instance(int64_t class_id,
   // zero everything else in the class, if it has any attributes
   if (initialize_attributes && (cls->instance_size() != sizeof(InstanceObject))) {
     this->as.write_xor(tmp_mem, tmp_mem);
-    for (size_t x = sizeof(InstanceObject); x < cls->instance_size(); x += 8) {
+    for (ssize_t x = sizeof(InstanceObject); x < cls->instance_size(); x += 8) {
       this->as.write_mov(MemoryReference(this->target_register, x), tmp_mem);
     }
   }

@@ -1,7 +1,9 @@
 #include "Environment.hh"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <exception>
 #include <memory>
@@ -813,7 +815,7 @@ string type_signature_for_variables(const vector<Variable>& vars,
 
 namespace std {
   size_t hash<Variable>::operator()(const Variable& var) const {
-    size_t h = hash<ValueType>()(var.type);
+    size_t h = hash<size_t>()(static_cast<size_t>(var.type));
     if (var.type == ValueType::None) {
       return h;
     }

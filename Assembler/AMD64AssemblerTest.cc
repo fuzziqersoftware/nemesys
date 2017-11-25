@@ -60,8 +60,8 @@ void test_trivial_function() {
 
   void* function = assemble(code, as);
 
-  int64_t data = 0x0102030405060708;
-  int64_t (*fn)(int64_t*) = reinterpret_cast<int64_t (*)(int64_t*)>(function);
+  uint64_t data = 0x0102030405060708;
+  uint64_t (*fn)(uint64_t*) = reinterpret_cast<uint64_t (*)(uint64_t*)>(function);
 
   // the function should have returned 0xFEFDFCFBFAF93F7E and set the data
   // variable to that value also
@@ -226,7 +226,7 @@ void test_hash_fnv1a64() {
   as.write_ret();
 
   void* function = assemble(code, as);
-  int64_t (*hash)(const void*, size_t) = reinterpret_cast<int64_t (*)(const void*, size_t)>(function);
+  uint64_t (*hash)(const void*, size_t) = reinterpret_cast<uint64_t (*)(const void*, size_t)>(function);
 
   assert(hash("", 0) == fnv1a64("", 0));
   assert(hash("omg", 3) == fnv1a64("omg", 3));

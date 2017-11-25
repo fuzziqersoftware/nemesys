@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sysexits.h>
 #include <sys/param.h>
 #include <sys/types.h>
@@ -322,13 +323,22 @@ void posix_initialize() {
     stat_result_class->set_attribute(res, "st_blksize", st->st_blksize);
     stat_result_class->set_attribute(res, "st_rdev", st->st_rdev);
 
+#ifdef MACOSX
     stat_result_class->set_attribute(res, "st_atime_ns", st->st_atimespec.tv_sec * 1000000000 + st->st_atimespec.tv_nsec);
     stat_result_class->set_attribute(res, "st_mtime_ns", st->st_mtimespec.tv_sec * 1000000000 + st->st_mtimespec.tv_nsec);
     stat_result_class->set_attribute(res, "st_ctime_ns", st->st_ctimespec.tv_sec * 1000000000 + st->st_ctimespec.tv_nsec);
-
     double atime = static_cast<double>(st->st_atimespec.tv_sec * 1000000000 + st->st_atimespec.tv_nsec) / 1000000000;
     double mtime = static_cast<double>(st->st_mtimespec.tv_sec * 1000000000 + st->st_mtimespec.tv_nsec) / 1000000000;
     double ctime = static_cast<double>(st->st_ctimespec.tv_sec * 1000000000 + st->st_ctimespec.tv_nsec) / 1000000000;
+#else // LINUX
+    stat_result_class->set_attribute(res, "st_atime_ns", st->st_atim.tv_sec * 1000000000 + st->st_atim.tv_nsec);
+    stat_result_class->set_attribute(res, "st_mtime_ns", st->st_mtim.tv_sec * 1000000000 + st->st_mtim.tv_nsec);
+    stat_result_class->set_attribute(res, "st_ctime_ns", st->st_ctim.tv_sec * 1000000000 + st->st_ctim.tv_nsec);
+    double atime = static_cast<double>(st->st_atim.tv_sec * 1000000000 + st->st_atim.tv_nsec) / 1000000000;
+    double mtime = static_cast<double>(st->st_mtim.tv_sec * 1000000000 + st->st_mtim.tv_nsec) / 1000000000;
+    double ctime = static_cast<double>(st->st_ctim.tv_sec * 1000000000 + st->st_ctim.tv_nsec) / 1000000000;
+#endif
+
     stat_result_class->set_attribute(res, "st_atime", *reinterpret_cast<int64_t*>(&atime));
     stat_result_class->set_attribute(res, "st_mtime", *reinterpret_cast<int64_t*>(&mtime));
     stat_result_class->set_attribute(res, "st_ctime", *reinterpret_cast<int64_t*>(&ctime));
@@ -368,7 +378,7 @@ void posix_initialize() {
     {"kill", {Int, Int}, Int, simple_wrapper(kill(pid, sig), int64_t pid, int64_t sig, ExceptionBlock* exc_block), true, false},
     {"killpg", {Int, Int}, Int, simple_wrapper(killpg(pid, sig), int64_t pid, int64_t sig, ExceptionBlock* exc_block), true, false},
 
-    {"open", {Unicode, Int, Variable(ValueType::Int, 0777LL)}, Int,
+    {"open", {Unicode, Int, Variable(ValueType::Int, static_cast<int64_t>(0777))}, Int,
         void_fn_ptr([](UnicodeObject* path, int64_t flags, int64_t mode, ExceptionBlock* exc_block) -> int64_t {
       BytesObject* path_bytes = unicode_encode_ascii(path);
       delete_reference(path);
@@ -480,8 +490,19 @@ void posix_initialize() {
 
     {"strerror", {Int}, Unicode, void_fn_ptr([](int64_t code) -> UnicodeObject* {
       char buf[128];
+
+#ifdef LINUX
+      // linux has a "feature" where there are two different versions of
+      // strerror_r. the GNU-specific one returns a char*, which might not point
+      // to buf, probbaly to avoid copying. we can't use the XSI-compliant one
+      // because apparantely libstdc++ requires _GNU_SOURCE to be defined, which
+      // enables the GNU-specific version of strerror_r. so this means we have
+      // to expect buf to be unused sometimes, sigh
+      return bytes_decode_ascii(strerror_r(code, buf, sizeof(buf)));
+#else
       strerror_r(code, buf, sizeof(buf));
       return bytes_decode_ascii(buf);
+#endif
     }), false, false},
 
     // TODO: most functions below here should raise OSError on failure instead
