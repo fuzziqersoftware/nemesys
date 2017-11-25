@@ -1,5 +1,3 @@
-nemesys
-
 nemesys is a just-in-time (JIT) compiler for the Python programming language.
 
 This project is what happens when someone who has never written a compiler or
@@ -7,6 +5,8 @@ taken a computer languages or compilers class writes a compiler. The goals of
 this project are fun and learning, not necessarily to contribute anything of
 value to the world. If you're a student looking for an example of well-designed
 compiler, this is not such an example.
+
+See notes/design.md for specifics on how the compiler is implemented.
 
 Here's what nemesys does:
 - Function calls and control flow statements like if, for, while, etc.
