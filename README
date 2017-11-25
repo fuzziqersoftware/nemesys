@@ -1,8 +1,6 @@
 nemesys
 
-nemesys is a just-in-time (JIT) compiler for the Python programming language. I
-know that PyPy exists; The point of this project is only my personal learning
-and enjoyment.
+nemesys is a just-in-time (JIT) compiler for the Python programming language.
 
 This project is what happens when someone who has never written a compiler or
 taken a computer languages or compilers class writes a compiler. The goals of
@@ -15,7 +13,7 @@ Here's what nemesys does:
 - Fast integer math.
 - Floating-point math.
 - Strings, lists, and tuples.
-- Non-inherited classes.
+- Classes, but not inheritance yet.
 - Refcounted garbage collection.
 - Custom class destructors (__del__).
 - Exceptions.
@@ -32,7 +30,8 @@ Here's what nemesys doesn't do yet, but will in the future:
 - Generators and coroutines.
 - Magic methods on classes (except __init__ and __del__, which are implemented).
 
-Here's what nemesys doesn't do yet, but might in the future:
+Here's what nemesys doesn't do yet, but could in the future:
+- Interactive shell interface.
 - Closures.
 - Return statements inside finally blocks.
 - Support the CPython C API.
