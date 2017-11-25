@@ -5,7 +5,7 @@
 Guiding ideas behind this project:
 - This project is for my enjoyment and learning only. It's great if it also ends up providing something of value to the world, but that's not the primary objective.
 - nemesys does not aim to support everything that CPython supports. Reasonable restrictions can be placed on the language that make it easier to statically analyze and compile; it is explicitly a non-goal of this project to support all existing Python code.
-- With the above in mind, nemesys should operate on pure, unmodified Python code, without any auxiliary information (for example, like Cython's .pxd files). All code that runs in nemesys should also run in CPython, unless it uses the __nemesys__ built-in module.
+- With the above in mind, nemesys should operate on pure, unmodified Python code, without any auxiliary information (for example, like Cython's .pxd files). All code that runs in nemesys should also run in CPython, unless it uses the `__nemesys__` built-in module.
 
 ## Conventions
 
@@ -18,6 +18,7 @@ The reference count of an object includes all instances of pointers to that obje
 ### Calling convention
 
 The nemesys calling convention is similar to the System V calling convention used by Linux and Mac OS, but is a bit more complex. nemesys' convention is mostly compatible with the System V convention, so nemesys functions can directly call C functions (e.g. built-in functions in nemesys itself). nemesys' register assignment is as follows:
+
     register = callee-save? = purpose
     rax      =      no      = int return value
     rcx      =      no      = 4th int arg
@@ -56,13 +57,13 @@ Every function and class has a unique ID that identifies it. These IDs share the
 
 Negative function and class IDs are assigned to built-in functions and classes. Functions and classes defined in Python source are assigned positive IDs dynamically. Zero is not a valid function or class ID.
 
-A class does not have to define __init__. If a class doesn't define __init__, then it can't be instantiated by Python code, and attempting to do so will give a weird compiler error about missing function contexts. Please consider the environment and always define __init__ for your classes. This will probably be fixed in the future.
+A class does not have to define `__init__`. If a class doesn't define `__init__`, then it can't be instantiated by Python code, and attempting to do so will give a weird compiler error about missing function contexts. Please consider the environment and always define `__init__` for your classes. This will probably be fixed in the future.
 
-If a built-in class doesn't define __init__, though, then it doesn't appear in the global namespace at all, so it can't be instantiated because Python code can't even refer to it. It can only be instantiated by C/C++ functions and returned to Python code.
+If a built-in class doesn't define `__init__`, though, then it doesn't appear in the global namespace at all, so it can't be instantiated because Python code can't even refer to it. It can only be instantiated by C/C++ functions and returned to Python code.
 
 A function may have multiple fragments. A fragment is a compiled implementation of a function with completely-defined types. This is how nemesys implements function polymorphism - a function's argument types aren't necessarily known at definition time, so the argument variables are left as indeterminate types during static analysis. Then at call compilation time, the types of all arguments are known, and this signature is used to refer to the correct fragment, which can then be compiled if necessary and called.
 
-For example, the function sum_all_arguments in tests/functions.py ends up having 3 fragments - one that takes all ints, one that takes all unicode objects, and one that takes all ints except arguments 2, 3, and 4, which are floats. If another module later imports this module and calls the function with different combinations of argument types, more fragments will be generated and compiled for this function.
+For example, the function `sum_all_arguments` in tests/functions.py ends up having 3 fragments - one that takes all ints, one that takes all unicode objects, and one that takes all ints except arguments 2, 3, and 4, which are floats. If another module later imports this module and calls the function with different combinations of argument types, more fragments will be generated and compiled for this function.
 
 ## Compilation procedure
 
