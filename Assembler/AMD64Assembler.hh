@@ -129,6 +129,38 @@ enum Operation {
   CVTSI2SD   = 0x0F2A,
   CVTSD2SI   = 0x0F2C,
   ROUNDSD    = 0x0F3A0B,
+
+  CMOVO      = 0x0F40,
+  CMOVNO     = 0x0F41,
+  CMOVB      = 0x0F42,
+  CMOVNAE    = 0x0F42,
+  CMOVC      = 0x0F42,
+  CMOVNB     = 0x0F43,
+  CMOVAE     = 0x0F43,
+  CMOVNC     = 0x0F43,
+  CMOVZ      = 0x0F44,
+  CMOVE      = 0x0F44,
+  CMOVNZ     = 0x0F45,
+  CMOVNE     = 0x0F45,
+  CMOVBE     = 0x0F46,
+  CMOVNA     = 0x0F46,
+  CMOVNBE    = 0x0F47,
+  CMOVA      = 0x0F47,
+  CMOVS      = 0x0F48,
+  CMOVNS     = 0x0F49,
+  CMOVP      = 0x0F4A,
+  CMOVPE     = 0x0F4A,
+  CMOVNP     = 0x0F4B,
+  CMOVPO     = 0x0F4B,
+  CMOVL      = 0x0F4C,
+  CMOVNGE    = 0x0F4C,
+  CMOVNL     = 0x0F4D,
+  CMOVGE     = 0x0F4D,
+  CMOVLE     = 0x0F4E,
+  CMOVNG     = 0x0F4E,
+  CMOVNLE    = 0x0F4F,
+  CMOVG      = 0x0F4F,
+
   MOVQ_TO_XMM   = 0x0F6E,
   MOVQ_FROM_XMM = 0x0F7E,
   JO         = 0x0F80,
@@ -200,6 +232,8 @@ enum Operation {
   MINSD      = 0x0F5D,
   DIVSD      = 0x0F5E,
   MAXSD      = 0x0F5F,
+  MOVZX8     = 0x0FB6,
+  MOVZX16    = 0x0FB7,
   CMPSD      = 0x0FC2,
 };
 
@@ -316,6 +350,7 @@ enum Register {
 };
 
 enum OperandSize {
+  Automatic = -1,
   Byte = 0,
   Word = 1,
   DoubleWord = 2,
@@ -395,6 +430,72 @@ public:
   void write_mov(const MemoryReference& mem, int64_t value,
       OperandSize size = OperandSize::QuadWord);
   void write_xchg(Register r, const MemoryReference& mem,
+      OperandSize size = OperandSize::QuadWord);
+  void write_movzx8(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_movzx16(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+
+  // conditional move opcodes
+  void write_cmovo(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovno(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovb(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovnae(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovc(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovnb(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovae(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovnc(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovz(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmove(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovnz(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovne(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovbe(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovna(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovnbe(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmova(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovs(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovns(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovp(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovpe(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovnp(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovpo(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovl(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovnge(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovnl(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovge(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovle(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovng(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovnle(Register to, const MemoryReference& from,
+      OperandSize size = OperandSize::QuadWord);
+  void write_cmovg(Register to, const MemoryReference& from,
       OperandSize size = OperandSize::QuadWord);
 
   // floating-point stuff
@@ -648,7 +749,8 @@ private:
   static std::string disassemble_rm(const uint8_t* data, size_t size,
       size_t& offset, const char* opcode_name, bool is_load,
       const char** op_name_table, bool ext, bool reg_ext, bool base_ext,
-      bool index_ext, OperandSize operand_size, bool reg_xmm = false);
+      bool index_ext, OperandSize reg_operand_size,
+      OperandSize mem_operand_size = OperandSize::Automatic);
   static std::string disassemble_jmp(const uint8_t* data, size_t size,
       size_t& offset, uint64_t addr, const char* opcode_name, bool is_32bit,
       std::multimap<size_t, std::string>& addr_to_label, uint64_t& next_label);

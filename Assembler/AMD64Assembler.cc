@@ -10,6 +10,9 @@ using namespace std;
 
 const char* name_for_register(Register r, OperandSize size) {
   switch (size) {
+    case OperandSize::Automatic:
+      throw invalid_argument("unresolved operand size");
+
     case OperandSize::Byte:
       switch (r) {
         case Register::None:
@@ -774,6 +777,166 @@ void AMD64Assembler::write_xchg(Register reg, const MemoryReference& mem,
     OperandSize size) {
   Operation op = (size == OperandSize::Byte) ? Operation::XCHG8 : Operation::XCHG;
   this->write_rm(op, mem, reg, size);
+}
+
+void AMD64Assembler::write_movzx8(Register reg, const MemoryReference& mem,
+    OperandSize size) {
+  this->write_rm(Operation::MOVZX8, mem, reg, size);
+}
+
+void AMD64Assembler::write_movzx16(Register reg, const MemoryReference& mem,
+    OperandSize size) {
+  this->write_rm(Operation::MOVZX16, mem, reg, size);
+}
+
+void AMD64Assembler::write_cmovo(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVO, from, to, size);
+}
+
+void AMD64Assembler::write_cmovno(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNO, from, to, size);
+}
+
+void AMD64Assembler::write_cmovb(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVB, from, to, size);
+}
+
+void AMD64Assembler::write_cmovnae(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNAE, from, to, size);
+}
+
+void AMD64Assembler::write_cmovc(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVC, from, to, size);
+}
+
+void AMD64Assembler::write_cmovnb(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNB, from, to, size);
+}
+
+void AMD64Assembler::write_cmovae(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVAE, from, to, size);
+}
+
+void AMD64Assembler::write_cmovnc(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNC, from, to, size);
+}
+
+void AMD64Assembler::write_cmovz(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVZ, from, to, size);
+}
+
+void AMD64Assembler::write_cmove(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVE, from, to, size);
+}
+
+void AMD64Assembler::write_cmovnz(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNZ, from, to, size);
+}
+
+void AMD64Assembler::write_cmovne(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNE, from, to, size);
+}
+
+void AMD64Assembler::write_cmovbe(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVBE, from, to, size);
+}
+
+void AMD64Assembler::write_cmovna(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNA, from, to, size);
+}
+
+void AMD64Assembler::write_cmovnbe(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNBE, from, to, size);
+}
+
+void AMD64Assembler::write_cmova(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVA, from, to, size);
+}
+
+void AMD64Assembler::write_cmovs(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVS, from, to, size);
+}
+
+void AMD64Assembler::write_cmovns(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNS, from, to, size);
+}
+
+void AMD64Assembler::write_cmovp(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVP, from, to, size);
+}
+
+void AMD64Assembler::write_cmovpe(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVPE, from, to, size);
+}
+
+void AMD64Assembler::write_cmovnp(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNP, from, to, size);
+}
+
+void AMD64Assembler::write_cmovpo(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVPO, from, to, size);
+}
+
+void AMD64Assembler::write_cmovl(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVL, from, to, size);
+}
+
+void AMD64Assembler::write_cmovnge(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNGE, from, to, size);
+}
+
+void AMD64Assembler::write_cmovnl(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNL, from, to, size);
+}
+
+void AMD64Assembler::write_cmovge(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVGE, from, to, size);
+}
+
+void AMD64Assembler::write_cmovle(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVLE, from, to, size);
+}
+
+void AMD64Assembler::write_cmovng(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNG, from, to, size);
+}
+
+void AMD64Assembler::write_cmovnle(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVNLE, from, to, size);
+}
+
+void AMD64Assembler::write_cmovg(Register to, const MemoryReference& from,
+    OperandSize size) {
+  this->write_rm(Operation::CMOVG, from, to, size);
 }
 
 void AMD64Assembler::write_movq_to_xmm(Register reg,
@@ -1840,15 +2003,26 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
             }
           }
 
+        } else if ((opcode & 0xF0) == 0x40) {
+          static const char* names[0x10] = {
+              "cmovo", "cmovno", "cmovb", "cmovae",
+              "cmove", "cmovne", "cmovbe", "cmova",
+              "cmovs", "cmovns", "cmovp", "cmovnp",
+              "cmovl", "cmovge", "cmovle", "cmovg",
+          };
+          opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+              names[opcode & 0x0F], true, NULL, ext, reg_ext, base_ext,
+              index_ext, operand_size);
+
         } else if (opcode == 0x6E) {
           opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
               "movq", true, NULL, ext, reg_ext, base_ext,
-              index_ext, OperandSize::QuadWord, true);
+              index_ext, OperandSize::QuadWordXMM, OperandSize::QuadWord);
 
         } else if (opcode == 0x7E) {
           opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
               "movq", false, NULL, ext, reg_ext, base_ext,
-              index_ext, OperandSize::QuadWord, true);
+              index_ext, OperandSize::QuadWordXMM, OperandSize::QuadWord);
 
         } else if ((opcode & 0xF0) == 0x80) {
           opcode_text = AMD64Assembler::disassemble_jmp(data, size, offset,
@@ -1869,6 +2043,11 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
           opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
               "imul", true, NULL, ext, reg_ext, base_ext, index_ext,
               operand_size);
+
+        } else if ((opcode & 0xFE) == 0xB6) {
+          opcode_text = AMD64Assembler::disassemble_rm(data, size, offset,
+              "movzx", true, NULL, ext, reg_ext, base_ext, index_ext,
+              operand_size, (opcode & 1) ? OperandSize::Word : OperandSize::Byte);
 
         } else if (opcode == 0xC2) {
           if (!xmm_prefix) {
@@ -2066,15 +2245,28 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
         }
       }
 
-    } else if (opcode == 0xFF) {
-      static const char* names[] = {
-        "inc", "dec", "call", NULL, "jmp", NULL, "push", NULL};
-      // hack: this opcode has an implied 64-bit operand size except for inc/dec
-      if ((offset < size) && (((data[offset] >> 3) & 7) >= 2)) {
-        operand_size = OperandSize::QuadWord;
+    } else if ((opcode & 0xFE) == 0xFE) {
+      if (offset >= size) {
+        opcode_text = "<<incomplete inc/dec/call/jmp/push>>";
+      } else {
+        // FE only valid for inc/dec (not call/jmp/push)
+        bool is_inc_dec = (((data[offset] >> 3) & 7) < 2);
+        if (!is_inc_dec && (opcode == 0xFE)) {
+          opcode_text = "<<invalid FE>>";
+
+        } else {
+          static const char* names[] = {
+            "inc", "dec", "call", NULL, "jmp", NULL, "push", NULL};
+          // this opcode has an implied 64-bit operand size except for inc/dec
+          if (opcode == 0xFE) {
+            operand_size = OperandSize::Byte;
+          } else if (!is_inc_dec) {
+            operand_size = OperandSize::QuadWord;
+          }
+          opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
+              false, names, ext, reg_ext, base_ext, index_ext, operand_size);
+        }
       }
-      opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
-          false, names, ext, reg_ext, base_ext, index_ext, operand_size);
 
     } else {
       opcode_text = "<<unknown-value>>";
@@ -2125,9 +2317,13 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
 string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
     size_t& offset, const char* opcode_name, bool is_load,
     const char** op_name_table, bool ext, bool reg_ext, bool base_ext,
-    bool index_ext, OperandSize operand_size, bool reg_xmm) {
+    bool index_ext, OperandSize reg_operand_size, OperandSize mem_operand_size) {
   if (offset >= size) {
     return "<<incomplete>>";
+  }
+
+  if (mem_operand_size == OperandSize::Automatic) {
+    mem_operand_size = reg_operand_size;
   }
 
   uint8_t rm = data[offset];
@@ -2137,18 +2333,17 @@ string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
   Register reg = make_reg(reg_ext, subtype);
   offset++;
 
-  string reg_str = name_for_register(reg,
-      reg_xmm ? OperandSize::QuadWordXMM : operand_size);
+  string reg_str = name_for_register(reg, reg_operand_size);
 
   string mem_str;
   if (behavior == 3) {
     // convert *h regs to spl, etc. if the extension prefix is given
-    if ((operand_size == OperandSize::Byte) && ext) {
+    if ((mem_operand_size == OperandSize::Byte) && ext) {
       if (base_reg >= 4 && base_reg <= 7) {
         base_reg = static_cast<Register>(base_reg + 13);
       }
     }
-    mem_str = name_for_register(base_reg, operand_size);
+    mem_str = name_for_register(base_reg, mem_operand_size);
 
   } else {
     // this special case uses RIP instead of RBP
@@ -2214,19 +2409,19 @@ string AMD64Assembler::disassemble_rm(const uint8_t* data, size_t size,
     mem_str += ']';
   }
 
+  // if the operand size of the memory operand isn't obvious, prefix it
+  if (mem_str[0] == '[' && ((mem_operand_size != reg_operand_size) || op_name_table)) {
+    static const vector<const char*> size_names({
+        "byte", "word", "dword", "qword", "float", "double"});
+    mem_str = string(size_names.at(mem_operand_size)) + " ptr " + mem_str;
+  }
+
   if (op_name_table) {
     const char* name = op_name_table[subtype] ? op_name_table[subtype] : opcode_name;
     if (!name) {
       return "<<unknown-name>>";
     }
-    if (mem_str[0] == '[') {
-      static const vector<const char*> size_names({
-          "byte", "word", "dword", "qword", "float", "double"});
-      return string_printf("%-8s %s ptr %s", name, size_names.at(operand_size),
-          mem_str.c_str());
-    } else {
-      return string_printf("%-8s %s", name, mem_str.c_str());
-    }
+    return string_printf("%-8s %s", name, mem_str.c_str());
   }
 
   if (is_load) {
