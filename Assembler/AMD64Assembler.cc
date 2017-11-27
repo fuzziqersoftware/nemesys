@@ -288,6 +288,13 @@ MemoryReference::MemoryReference(Register base_register) :
     base_register(base_register), index_register(Register::None), field_size(0),
     offset(0) { }
 
+MemoryReference::operator Register() const {
+  if (this->offset || field_size) {
+    throw invalid_argument("cannot convert nontrivial memory reference to reg");
+  }
+  return this->base_register;
+}
+
 bool MemoryReference::operator==(const MemoryReference& other) const {
   return (this->base_register == other.base_register) &&
          (this->index_register == other.index_register) &&
@@ -636,17 +643,6 @@ void AMD64Assembler::write_load_store(Operation base_op, const MemoryReference& 
 
 
 
-void AMD64Assembler::write_push(Register r) {
-  string data;
-  if (is_extension_register(r)) {
-    data += 0x41;
-    data += (static_cast<uint8_t>(r) - 8) | 0x50;
-  } else {
-    data += r | 0x50;
-  }
-  this->write(data);
-}
-
 void AMD64Assembler::write_push(int64_t value) {
   string data;
   if ((value >= -0x80) && (value <= 0x7F)) {
@@ -668,8 +664,31 @@ void AMD64Assembler::write_push(int64_t value) {
   this->write(data);
 }
 
+void AMD64Assembler::write_push(Register r) {
+  string data;
+  if (is_extension_register(r)) {
+    data += 0x41;
+    data += (static_cast<uint8_t>(r) - 8) | 0x50;
+  } else {
+    data += r | 0x50;
+  }
+  this->write(data);
+}
+
 void AMD64Assembler::write_push(const MemoryReference& mem) {
-  this->write_rm(Operation::PUSH_RM, mem, 6, OperandSize::DoubleWord);
+  if (mem.field_size == 0) {
+    string data;
+    if (is_extension_register(mem.base_register)) {
+      data += 0x41;
+      data += (static_cast<uint8_t>(mem.base_register) - 8) | 0x50;
+    } else {
+      data += mem.base_register | 0x50;
+    }
+    this->write(data);
+
+  } else {
+    this->write_rm(Operation::PUSH_RM, mem, 6, OperandSize::DoubleWord);
+  }
 }
 
 void AMD64Assembler::write_pop(Register r) {
@@ -684,7 +703,11 @@ void AMD64Assembler::write_pop(Register r) {
 }
 
 void AMD64Assembler::write_pop(const MemoryReference& mem) {
-  this->write_rm(Operation::POP_RM, mem, 6, OperandSize::QuadWord);
+  if (!mem.field_size) {
+    this->write_pop(mem.base_register);
+  } else {
+    this->write_rm(Operation::POP_RM, mem, 6, OperandSize::QuadWord);
+  }
 }
 
 
@@ -698,49 +721,6 @@ void AMD64Assembler::write_mov(const MemoryReference& to, const MemoryReference&
   this->write_load_store(Operation::MOV_STORE8, to, from, size);
 }
 
-void AMD64Assembler::write_mov(Register reg, int64_t value, OperandSize size) {
-  string data;
-  if (size == OperandSize::QuadWord) {
-    // if the value can fit in a standard mov, use that instead
-    if (((value & 0xFFFFFFFF80000000) == 0) || ((value & 0xFFFFFFFF80000000) == 0xFFFFFFFF80000000)) {
-      this->write_mov(MemoryReference(reg), value, size);
-      return;
-    }
-    data += 0x48 | (is_extension_register(reg) ? 0x01 : 0);
-    data += 0xB8 | (reg & 7);
-    data.append(reinterpret_cast<const char*>(&value), 8);
-
-  } else if (size == OperandSize::DoubleWord) {
-    string data;
-    if (is_extension_register(reg)) {
-      data += 0x41;
-    }
-    data += 0xB8 | (reg & 7);
-    data.append(reinterpret_cast<const char*>(&value), 4);
-
-  } else if (size == OperandSize::Word) {
-    string data;
-    data += 0x66;
-    if (is_extension_register(reg)) {
-      data += 0x41;
-    }
-    data += 0xB8 | (reg & 7);
-    data.append(reinterpret_cast<const char*>(&value), 2);
-
-  } else if (size == OperandSize::Byte) {
-    string data;
-    if (is_extension_register(reg)) {
-      data += 0x41;
-    }
-    data += 0xB0 | (reg & 7);
-    data += static_cast<int8_t>(value);
-
-  } else {
-    throw invalid_argument("unknown operand size");
-  }
-  this->write(data);
-}
-
 void AMD64Assembler::write_mov(Register reg, const string& label_name) {
   string data;
   data += 0x48 | (is_extension_register(reg) ? 0x01 : 0);
@@ -750,27 +730,77 @@ void AMD64Assembler::write_mov(Register reg, const string& label_name) {
   this->stream.emplace_back(data, label_name, data.size() - 8, 8, true);
 }
 
-void AMD64Assembler::write_mov(const MemoryReference& mem, int64_t value,
-    OperandSize size) {
-  Operation op = (size == OperandSize::Byte) ? Operation::MOV_MEM8_IMM : Operation::MOV_MEM_IMM;
-  string data = this->generate_rm(op, mem, 0, size);
+void AMD64Assembler::write_mov(Register r, int64_t value, OperandSize size) {
+  string data;
+  if (size == OperandSize::QuadWord) {
+    // if the value can fit in a r/m mov, use that instead
+    if (((value & 0xFFFFFFFF80000000) == 0) || ((value & 0xFFFFFFFF80000000) == 0xFFFFFFFF80000000)) {
+      data += 0x48 | (is_extension_register(r) ? 0x01 : 0);
+      data += 0xC7;
+      data += 0xC0 | (r & 7);
+      data.append(reinterpret_cast<const char*>(&value), 4);
+    } else {
+      data += 0x48 | (is_extension_register(r) ? 0x01 : 0);
+      data += 0xB8 | (r & 7);
+      data.append(reinterpret_cast<const char*>(&value), 8);
+    }
 
-  if (((value & 0xFFFFFFFF80000000) != 0) && ((value & 0xFFFFFFFF80000000) != 0xFFFFFFFF80000000)) {
-    throw invalid_argument("value out of range for r/m mov");
-  }
-
-  // this opcode has a 32-bit imm for both 32-bit and 64-bit operand sizes
-  if ((size == OperandSize::QuadWord) || (size == OperandSize::DoubleWord)) {
+  } else if (size == OperandSize::DoubleWord) {
+    string data;
+    if (is_extension_register(r)) {
+      data += 0x41;
+    }
+    data += 0xB8 | (r & 7);
     data.append(reinterpret_cast<const char*>(&value), 4);
+
   } else if (size == OperandSize::Word) {
+    string data;
+    data += 0x66;
+    if (is_extension_register(r)) {
+      data += 0x41;
+    }
+    data += 0xB8 | (r & 7);
     data.append(reinterpret_cast<const char*>(&value), 2);
+
   } else if (size == OperandSize::Byte) {
+    string data;
+    if (is_extension_register(r)) {
+      data += 0x41;
+    }
+    data += 0xB0 | (r & 7);
     data += static_cast<int8_t>(value);
+
   } else {
     throw invalid_argument("unknown operand size");
   }
-
   this->write(data);
+}
+
+void AMD64Assembler::write_mov(const MemoryReference& mem, int64_t value,
+    OperandSize size) {
+  if (mem.field_size == 0) {
+    this->write_mov(mem.base_register, value, size);
+
+  } else {
+    Operation op = (size == OperandSize::Byte) ? Operation::MOV_MEM8_IMM : Operation::MOV_MEM_IMM;
+    string data = this->generate_rm(op, mem, 0, size);
+
+    if (((value & 0xFFFFFFFF80000000) != 0) && ((value & 0xFFFFFFFF80000000) != 0xFFFFFFFF80000000)) {
+      throw invalid_argument("value out of range for r/m mov");
+    }
+
+    // this opcode has a 32-bit imm for both 32-bit and 64-bit operand sizes
+    if ((size == OperandSize::QuadWord) || (size == OperandSize::DoubleWord)) {
+      data.append(reinterpret_cast<const char*>(&value), 4);
+    } else if (size == OperandSize::Word) {
+      data.append(reinterpret_cast<const char*>(&value), 2);
+    } else if (size == OperandSize::Byte) {
+      data += static_cast<int8_t>(value);
+    } else {
+      throw invalid_argument("unknown operand size");
+    }
+    this->write(data);
+  }
 }
 
 void AMD64Assembler::write_xchg(Register reg, const MemoryReference& mem,

@@ -30,24 +30,13 @@ using namespace std;
 
 
 static const vector<Register> int_argument_register_order = {
-  Register::RDI, Register::RSI, Register::RDX, Register::RCX, Register::R8,
-  Register::R9,
-};
+    rdi, rsi, rdx, rcx, r8, r9};
 static const vector<Register> float_argument_register_order = {
-  Register::XMM0, Register::XMM1, Register::XMM2, Register::XMM3,
-  Register::XMM4, Register::XMM5, Register::XMM6, Register::XMM7,
-};
+    xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7};
 
 static const int64_t default_available_int_registers =
-    (1 << Register::RAX) |
-    (1 << Register::RCX) |
-    (1 << Register::RDX) |
-    (1 << Register::RSI) |
-    (1 << Register::RDI) |
-    (1 << Register::R8) |
-    (1 << Register::R9) |
-    (1 << Register::R10) |
-    (1 << Register::R11);
+    (1 << rax) | (1 << rcx) | (1 << rdx) | (1 << rsi) | (1 << rdi) |
+    (1 << r8) | (1 << r9) | (1 << r10) | (1 << r11);
 static const int64_t default_available_float_registers = 0xFFFF; // all of them
 
 
@@ -60,9 +49,9 @@ CompilationVisitor::CompilationVisitor(GlobalAnalysis* global,
     target_split_id(target_split_id),
     available_int_registers(default_available_int_registers),
     available_float_registers(default_available_float_registers),
-    target_register(Register::None), float_target_register(Register::XMM0),
-    stack_bytes_used(0), holding_reference(false),
-    evaluating_instance_pointer(false), in_finally_block(false) {
+    target_register(rax), float_target_register(xmm0), stack_bytes_used(0),
+    holding_reference(false), evaluating_instance_pointer(false),
+    in_finally_block(false) {
 
   if (target_function_id) {
 
@@ -106,10 +95,6 @@ string CompilationVisitor::VariableLocation::str() const {
 
 Register CompilationVisitor::reserve_register(Register which,
     bool float_register) {
-  if (which == Register::R15) {
-    throw invalid_argument("r15");
-  }
-
   if (which == Register::None) {
     which = this->available_register(Register::None, float_register);
   }
@@ -212,7 +197,7 @@ int64_t CompilationVisitor::write_push_reserved_registers() {
     }
 
     this->adjust_stack(-8);
-    this->as.write_movsd(MemoryReference(Register::RSP, 0),
+    this->as.write_movsd(MemoryReference(rsp, 0),
         MemoryReference(which));
   }
 
@@ -242,7 +227,7 @@ void CompilationVisitor::write_pop_reserved_registers(int64_t mask) {
       continue; // this register is used but not reserved
     }
 
-    this->as.write_movsd(MemoryReference(which), MemoryReference(Register::RSP, 0));
+    this->as.write_movsd(MemoryReference(which), MemoryReference(rsp, 0));
     this->adjust_stack(8);
   }
 
@@ -536,8 +521,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->file_offset);
   }
 
-  MemoryReference left_mem(Register::RSP, 8);
-  MemoryReference right_mem(Register::RSP, 0);
+  MemoryReference left_mem(rsp, 8);
+  MemoryReference right_mem(rsp, 0);
 
   // pick a temporary register that isn't the target register
   MemoryReference temp_mem(this->available_register_except({this->target_register}));
@@ -770,7 +755,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     case BinaryOperator::RightShift:
       if (left_int && right_int) {
         // we can only use cl apparently
-        if (this->available_register(Register::RCX) != Register::RCX) {
+        if (this->available_register(rcx) != rcx) {
           throw compile_error("RCX not available for shift operation", this->file_offset);
         }
         this->as.write_mov(rcx, target_mem);
@@ -913,7 +898,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         } else {
           // in this case (unlike above) right might not be an object, so we
           // have to tell the callee whether it is or not
-          Register r = available_register(Register::RDX);
+          Register r = available_register(rdx);
           MemoryReference r_mem(r);
           if (!right_holding_reference) {
             this->as.write_xor(r_mem, r_mem);
@@ -947,15 +932,15 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       if (left_int && right_int) {
         // x86 has a reasonable imul opcode, but no reasonable idiv; we have to
         // use rdx and rax
-        bool push_rax = (this->target_register != Register::RAX) &&
-            !this->register_is_available(Register::RAX);
-        bool push_rdx = (this->target_register != Register::RDX) &&
-            !this->register_is_available(Register::RDX);
+        bool push_rax = (this->target_register != rax) &&
+            !this->register_is_available(rax);
+        bool push_rdx = (this->target_register != rdx) &&
+            !this->register_is_available(rdx);
         if (push_rax) {
-          this->write_push(Register::RAX);
+          this->write_push(rax);
         }
         if (push_rdx) {
-          this->write_push(Register::RDX);
+          this->write_push(rdx);
         }
 
         // TODO: check if right is zero and raise ZeroDivisionError if so
@@ -964,20 +949,20 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_xor(rdx, rdx);
         this->as.write_idiv(right_mem);
         if (is_mod) {
-          if (this->target_register != Register::RDX) {
+          if (this->target_register != rdx) {
             this->as.write_mov(target_mem, rdx);
           }
         } else {
-          if (this->target_register != Register::RAX) {
+          if (this->target_register != rax) {
             this->as.write_mov(target_mem, rax);
           }
         }
 
         if (push_rdx) {
-          this->write_pop(Register::RDX);
+          this->write_pop(rdx);
         }
         if (push_rax) {
-          this->write_pop(Register::RAX);
+          this->write_pop(rax);
         }
 
         // Int // Int == Int
@@ -1100,16 +1085,16 @@ void CompilationVisitor::visit(BinaryOperation* a) {
     // destroy the temp values
     if (type_has_refcount(left_type.type)) {
       this->as.write_label(string_printf("__BinaryOperation_%p_destroy_left", a));
-      this->write_delete_reference(MemoryReference(Register::RSP, 8), left_type.type);
+      this->write_delete_reference(MemoryReference(rsp, 8), left_type.type);
     }
     if (type_has_refcount(right_type.type)) {
       this->as.write_label(string_printf("__BinaryOperation_%p_destroy_right", a));
-      this->write_delete_reference(MemoryReference(Register::RSP, 16), right_type.type);
+      this->write_delete_reference(MemoryReference(rsp, 16), right_type.type);
     }
 
     // load the result again and clean up the stack
     this->as.write_mov(MemoryReference(this->target_register),
-        MemoryReference(Register::RSP, 0));
+        MemoryReference(rsp, 0));
     this->adjust_stack(0x18);
 
   // no destructor calls necessary; just remove left and right from the stack
@@ -1177,10 +1162,10 @@ void CompilationVisitor::visit(ListConstructor* a) {
   this->as.write_label(string_printf("__ListConstructor_%p_setup", a));
 
   // we'll use rbx to store the list ptr while constructing items and I'm lazy
-  if (this->target_register == Register::RBX) {
+  if (this->target_register == rbx) {
     throw compile_error("cannot use rbx as target register for list construction");
   }
-  this->write_push(Register::RBX);
+  this->write_push(rbx);
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
 
   // allocate the list object
@@ -1193,7 +1178,7 @@ void CompilationVisitor::visit(ListConstructor* a) {
 
   // save the list items pointer
   this->as.write_mov(rbx, MemoryReference(this->target_register, 0x28));
-  this->write_push(Register::RAX);
+  this->write_push(rax);
 
   // generate code for each item and track the extension type
   Variable extension_type;
@@ -1202,10 +1187,10 @@ void CompilationVisitor::visit(ListConstructor* a) {
     this->as.write_label(string_printf("__ListConstructor_%p_item_%zu", a, item_index));
     item->accept(this);
     if (this->current_type.type == ValueType::Float) {
-      this->as.write_movsd(MemoryReference(Register::RBX, item_index * 8),
+      this->as.write_movsd(MemoryReference(rbx, item_index * 8),
           MemoryReference(this->float_target_register));
     } else {
-      this->as.write_mov(MemoryReference(Register::RBX, item_index * 8),
+      this->as.write_mov(MemoryReference(rbx, item_index * 8),
           MemoryReference(this->target_register));
     }
     item_index++;
@@ -1231,7 +1216,7 @@ void CompilationVisitor::visit(ListConstructor* a) {
 
   // restore the regs we saved
   this->write_pop_reserved_registers(previously_reserved_registers);
-  this->write_pop(Register::RBX);
+  this->write_pop(rbx);
 
   // the result type is a new reference to a List[extension_type]
   vector<Variable> extension_types({extension_type});
@@ -1264,10 +1249,10 @@ void CompilationVisitor::visit(TupleConstructor* a) {
   this->as.write_label(string_printf("__TupleConstructor_%p_setup", a));
 
   // we'll use rbx to store the tuple ptr while constructing items and I'm lazy
-  if (this->target_register == Register::RBX) {
+  if (this->target_register == rbx) {
     throw compile_error("cannot use rbx as target register for tuple construction");
   }
-  this->write_push(Register::RBX);
+  this->write_push(rbx);
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
 
   // allocate the tuple object
@@ -1278,8 +1263,8 @@ void CompilationVisitor::visit(TupleConstructor* a) {
       int_args, {}, -1, this->target_register);
 
   // save the tuple items pointer
-  this->as.write_lea(Register::RBX, MemoryReference(this->target_register, 0x18));
-  this->write_push(Register::RAX);
+  this->as.write_lea(rbx, MemoryReference(this->target_register, 0x18));
+  this->write_push(rax);
 
   // generate code for each item and track the extension type
   vector<Variable> extension_types;
@@ -1287,10 +1272,10 @@ void CompilationVisitor::visit(TupleConstructor* a) {
     this->as.write_label(string_printf("__TupleConstructor_%p_item_%zu", a, extension_types.size()));
     item->accept(this);
     if (this->current_type.type == ValueType::Float) {
-      this->as.write_movsd(MemoryReference(Register::RBX, extension_types.size() * 8),
+      this->as.write_movsd(MemoryReference(rbx, extension_types.size() * 8),
           MemoryReference(this->float_target_register));
     } else {
-      this->as.write_mov(MemoryReference(Register::RBX, extension_types.size() * 8),
+      this->as.write_mov(MemoryReference(rbx, extension_types.size() * 8),
           MemoryReference(this->target_register));
     }
     extension_types.emplace_back(move(this->current_type));
@@ -1307,7 +1292,7 @@ void CompilationVisitor::visit(TupleConstructor* a) {
         value |= (0x80 >> x);
       }
     }
-    this->as.write_mov(MemoryReference(Register::RBX,
+    this->as.write_mov(MemoryReference(rbx,
         extension_types.size() * 8 + (types_handled / 8)), value, OperandSize::Byte);
     types_handled += 8;
   }
@@ -1318,7 +1303,7 @@ void CompilationVisitor::visit(TupleConstructor* a) {
 
   // restore the regs we saved
   this->write_pop_reserved_registers(previously_reserved_registers);
-  this->write_pop(Register::RBX);
+  this->write_pop(rbx);
 
   // the result type is a new reference to a Tuple[extension_types]
   this->current_type = Variable(ValueType::Tuple, extension_types);
@@ -1372,7 +1357,7 @@ void CompilationVisitor::visit(LambdaDefinition* a) {
   string base_label = string_printf("LambdaDefinition_%p", a);
   this->write_function_setup(base_label);
 
-  this->target_register = Register::RAX;
+  this->target_register = rax;
   this->RecursiveASTVisitor::visit(a);
   this->function_return_types.emplace(this->current_type);
 
@@ -1628,7 +1613,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
         this->reserve_register(this->float_target_register, true);
         float_registers_used++;
       } else {
-        this->as.write_movsd(MemoryReference(Register::RSP, stack_offset),
+        this->as.write_movsd(MemoryReference(rsp, stack_offset),
             MemoryReference(this->float_target_register));
         stack_offset += sizeof(double);
       }
@@ -1637,7 +1622,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
         this->reserve_register(this->target_register);
         int_registers_used++;
       } else {
-        this->as.write_mov(MemoryReference(Register::RSP, stack_offset),
+        this->as.write_mov(MemoryReference(rsp, stack_offset),
             MemoryReference(this->target_register));
         stack_offset += sizeof(int64_t);
       }
@@ -1723,7 +1708,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
       a, a->callee_function_id, fragment_id, arg_signature.c_str()));
 
   // call the fragment. note that the stack is already properly aligned here
-  this->as.write_mov(Register::RAX, reinterpret_cast<int64_t>(fragment->compiled));
+  this->as.write_mov(rax, reinterpret_cast<int64_t>(fragment->compiled));
   this->as.write_call(rax);
 
   // if the function raised an exception, the return value is meaningless;
@@ -1736,12 +1721,12 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
   // put the return value into the target register
   if (fragment->return_type.type == ValueType::Float) {
-    if (this->target_register != Register::RAX) {
+    if (this->target_register != rax) {
       this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
       this->as.write_movsd(MemoryReference(this->float_target_register), xmm0);
     }
   } else {
-    if (this->target_register != Register::RAX) {
+    if (this->target_register != rax) {
       this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
       this->as.write_mov(MemoryReference(this->target_register), rax);
     }
@@ -1790,13 +1775,13 @@ void CompilationVisitor::visit(ArrayIndex* a) {
   if (collection_type.type == ValueType::Dict) {
 
     // arg 1 is the dict object
-    if (this->target_register != Register::RDI) {
+    if (this->target_register != rdi) {
       this->as.write_mov(rdi, MemoryReference(this->target_register));
     }
 
     // compute the key
-    this->target_register = Register::RSI;
-    this->reserve_register(Register::RDI);
+    this->target_register = rsi;
+    this->reserve_register(rdi);
     a->index->accept(this);
     if (!this->current_type.types_equal(collection_type.extension_types[0])) {
       string expr_key_type = this->current_type.str();
@@ -1809,7 +1794,7 @@ void CompilationVisitor::visit(ArrayIndex* a) {
     if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
       throw compile_error("not holding reference to key", this->file_offset);
     }
-    this->release_register(Register::RDI);
+    this->release_register(rdi);
 
     // get the dict item
     this->write_function_call(common_object_reference(void_fn_ptr(&dictionary_at)),
@@ -1822,21 +1807,21 @@ void CompilationVisitor::visit(ArrayIndex* a) {
              (collection_type.type == ValueType::Tuple)) {
 
     // arg 1 is the list/tuple object
-    if (this->target_register != Register::RDI) {
+    if (this->target_register != rdi) {
       this->as.write_mov(rdi, MemoryReference(this->target_register));
     }
 
     // for lists, the index can be dynamic; compute it now
     int64_t tuple_index = a->index_value;
     if (collection_type.type == ValueType::List) {
-      this->target_register = Register::RSI;
-      this->reserve_register(Register::RDI);
+      this->target_register = rsi;
+      this->reserve_register(rdi);
       a->index->accept(this);
       if (this->current_type.type != ValueType::Int) {
         throw compile_error("list index must be Int; here it\'s " + this->current_type.str(),
             this->file_offset);
       }
-      this->release_register(Register::RDI);
+      this->release_register(rdi);
 
     // for tuples, the index must be static since the result type depends on it.
     // for this reason, it also needs to be in range of the extension types
@@ -1851,7 +1836,7 @@ void CompilationVisitor::visit(ArrayIndex* a) {
           collection_type.extension_types.size()))) {
         throw compile_error("tuple index out of range", this->file_offset);
       }
-      this->as.write_mov(Register::RSI, tuple_index);
+      this->as.write_mov(rsi, tuple_index);
     }
 
     // now call the function
@@ -2235,15 +2220,15 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   // it writes is global, so based on R13, not RSP). the global pointer is
   // passed as an argument (RDI) instead of already being in R13, so we move it
   // into place. it returns the active exception object (NULL means success).
-  this->write_push(Register::RBP);
+  this->write_push(rbp);
   this->as.write_mov(rbp, rsp);
-  this->write_push(Register::R12);
-  this->as.write_mov(Register::R12, reinterpret_cast<int64_t>(common_object_base()));
-  this->write_push(Register::R13);
-  this->as.write_mov(Register::R13, reinterpret_cast<int64_t>(this->global->global_space));
-  this->write_push(Register::R14);
+  this->write_push(r12);
+  this->as.write_mov(r12, reinterpret_cast<int64_t>(common_object_base()));
+  this->write_push(r13);
+  this->as.write_mov(r13, reinterpret_cast<int64_t>(this->global->global_space));
+  this->write_push(r14);
   this->as.write_xor(r14, r14);
-  this->write_push(Register::R15);
+  this->write_push(r15);
   this->as.write_xor(r15, r15);
 
   // create an exception block for the root scope
@@ -2255,7 +2240,7 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   this->write_create_exception_block({}, exc_label);
 
   // generate the function's code
-  this->target_register = Register::RAX;
+  this->target_register = rax;
   this->as.write_label(string_printf("__ModuleStatement_%p_body", a));
   this->RecursiveASTVisitor::visit(a);
 
@@ -2264,11 +2249,11 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   this->adjust_stack(return_exception_block_size);
   this->as.write_mov(rax, r15);
   this->as.write_label(exc_label);
-  this->write_pop(Register::R15);
-  this->write_pop(Register::R14);
-  this->write_pop(Register::R13);
-  this->write_pop(Register::R12);
-  this->write_pop(Register::RBP);
+  this->write_pop(r15);
+  this->write_pop(r14);
+  this->write_pop(r13);
+  this->write_pop(r12);
+  this->write_pop(rbp);
 
   if (this->stack_bytes_used != 8) {
     throw compile_error(string_printf(
@@ -2480,7 +2465,7 @@ void CompilationVisitor::visit(ReturnStatement* a) {
 
   // the value should be returned in rax
   this->as.write_label(string_printf("__ReturnStatement_%p_evaluate_expression", a));
-  this->target_register = Register::RAX;
+  this->target_register = rax;
   a->value->accept(this);
 
   // it had better be a new reference if the type is nontrivial
@@ -2655,10 +2640,10 @@ void CompilationVisitor::visit(ForStatement* a) {
   this->write_push(this->target_register);
 
   // we'll use rbx for some loop state (e.g. the item index in lists)
-  if (this->target_register == Register::RBX) {
+  if (this->target_register == rbx) {
     throw compile_error("cannot use rbx as target register for list iteration");
   }
-  this->write_push(Register::RBX);
+  this->write_push(rbx);
   this->as.write_xor(rbx, rbx);
 
   string next_label = string_printf("__ForStatement_%p_next", a);
@@ -2688,7 +2673,7 @@ void CompilationVisitor::visit(ForStatement* a) {
     this->as.write_label(next_label);
     // get the list/tuple object
     this->as.write_mov(MemoryReference(this->target_register),
-        MemoryReference(Register::RSP, 8));
+        MemoryReference(rsp, 8));
 
     // check if we're at the end and skip the body if so
     this->as.write_cmp(rbx, MemoryReference(this->target_register, 0x10));
@@ -2700,18 +2685,18 @@ void CompilationVisitor::visit(ForStatement* a) {
           MemoryReference(this->target_register, 0x28));
       if (item_type == ValueType::Float) {
         this->as.write_movq_to_xmm(this->float_target_register,
-            MemoryReference(this->target_register, 0, Register::RBX, 8));
+            MemoryReference(this->target_register, 0, rbx, 8));
       } else {
         this->as.write_mov(MemoryReference(this->target_register),
-            MemoryReference(this->target_register, 0, Register::RBX, 8));
+            MemoryReference(this->target_register, 0, rbx, 8));
       }
     } else {
       if (item_type == ValueType::Float) {
         this->as.write_movq_to_xmm(this->float_target_register,
-            MemoryReference(this->target_register, 0x18, Register::RBX, 8));
+            MemoryReference(this->target_register, 0x18, rbx, 8));
       } else {
         this->as.write_mov(MemoryReference(this->target_register),
-            MemoryReference(this->target_register, 0x18, Register::RBX, 8));
+            MemoryReference(this->target_register, 0x18, rbx, 8));
       }
     }
 
@@ -2746,18 +2731,18 @@ void CompilationVisitor::visit(ForStatement* a) {
     // TODO: figure out how this structure interacts with refcounting and
     // exceptions (or if it does at all)
     this->adjust_stack(-sizeof(DictionaryObject::SlotContents));
-    this->as.write_mov(MemoryReference(Register::RSP, 0), 0);
-    this->as.write_mov(MemoryReference(Register::RSP, 8), 0);
-    this->as.write_mov(MemoryReference(Register::RSP, 16), 0);
+    this->as.write_mov(MemoryReference(rsp, 0), 0);
+    this->as.write_mov(MemoryReference(rsp, 8), 0);
+    this->as.write_mov(MemoryReference(rsp, 16), 0);
 
     // get the dict object and SlotContents pointer
     this->as.write_label(next_label);
-    this->as.write_mov(rdi,
-        MemoryReference(Register::RSP, sizeof(DictionaryObject::SlotContents)));
+    this->as.write_mov(rdi, MemoryReference(rsp,
+        sizeof(DictionaryObject::SlotContents)));
     this->as.write_mov(rsi, rsp);
 
     // call dictionary_next_item
-    this->write_add_reference(Register::RDI);
+    this->write_add_reference(rdi);
     this->write_function_call(
         common_object_reference(void_fn_ptr(&dictionary_next_item)), {rdi, rsi}, {});
 
@@ -2767,7 +2752,7 @@ void CompilationVisitor::visit(ForStatement* a) {
 
     // get the key pointer
     this->as.write_mov(MemoryReference(this->target_register),
-        MemoryReference(Register::RSP, 0));
+        MemoryReference(rsp, 0));
 
     // if the extension type has a refcount, add a reference
     if (type_has_refcount(collection_type.extension_types[0].type)) {
@@ -2807,7 +2792,7 @@ void CompilationVisitor::visit(ForStatement* a) {
   this->as.write_label(break_label);
 
   // restore rbx
-  this->write_pop(Register::RBX);
+  this->write_pop(rbx);
 
   // we still own a reference to the collection; destroy it now
   // note: all collection types have refcounts; dunno why I bothered checking
@@ -2875,7 +2860,7 @@ void CompilationVisitor::visit(FinallyStatement* a) {
   // we save the active exception and clear it, so the finally block can contain
   // further try/except blocks without clobbering the active exception
   this->as.write_label(string_printf("__FinallyStatement_%p_save_exc", a));
-  this->write_push(Register::R15);
+  this->write_push(r15);
   this->as.write_xor(r15, r15);
 
   this->as.write_label(string_printf("__FinallyStatement_%p_body", a));
@@ -2889,13 +2874,13 @@ void CompilationVisitor::visit(FinallyStatement* a) {
   this->as.write_label(string_printf("__FinallyStatement_%p_restore_exc", a));
   this->as.write_test(r15, r15);
   this->as.write_jz(no_exc_label);
-  this->write_delete_reference(MemoryReference(Register::R15, 0), ValueType::Instance);
+  this->write_delete_reference(MemoryReference(r15, 0), ValueType::Instance);
   this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
 
   // the finally block did not raise an exception, but there may be a saved
   // exception. if so, unwind it now
   this->as.write_label(no_exc_label);
-  this->write_pop(Register::R15);
+  this->write_pop(r15);
   this->as.write_test(r15, r15);
   this->as.write_jz(end_label);
   this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
@@ -2963,7 +2948,7 @@ void CompilationVisitor::visit(TryStatement* a) {
   // the previous exception block pointer is the first field in the exception
   // block, so load r14 from there
   this->as.write_label(string_printf("__TryStatement_%p_remove_exc_blocks", a));
-  this->as.write_mov(r14, MemoryReference(Register::RSP, 0));
+  this->as.write_mov(r14, MemoryReference(rsp, 0));
   this->adjust_stack_to(stack_bytes_used_on_restore);
 
   // generate the else block if there is one. the exc block is already gone, so
@@ -2974,7 +2959,7 @@ void CompilationVisitor::visit(TryStatement* a) {
     this->write_create_exception_block({}, finally_label);
     a->else_suite->accept(this);
     this->as.write_label(string_printf("__TryStatement_%p_delete_else_exc_block", a));
-    this->as.write_mov(r14, MemoryReference(Register::RSP, 0));
+    this->as.write_mov(r14, MemoryReference(rsp, 0));
     this->adjust_stack_to(stack_bytes_used_on_restore);
   }
 
@@ -3092,7 +3077,7 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
 
   string base_label = string_printf("FunctionDefinition_%p_%s", a, a->name.c_str());
   this->write_function_setup(base_label);
-  this->target_register = Register::RAX;
+  this->target_register = rax;
   this->RecursiveASTVisitor::visit(a);
 
   // if the function is __init__, implicitly return self (the function cannot
@@ -3104,7 +3089,7 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
     VariableLocation loc = this->location_for_variable("self");
 
     // add a reference to self and load it into rax for returning
-    this->target_register = Register::RAX;
+    this->target_register = rax;
     this->as.write_mov(MemoryReference(this->target_register), loc.mem);
     if (!type_has_refcount(loc.type.type)) {
       throw compile_error("self is not an object", this->file_offset);
@@ -3155,11 +3140,11 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       dtor_as.write_label(base_label);
 
       // lead-in (stack frame setup)
-      dtor_as.write_push(Register::RBP);
+      dtor_as.write_push(rbp);
       dtor_as.write_mov(rbp, rsp);
 
       // we'll keep the object pointer in rbx since it's callee-save
-      dtor_as.write_push(Register::RBX);
+      dtor_as.write_push(rbx);
       dtor_as.write_mov(rbx, rdi);
 
       // make sure the stack is aligned at call time for any subfunctions
@@ -3168,7 +3153,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       // we have to add a fake reference to the object while destroying it;
       // otherwise __del__ will call this destructor recursively
       dtor_as.write_lock();
-      dtor_as.write_inc(MemoryReference(Register::RBX, 0));
+      dtor_as.write_inc(MemoryReference(rbx, 0));
 
       // call __del__ before deleting attribute references
       if (has_del) {
@@ -3201,9 +3186,8 @@ void CompilationVisitor::visit(ClassDefinition* a) {
         // generate the call to the fragment. note that the instance pointer is
         // still in rdi, so we don't have to do anything to prepare
         dtor_as.write_lock();
-        dtor_as.write_inc(MemoryReference(Register::RBX, 0)); // reference for the function arg
-        dtor_as.write_mov(Register::RAX,
-            reinterpret_cast<int64_t>(fragment->compiled));
+        dtor_as.write_inc(MemoryReference(rbx, 0)); // reference for the function arg
+        dtor_as.write_mov(rax, reinterpret_cast<int64_t>(fragment->compiled));
         dtor_as.write_call(rax);
 
         // __del__ can add new references to the object; if this happens, don't
@@ -3211,12 +3195,12 @@ void CompilationVisitor::visit(ClassDefinition* a) {
         // TODO: if the refcpount is zero, something has gone seriously wrong.
         // what should we do in that case?
         // TODO: do we need the lock prefix to do this compare?
-        dtor_as.write_cmp(MemoryReference(Register::RBX, 0), 1);
+        dtor_as.write_cmp(MemoryReference(rbx, 0), 1);
         dtor_as.write_je(base_label + "_proceed");
         dtor_as.write_lock();
-        dtor_as.write_dec(MemoryReference(Register::RBX, 0)); // fake reference
+        dtor_as.write_dec(MemoryReference(rbx, 0)); // fake reference
         dtor_as.write_add(rsp, 8);
-        dtor_as.write_pop(Register::RBX);
+        dtor_as.write_pop(rbx);
         dtor_as.write_ret();
         dtor_as.write_label(base_label + "_proceed");
       }
@@ -3235,7 +3219,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
 
           // if inline refcounting is disabled, call delete_reference manually
           if (debug_flags & DebugFlag::NoInlineRefcounting) {
-            dtor_as.write_mov(rdi, MemoryReference(Register::RBX, offset));
+            dtor_as.write_mov(rdi, MemoryReference(rbx, offset));
             dtor_as.write_mov(rsi, r14);
             dtor_as.write_call(common_object_reference(void_fn_ptr(&delete_reference)));
 
@@ -3244,8 +3228,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
                 "__destructor_delete_reference_skip_%" PRIu64, offset);
 
             // get the object pointer
-            MemoryReference rdi(Register::RDI);
-            dtor_as.write_mov(rdi, MemoryReference(Register::RBX, offset));
+            dtor_as.write_mov(rdi, MemoryReference(rbx, offset));
 
             // if the pointer is NULL, do nothing
             dtor_as.write_test(rdi, rdi);
@@ -3253,11 +3236,11 @@ void CompilationVisitor::visit(ClassDefinition* a) {
 
             // decrement the refcount; if it's not zero, skip the destructor call
             dtor_as.write_lock();
-            dtor_as.write_dec(MemoryReference(Register::RDI, 0));
+            dtor_as.write_dec(MemoryReference(rdi, 0));
             dtor_as.write_jnz(skip_label);
 
             // call the destructor
-            dtor_as.write_mov(rax, MemoryReference(Register::RDI, 8));
+            dtor_as.write_mov(rax, MemoryReference(rdi, 8));
             dtor_as.write_call(rax);
 
             dtor_as.write_label(skip_label);
@@ -3272,15 +3255,15 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       // destroyed), then they're holding a reference to an incomplete object
       // and they deserve the segfault they will probably get
       dtor_as.write_lock();
-      dtor_as.write_dec(MemoryReference(Register::RBX, 0));
+      dtor_as.write_dec(MemoryReference(rbx, 0));
 
       // cheating time: "return" by jumping directly to free() so it will return
       // to the caller
       dtor_as.write_mov(rdi, rbx);
       dtor_as.write_add(rsp, 8);
-      dtor_as.write_pop(Register::RBX);
+      dtor_as.write_pop(rbx);
       dtor_as.write_mov(rbp, common_object_reference(void_fn_ptr(&free)));
-      dtor_as.write_xchg(Register::RBP, MemoryReference(Register::RSP, 0));
+      dtor_as.write_xchg(rbp, MemoryReference(rsp, 0));
       dtor_as.write_ret();
 
       // assemble it
@@ -3405,7 +3388,7 @@ void CompilationVisitor::write_function_call(
     if (x < int_argument_register_order.size()) {
       dests.emplace_back(int_argument_register_order[x]);
     } else {
-      dests.emplace_back(Register::RSP, (x - int_argument_register_order.size()) * 8);
+      dests.emplace_back(rsp, (x - int_argument_register_order.size()) * 8);
     }
   }
 
@@ -3461,7 +3444,7 @@ void CompilationVisitor::write_function_call(
     if (ref == dest) {
       continue;
     }
-    if ((ref.base_register == Register::RSP) && ref.field_size) {
+    if ((ref.base_register == rsp) && ref.field_size) {
       MemoryReference new_ref(ref.base_register, ref.offset + rsp_adjustment,
           ref.index_register, ref.field_size);
       this->as.write_mov(dest, new_ref);
@@ -3480,7 +3463,7 @@ void CompilationVisitor::write_function_call(
     }
     if (!ref.field_size) {
       this->as.write_movq_to_xmm(dest.base_register, ref);
-    } else if (ref.base_register == Register::RSP) {
+    } else if (ref.base_register == rsp) {
       MemoryReference new_ref(ref.base_register, ref.offset + rsp_adjustment,
           ref.index_register, ref.field_size);
       this->as.write_movsd(dest, new_ref);
@@ -3497,13 +3480,11 @@ void CompilationVisitor::write_function_call(
 
   // put the return value into the target register
   if (return_float) {
-    if ((return_register != Register::None) &&
-        (return_register != Register::XMM0)) {
+    if ((return_register != Register::None) && (return_register != xmm0)) {
       this->as.write_movsd(MemoryReference(return_register), xmm0);
     }
   } else {
-    if ((return_register != Register::None) &&
-      (return_register != Register::RAX)) {
+    if ((return_register != Register::None) && (return_register != rax)) {
       this->as.write_mov(MemoryReference(return_register), rax);
     }
   }
@@ -3522,7 +3503,7 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
   this->stack_bytes_used = 8;
 
   // lead-in (stack frame setup)
-  this->write_push(Register::RBP);
+  this->write_push(rbp);
   this->as.write_mov(rbp, rsp);
 
   // reserve space for locals and write args into the right places
@@ -3567,7 +3548,7 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
       Register xmm_reg = float_arg_to_register.at(local.first);
       MemoryReference xmm_mem(xmm_reg);
       this->adjust_stack(-8);
-      this->as.write_movsd(MemoryReference(Register::RSP, 0), xmm_mem);
+      this->as.write_movsd(MemoryReference(rsp, 0), xmm_mem);
       continue;
     } catch (const out_of_range&) { }
 
@@ -3579,7 +3560,7 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
 
     // if it's a stack arg, push it via r/m push
     try {
-      this->write_push(MemoryReference(Register::RBP,
+      this->write_push(MemoryReference(rbp,
           int_arg_to_stack_offset.at(local.first)));
       continue;
     } catch (const out_of_range&) { }
@@ -3604,7 +3585,7 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
   // before the destroy locals label - the latter is used when an exception
   // occurs, since _unwind_exception_internal already removes the exc block from
   // the stack
-  this->write_pop(Register::R14);
+  this->write_pop(r14);
   this->adjust_stack(return_exception_block_size - sizeof(int64_t));
 
   // call destructors for all the local variables that have refcounts
@@ -3617,9 +3598,9 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
       // we have to preserve the value in rax since it's the function's return
       // value, so store it on the stack (in the location we're about to pop)
       // while we destroy the object
-      this->as.write_xchg(Register::RAX, MemoryReference(Register::RSP, 0));
+      this->as.write_xchg(rax, MemoryReference(rsp, 0));
       this->write_delete_reference(rax, it->second.type);
-      this->write_pop(Register::RAX);
+      this->write_pop(rax);
     } else {
       // no destructor; just skip it
       // TODO: we can coalesce these adds for great justice
@@ -3629,7 +3610,7 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
 
   // hooray we're done
   this->as.write_label(string_printf("__%s_leave_frame", base_label.c_str()));
-  this->write_pop(Register::RBP);
+  this->write_pop(rbp);
 
   if (this->stack_bytes_used != 8) {
     throw compile_error(string_printf(
@@ -3727,16 +3708,16 @@ void CompilationVisitor::write_alloc_class_instance(int64_t class_id,
   this->as.write_test(rax, rax);
   this->as.write_jnz(skip_label);
   this->as.write_mov(rax, common_object_reference(&MemoryError_instance));
-  this->write_add_reference(Register::RAX);
+  this->write_add_reference(rax);
   this->as.write_mov(r15, rax);
   this->as.write_jmp(
       common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
   this->as.write_label(skip_label);
 
   // fill in the refcount, destructor function and class id
-  Register tmp = this->available_register_except({Register::RAX});
+  Register tmp = this->available_register_except({rax});
   MemoryReference tmp_mem(tmp);
-  if (this->target_register != Register::RAX) {
+  if (this->target_register != rax) {
     this->as.write_mov(MemoryReference(this->target_register), rax);
   }
   this->as.write_mov(MemoryReference(this->target_register, 0), 1);
@@ -3769,7 +3750,7 @@ void CompilationVisitor::write_raise_exception(int64_t class_id) {
   // zero everything else in the class
   //this->as.write_xor(rax, rax);
   //for (size_t x = sizeof(InstanceObject); x < cls->instance_size(); x += 8) {
-  //  this->as.write_mov(MemoryReference(Register::R15, x), rax);
+  //  this->as.write_mov(MemoryReference(r15, x), rax);
   //}
 
   // raise the exception
@@ -3809,12 +3790,12 @@ void CompilationVisitor::write_create_exception_block(
     this->write_push(tmp);
   }
 
-  this->write_push(Register::R13);
-  this->write_push(Register::R12);
+  this->write_push(r13);
+  this->write_push(r12);
 
-  this->write_push(Register::RBP);
+  this->write_push(rbp);
   this->write_push(tmp_rsp);
-  this->write_push(Register::R14);
+  this->write_push(r14);
   this->as.write_mov(r14, rsp);
 }
 
@@ -3878,7 +3859,7 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_global(
   ssize_t offset = distance(module->globals.begin(), it);
   loc.is_global = true;
   loc.type = it->second;
-  loc.mem = MemoryReference(Register::R13,
+  loc.mem = MemoryReference(r13,
       offset * sizeof(int64_t) + module->global_base_offset);
 
   return loc;
@@ -3906,7 +3887,7 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
   VariableLocation loc;
   loc.name = name;
   loc.is_global = false;
-  loc.mem = MemoryReference(Register::RBP, sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->target_function->locals.begin(), it))));
+  loc.mem = MemoryReference(rbp, sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->target_function->locals.begin(), it))));
 
   // use the argument type if given
   try {

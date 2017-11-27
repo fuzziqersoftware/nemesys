@@ -78,5 +78,5 @@ MemoryReference common_object_reference(const void* which) {
     pointer_to_index.reset(m);
   }
 
-  return MemoryReference(Register::R12, pointer_to_index->at(which) * sizeof(void*));
+  return MemoryReference(r12, pointer_to_index->at(which) * sizeof(void*));
 }

@@ -376,6 +376,8 @@ struct MemoryReference {
       Register index_register = Register::None, uint8_t field_size = 1);
   explicit MemoryReference(Register base_register);
 
+  operator Register() const;
+
   bool operator==(const MemoryReference& other) const;
   bool operator!=(const MemoryReference& other) const;
 
@@ -708,6 +710,7 @@ private:
       OperandSize size);
   void write_test_not_neg_imm(const MemoryReference& a, int64_t value,
       uint8_t z, OperandSize size);
+  void write_mov_rm(const MemoryReference& mem, int64_t value, OperandSize size);
 
   void write(const std::string& opcode);
 

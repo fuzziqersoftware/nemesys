@@ -32,10 +32,10 @@ void test_trivial_function() {
   AMD64Assembler as;
   CodeBuffer code;
 
-  as.write_push(Register::RBP);
+  as.write_push(rbp);
   as.write_mov(rbp, rsp);
 
-  as.write_mov(rdx, MemoryReference(Register::RDI, 0));
+  as.write_mov(rdx, MemoryReference(rdi, 0));
 
   as.write_not(rdx);
 
@@ -53,9 +53,9 @@ void test_trivial_function() {
 
   as.write_mov(rax, r10);
 
-  as.write_mov(MemoryReference(Register::RDI, 0), rax);
+  as.write_mov(MemoryReference(rdi, 0), rax);
 
-  as.write_pop(Register::RBP);
+  as.write_pop(rbp);
   as.write_ret();
 
   void* function = assemble(code, as);
@@ -142,34 +142,34 @@ void test_quicksort() {
   as.write_jl("1");
   as.write_ret();
   as.write_label("1");
-  as.write_lea(Register::RCX, MemoryReference(Register::RDI, 0, Register::RSI));
+  as.write_lea(rcx, MemoryReference(rdi, 0, rsi));
   as.write_shr(rcx, 1);
-  as.write_mov(rax, MemoryReference(Register::RDX, 0, Register::RSI, 8));
-  as.write_xchg(Register::RAX, MemoryReference(Register::RDX, 0, Register::RCX, 8));
-  as.write_mov(MemoryReference(Register::RDX, 0, Register::RSI, 8), rax);
-  as.write_lea(Register::R8, MemoryReference(Register::RDI, -1));
+  as.write_mov(rax, MemoryReference(rdx, 0, rsi, 8));
+  as.write_xchg(rax, MemoryReference(rdx, 0, rcx, 8));
+  as.write_mov(MemoryReference(rdx, 0, rsi, 8), rax);
+  as.write_lea(r8, MemoryReference(rdi, -1));
   as.write_mov(r9, rdi);
   as.write_label("2");
   as.write_inc(r8);
   as.write_cmp(r8, rsi);
   as.write_jge("3");
-  as.write_cmp(MemoryReference(Register::RDX, 0, Register::R8, 8), rax);
+  as.write_cmp(MemoryReference(rdx, 0, r8, 8), rax);
   as.write_jge("2");
-  as.write_mov(rcx, MemoryReference(Register::RDX, 0, Register::R9, 8));
-  as.write_xchg(Register::RCX, MemoryReference(Register::RDX, 0, Register::R8, 8));
-  as.write_mov(MemoryReference(Register::RDX, 0, Register::R9, 8), rcx);
+  as.write_mov(rcx, MemoryReference(rdx, 0, r9, 8));
+  as.write_xchg(rcx, MemoryReference(rdx, 0, r8, 8));
+  as.write_mov(MemoryReference(rdx, 0, r9, 8), rcx);
   as.write_inc(r9);
   as.write_jmp("2");
   as.write_label("3");
-  as.write_xchg(Register::RAX, MemoryReference(Register::RDX, 0, Register::R9, 8));
-  as.write_mov(MemoryReference(Register::RDX, 0, Register::RSI, 8), rax);
+  as.write_xchg(rax, MemoryReference(rdx, 0, r9, 8));
+  as.write_mov(MemoryReference(rdx, 0, rsi, 8), rax);
   as.write_push(rsi);
-  as.write_lea(Register::RAX, MemoryReference(Register::R9, 1));
+  as.write_lea(rax, MemoryReference(r9, 1));
   as.write_push(rax);
-  as.write_lea(Register::RSI, MemoryReference(Register::R9, -1));
+  as.write_lea(rsi, MemoryReference(r9, -1));
   as.write_call("0");
-  as.write_pop(Register::RDI);
-  as.write_pop(Register::RSI);
+  as.write_pop(rdi);
+  as.write_pop(rsi);
   as.write_jmp("0");
 
   void* function = assemble(code, as);
@@ -207,16 +207,16 @@ void test_hash_fnv1a64() {
   CodeBuffer code;
 
   // this mirrors the implementation in notes/hash.s
-  as.write_mov(Register::RDX, 0xCBF29CE484222325);
+  as.write_mov(rdx, 0xCBF29CE484222325);
   as.write_add(rsi, rdi);
   as.write_xor(rax, rax);
-  as.write_mov(Register::RCX, 0x00000100000001B3);
+  as.write_mov(rcx, 0x00000100000001B3);
   as.write_jmp("check_end");
 
   as.write_label("continue");
-  as.write_mov(al, MemoryReference(Register::RDI, 0), OperandSize::Byte);
+  as.write_mov(al, MemoryReference(rdi, 0), OperandSize::Byte);
   as.write_xor(rdx, rax);
-  as.write_imul(Register::RDX, rcx);
+  as.write_imul(rdx, rcx);
   as.write_inc(rdi);
   as.write_label("check_end");
   as.write_cmp(rdi, rsi);
@@ -241,10 +241,10 @@ void test_float_move_load_multiply() {
   AMD64Assembler as;
   CodeBuffer code;
 
-  as.write_movq_from_xmm(rax, Register::XMM0);
-  as.write_movq_to_xmm(Register::XMM0, rax);
-  as.write_movsd(xmm1, MemoryReference(Register::RDI, 0));
-  as.write_mulsd(Register::XMM0, xmm1);
+  as.write_movq_from_xmm(rax, xmm0);
+  as.write_movq_to_xmm(xmm0, rax);
+  as.write_movsd(xmm1, MemoryReference(rdi, 0));
+  as.write_mulsd(xmm0, xmm1);
   as.write_ret();
 
   void* function = assemble(code, as);
@@ -261,11 +261,11 @@ void test_float_neg() {
   AMD64Assembler as;
   CodeBuffer code;
 
-  as.write_movq_from_xmm(rax, Register::XMM0);
+  as.write_movq_from_xmm(rax, xmm0);
   as.write_rol(rax, 1);
   as.write_xor(rax, 1);
   as.write_ror(rax, 1);
-  as.write_movq_to_xmm(Register::XMM0, rax);
+  as.write_movq_to_xmm(xmm0, rax);
   as.write_ret();
 
   void* function = assemble(code, as);
@@ -281,7 +281,7 @@ void test_absolute_patches() {
   AMD64Assembler as;
   CodeBuffer code;
 
-  as.write_mov(Register::RAX, "label1");
+  as.write_mov(rax, "label1");
   as.write_label("label1");
   as.write_ret();
 
