@@ -24,20 +24,22 @@ void* CodeBuffer::append(const void* data, size_t size,
   auto block_it = this->free_bytes_to_block.lower_bound(size);
   if (block_it != this->free_bytes_to_block.end()) {
     shared_ptr<Block> block = block_it->second;
+    void* ret = block->append(data, size, patch_offsets);
     this->free_bytes_to_block.erase(block_it);
     this->free_bytes_to_block.emplace(block->size - block->used_bytes, block);
     this->used_bytes += size;
-    return block->append(data, size, patch_offsets);
+    return ret;
   }
 
   // the function doesn't fit in any existing block, so make a new one
   size_t new_block_size = (size > this->block_size) ?
       (size + 0x0FFF) & 0xFFFFFFFFFFFFF000 : this->block_size;
   shared_ptr<Block> block(new Block(new_block_size));
+  void* ret = block->append(data, size, patch_offsets);
   this->free_bytes_to_block.emplace(new_block_size - size, block);
   this->size += new_block_size;
   this->used_bytes += size;
-  return block->append(data, size, patch_offsets);
+  return ret;
 }
 
 size_t CodeBuffer::total_size() const {

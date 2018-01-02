@@ -442,11 +442,26 @@ void AMD64Assembler::reset() {
 
 
 
-void AMD64Assembler::write_label(const std::string& name) {
+void AMD64Assembler::write_raw(const string& data) {
+  this->write(data);
+}
+
+void AMD64Assembler::write_raw(const void* data, size_t size) {
+  this->write(string(reinterpret_cast<const char*>(data), size));
+}
+
+
+
+void AMD64Assembler::write_label(const string& name) {
   this->labels.emplace_back(name, this->stream.size());
   if (!this->name_to_label.emplace(name, &this->labels.back()).second) {
     throw invalid_argument("duplicate label name: " + name);
   }
+}
+
+void AMD64Assembler::write_label_address(const string& label_name) {
+  string data("\0\0\0\0\0\0\0\0", 8);
+  this->stream.emplace_back(data, label_name, 0, 8, true);
 }
 
 
@@ -1082,7 +1097,7 @@ void AMD64Assembler::write_nop() {
   this->write(nop);
 }
 
-void AMD64Assembler::write_jmp(const std::string& label_name) {
+void AMD64Assembler::write_jmp(const string& label_name) {
   this->stream.emplace_back(label_name, Operation::JMP8, Operation::JMP32);
 }
 
@@ -1090,7 +1105,7 @@ void AMD64Assembler::write_jmp(const MemoryReference& mem) {
   this->write_rm(Operation::CALL_JMP_ABS, mem, 4, OperandSize::DoubleWord);
 }
 
-std::string AMD64Assembler::generate_jmp(Operation op8, Operation op32,
+string AMD64Assembler::generate_jmp(Operation op8, Operation op32,
     int64_t opcode_address, int64_t target_address, OperandSize* offset_size) {
   int64_t offset = target_address - opcode_address;
 
@@ -1148,7 +1163,7 @@ std::string AMD64Assembler::generate_jmp(Operation op8, Operation op32,
   return data;
 }
 
-void AMD64Assembler::write_call(const std::string& label_name) {
+void AMD64Assembler::write_call(const string& label_name) {
   this->stream.emplace_back(label_name, Operation::ADD_STORE8, Operation::CALL32);
 }
 
@@ -1176,7 +1191,7 @@ void AMD64Assembler::write_ret(uint16_t stack_bytes) {
 
 
 void AMD64Assembler::write_jcc(Operation op8, Operation op,
-    const std::string& label_name) {
+    const string& label_name) {
   this->stream.emplace_back(label_name, op8, op);
 }
 
@@ -1547,10 +1562,12 @@ void AMD64Assembler::write_test(const MemoryReference& a,
   if (a.field_size && b.field_size) {
     throw invalid_argument("test opcode can have at most one memory reference");
   }
+
+  Operation op = (size == OperandSize::Byte) ? Operation::TEST8 : Operation::TEST;
   if (a.field_size) {
-    this->write_rm(Operation::TEST, a, b.base_register, size);
+    this->write_rm(op, a, b.base_register, size);
   } else {
-    this->write_rm(Operation::TEST, b, a.base_register, size);
+    this->write_rm(op, b, a.base_register, size);
   }
 }
 
@@ -1797,11 +1814,17 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
           // find the target label
           size_t target_stream_location = label->stream_location;
 
-          // find the maximum number of bytes between here and there
+          // find the maximum number of bytes between here and there, up to
+          // approximately a byte boundary. there are only two kinds of
+          // immediate jumps (8-bit and 32-bit), so if we can't use the 8-bit
+          // one, we don't actually need to know the full displacement value.
+          // this helps when assembling long streams with really long jumps.
           int64_t max_displacement = 0;
           size_t where_stream_location = stream_location;
           for (auto where_it = stream_it + 1;
-               (where_it != this->stream.end()) && (where_stream_location < target_stream_location);
+               (where_it != this->stream.end()) &&
+                 (where_stream_location < target_stream_location) &&
+                 (max_displacement < 0x0108);
                where_it++, where_stream_location++) {
             if (where_it->relative_jump_opcode8 || where_it->relative_jump_opcode32) {
               // assume it's a 32-bit jump
@@ -1844,15 +1867,16 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
       }
 
       if (label) {
-        // if we know the label's location already, apply the patch now
-        if (label->byte_location <= code.size()) {
-          apply_patch(*label, item.patch);
+        // change the patch location so it's relative to the start of the code
+        Patch p = item.patch;
+        p.where += (code.size() - item.data.size());
 
-        // if we don't know the label's location, make the patch pending
+        // if we know the label's location already, apply the patch now. if we
+        // don't know the label's location, make the patch pending
+        if (label->byte_location <= code.size()) {
+          apply_patch(*label, p);
         } else {
-          label->patches.emplace_back(
-              code.size() - item.data.size() + item.patch.where,
-              item.patch.size, item.patch.absolute);
+          label->patches.emplace_back(p);
         }
       }
     }
@@ -1874,16 +1898,15 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
   return code;
 }
 
-AMD64Assembler::StreamItem::StreamItem(const std::string& data) : data(data),
+AMD64Assembler::StreamItem::StreamItem(const string& data) : data(data),
     relative_jump_opcode8(Operation::ADD_STORE8),
     relative_jump_opcode32(Operation::ADD_STORE8), patch(0, 0, false) { }
 
-AMD64Assembler::StreamItem::StreamItem(const std::string& data,
-    Operation opcode8, Operation opcode32) : data(data),
-    relative_jump_opcode8(opcode8), relative_jump_opcode32(opcode32),
-    patch(0, 0, false) { }
+AMD64Assembler::StreamItem::StreamItem(const string& data, Operation opcode8,
+    Operation opcode32) : data(data), relative_jump_opcode8(opcode8),
+    relative_jump_opcode32(opcode32), patch(0, 0, false) { }
 
-AMD64Assembler::StreamItem::StreamItem(const std::string& data,
+AMD64Assembler::StreamItem::StreamItem(const string& data,
     const string& patch_label_name, size_t where, uint8_t size, bool absolute) :
     data(data), relative_jump_opcode8(Operation::ADD_STORE8),
     relative_jump_opcode32(Operation::ADD_STORE8),
@@ -1892,7 +1915,7 @@ AMD64Assembler::StreamItem::StreamItem(const std::string& data,
 AMD64Assembler::Patch::Patch(size_t where, uint8_t size, bool absolute) :
     where(where), size(size), absolute(absolute) { }
 
-AMD64Assembler::Label::Label(const std::string& name, size_t stream_location) :
+AMD64Assembler::Label::Label(const string& name, size_t stream_location) :
     name(name), stream_location(stream_location),
     byte_location(0xFFFFFFFFFFFFFFFF) { }
 

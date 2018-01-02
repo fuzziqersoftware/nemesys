@@ -412,8 +412,13 @@ public:
 
   void reset();
 
+  // don't do this unless you really know what you're doing
+  void write_raw(const std::string& data);
+  void write_raw(const void* data, size_t size);
+
   // label support
   void write_label(const std::string& name);
+  void write_label_address(const std::string& name);
 
   // stack opcodes
   void write_push(Register r);
