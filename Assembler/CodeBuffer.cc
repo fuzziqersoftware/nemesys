@@ -37,9 +37,32 @@ void* CodeBuffer::append(const void* data, size_t size,
   shared_ptr<Block> block(new Block(new_block_size));
   void* ret = block->append(data, size, patch_offsets);
   this->free_bytes_to_block.emplace(new_block_size - size, block);
+  this->addr_to_block.emplace(block->data, block);
   this->size += new_block_size;
   this->used_bytes += size;
   return ret;
+}
+
+void* CodeBuffer::overwrite(void* where, const string& data,
+    const unordered_set<size_t>* patch_offsets) {
+  return this->overwrite(where, data.data(), data.size(), patch_offsets);
+}
+
+void* CodeBuffer::overwrite(void* where, const void* data, size_t size,
+    const unordered_set<size_t>* patch_offsets) {
+  auto block_it = this->addr_to_block.upper_bound(where);
+  if (block_it == this->addr_to_block.begin()) {
+    throw out_of_range("address is before the beginning of any block");
+  }
+  block_it--;
+  shared_ptr<Block> block = block_it->second;
+
+  uint64_t block_addr = reinterpret_cast<uint64_t>(block->data);
+  uint64_t where_addr = reinterpret_cast<uint64_t>(where);
+  if ((where_addr + size > block_addr + block->size) || (where_addr < block_addr)) {
+    throw out_of_range("range does not fit within a single block");
+  }
+  return block->overwrite(where_addr - block_addr, data, size, patch_offsets);
 }
 
 size_t CodeBuffer::total_size() const {
@@ -82,6 +105,28 @@ void* CodeBuffer::Block::append(const void* data, size_t size,
     for (size_t offset : *patch_offsets) {
       *reinterpret_cast<size_t*>(reinterpret_cast<uint8_t*>(dest) + offset) +=
           delta;
+    }
+  }
+  mprotect(this->data, this->size, PROT_READ | PROT_EXEC);
+  return dest;
+}
+
+void* CodeBuffer::Block::overwrite(size_t offset, const void* data, size_t size,
+    const unordered_set<size_t>* patch_offsets) {
+  if (offset + size > this->size) {
+    throw logic_error(string_printf("overwrite ends beyond end of block; block is %p:%zu, overwrite requested %zu+%zu",
+        this->data, this->size, offset, size));
+  }
+
+  void* dest = reinterpret_cast<uint8_t*>(this->data) + offset;
+
+  mprotect(this->data, this->size, PROT_READ | PROT_WRITE | PROT_EXEC);
+  memcpy(dest, data, size);
+  if (patch_offsets) {
+    size_t delta = reinterpret_cast<ssize_t>(dest);
+    for (size_t patch_offset : *patch_offsets) {
+      *reinterpret_cast<size_t*>(reinterpret_cast<uint8_t*>(dest) + patch_offset)
+          += delta;
     }
   }
   mprotect(this->data, this->size, PROT_READ | PROT_EXEC);
