@@ -658,6 +658,18 @@ void AMD64Assembler::write_load_store(Operation base_op, const MemoryReference& 
 
 
 
+void AMD64Assembler::write_int(uint8_t num) {
+  if (num == 3) {
+    this->write("\xCC");
+  } else {
+    string data("\xCD", 1);
+    data += num;
+    this->write(data);
+  }
+}
+
+
+
 void AMD64Assembler::write_push(int64_t value) {
   string data;
   if ((value >= -0x80) && (value <= 0x7F)) {
@@ -721,7 +733,7 @@ void AMD64Assembler::write_pop(const MemoryReference& mem) {
   if (!mem.field_size) {
     this->write_pop(mem.base_register);
   } else {
-    this->write_rm(Operation::POP_RM, mem, 6, OperandSize::QuadWord);
+    this->write_rm(Operation::POP_RM, mem, 0, OperandSize::QuadWord);
   }
 }
 
@@ -2268,6 +2280,18 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
           false, names, ext, reg_ext, base_ext, index_ext, operand_size);
       opcode_text += ", " + AMD64Assembler::disassemble_imm(data, size, offset,
           operand_size);
+
+    } else if ((opcode & 0xFE) == 0xCC) {
+      if (opcode & 1) {
+        if (offset >= size) {
+          opcode_text = "int      <<incomplete>>";
+        } else {
+          opcode_text = string_printf("int      %" PRIu8, data[offset]);
+          offset++;
+        }
+      } else {
+        opcode_text = "int      0x03";
+      }
 
     } else if ((opcode & 0xFC) == 0xE8) {
       opcode_text = AMD64Assembler::disassemble_jmp(data, size, offset, addr,

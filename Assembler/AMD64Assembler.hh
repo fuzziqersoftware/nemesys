@@ -420,6 +420,9 @@ public:
   void write_label(const std::string& name);
   void write_label_address(const std::string& name);
 
+  // interrupt opcodes
+  void write_int(uint8_t num);
+
   // stack opcodes
   void write_push(Register r);
   void write_push(int64_t value);
