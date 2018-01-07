@@ -726,7 +726,10 @@ private:
     size_t where;
     uint8_t size; // 1, 4, or 8
     bool absolute;
+
     Patch(size_t where, uint8_t size, bool absolute);
+
+    std::string str() const;
   };
 
   struct StreamItem {
@@ -741,6 +744,8 @@ private:
     StreamItem(const std::string& data, Operation opcode8, Operation opcode32);
     StreamItem(const std::string& data, const std::string& patch_label_name,
         size_t where, uint8_t size, bool absolute);
+
+    std::string str() const;
   };
   std::deque<StreamItem> stream;
 
@@ -753,6 +758,8 @@ private:
     Label(const std::string& name, size_t stream_location);
     Label(const Label&) = delete;
     Label(Label&&) = default;
+
+    std::string str() const;
   };
   std::deque<Label> labels;
   std::unordered_map<std::string, Label*> name_to_label;

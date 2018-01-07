@@ -70,6 +70,34 @@ void test_trivial_function() {
 }
 
 
+void test_jump_boundaries() {
+  printf("-- jump boundaries\n");
+
+  for (size_t x = 0x70; x < 0x90; x++) {
+    AMD64Assembler as;
+    CodeBuffer code;
+
+    string nops(x, '\x90');
+
+    as.write_jmp("label1");
+    as.write_raw(nops);
+    as.write_label("label1");
+    as.write_xor(rax, rax);
+    as.write_cmp(rax, 0);
+    as.write_jz("label2");
+    as.write_raw(nops);
+    as.write_label("label2");
+    as.write_mov(rax, rdi);
+    as.write_ret();
+
+    void* function = assemble(code, as);
+    int64_t (*fn)(int64_t) = reinterpret_cast<int64_t (*)(int64_t)>(function);
+
+    assert(fn(x) == x);
+  }
+}
+
+
 void test_pow() {
   printf("-- pow\n");
 
@@ -295,6 +323,7 @@ void test_absolute_patches() {
 
 int main(int argc, char** argv) {
   test_trivial_function();
+  test_jump_boundaries();
   test_pow();
   test_hash_fnv1a64();
   test_quicksort();

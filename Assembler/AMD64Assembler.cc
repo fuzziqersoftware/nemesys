@@ -518,7 +518,8 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
   bool mem_base_ext = is_extension_register(mem.base_register);
 
   uint8_t rm_byte = ((reg & 7) << 3);
-  uint8_t sib_byte = 0;
+  uint8_t sib_byte = 0x00;
+  bool force_offset = false;
   if (mem.index_register != Register::None) {
     rm_byte |= 0x04;
 
@@ -532,11 +533,11 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
       throw invalid_argument("field size must be 1, 2, 4, or 8");
     }
 
-    if (mem.base_register == Register::RBP) {
-      throw invalid_argument("RBP cannot be used as a base register in index addressing");
+    if ((mem.base_register == Register::RBP) || (mem.base_register == Register::R13)) {
+      force_offset = true;
     }
     if (mem.index_register == Register::RSP) {
-      throw invalid_argument("RSP cannot be used as a base register in index addressing");
+      throw invalid_argument("RSP cannot be used as an index register in index addressing");
     }
 
     sib_byte |= mem.base_register & 7;
@@ -563,8 +564,16 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
     }
   }
 
+  // if no offset was given and the sib byte was not used and the base reg is
+  // RBP or R13, then add a fake offset of 0 to the opcode (this is because this
+  // case is shadowed by the RIP special case above)
+  if ((mem.offset == 0) && ((rm_byte & 7) != 0x04) &&
+      ((mem.base_register == Register::RSP) || (mem.base_register == Register::R13))) {
+    force_offset = true;
+  }
+
   // if an offset was given, update the behavior appropriately
-  if (mem.offset == 0) {
+  if ((mem.offset == 0) && !force_offset) {
     // behavior is 0; nothing to do
   } else if ((mem.offset <= 0x7F) && (mem.offset >= -0x80)) {
     rm_byte |= 0x40;
@@ -572,14 +581,6 @@ string AMD64Assembler::generate_rm(Operation op, const MemoryReference& mem,
     rm_byte |= 0x80;
   } else {
     throw invalid_argument("offset must fit in 32 bits");
-  }
-
-  // if no offset was given and the sib byte was not used and the base reg is
-  // RBP or R13, then add a fake offset of 0 to the opcode (this is because this
-  // case is shadowed by the RIP special case above)
-  if ((mem.offset == 0) && ((rm_byte & 7) != 0x04) &&
-      ((mem.base_register == Register::RSP) || (mem.base_register == Register::R13))) {
-    rm_byte |= 0x40;
   }
 
   // fill in the ret string
@@ -1146,7 +1147,7 @@ string AMD64Assembler::generate_jmp(Operation op8, Operation op32,
     data += op32 & 0xFF;
     data.append(reinterpret_cast<const char*>(&offset32), 4);
     if (offset_size) {
-      *offset_size = OperandSize::QuadWord;
+      *offset_size = OperandSize::DoubleWord;
     }
     return data;
   }
@@ -1754,7 +1755,7 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
         throw runtime_error("8-bit patches must be relative");
       }
       if ((value < -0x80) || (value > 0x7F)) {
-        throw runtime_error("8-bit patch location too far away");
+        throw runtime_error("8-bit patch value out of range");
       }
       *reinterpret_cast<int8_t*>(&code[p.where]) = static_cast<int8_t>(value);
 
@@ -1764,7 +1765,7 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
         throw runtime_error("32-bit patches must be relative");
       }
       if ((value < -0x80000000LL) || (value > 0x7FFFFFFFLL)) {
-        throw runtime_error("32-bit patch location too far away");
+        throw runtime_error("32-bit patch value out of range");
       }
       *reinterpret_cast<int32_t*>(&code[p.where]) = static_cast<int32_t>(value);
 
@@ -1833,7 +1834,7 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
           // this helps when assembling long streams with really long jumps.
           int64_t max_displacement = 0;
           size_t where_stream_location = stream_location;
-          for (auto where_it = stream_it + 1;
+          for (auto where_it = stream_it;
                (where_it != this->stream.end()) &&
                  (where_stream_location < target_stream_location) &&
                  (max_displacement < 0x0108);
@@ -1844,6 +1845,7 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
             } else {
               max_displacement += where_it->data.size();
             }
+            string s = where_it->str();
           }
 
           // generate a bogus forward jmp opcode, and the appropriate patches
@@ -1853,7 +1855,7 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
               code.size() + max_displacement, &offset_size);
           if (offset_size == OperandSize::Byte) {
             label->patches.emplace_back(code.size() - 1, 1, false);
-          } else if (offset_size == OperandSize::QuadWord) {
+          } else if (offset_size == OperandSize::DoubleWord) {
             label->patches.emplace_back(code.size() - 4, 4, false);
           } else {
             throw runtime_error("64-bit jump cannot be backpatched");
@@ -1924,12 +1926,36 @@ AMD64Assembler::StreamItem::StreamItem(const string& data,
     relative_jump_opcode32(Operation::ADD_STORE8),
     patch_label_name(patch_label_name), patch(where, size, absolute) { }
 
+string AMD64Assembler::StreamItem::str() const {
+  string ret = "StreamItem(data=[" + format_data_string(this->data) + "]";
+  if (this->relative_jump_opcode8) {
+    ret += string_printf(", relative_jump_opcode8=%X", this->relative_jump_opcode8);
+  }
+  if (this->relative_jump_opcode32) {
+    ret += string_printf(", relative_jump_opcode32=%X", this->relative_jump_opcode32);
+  }
+  if (!this->patch_label_name.empty()) {
+    ret += string_printf(", patch_label_name=%s", this->patch_label_name.c_str());
+  }
+  return ret + ")";
+}
+
 AMD64Assembler::Patch::Patch(size_t where, uint8_t size, bool absolute) :
     where(where), size(size), absolute(absolute) { }
+
+string AMD64Assembler::Patch::str() const {
+  return string_printf("Patch(where=%zu, size=%hhu, absolute=%s)", this->where,
+      this->size, this->absolute ? "true" : "false");
+}
 
 AMD64Assembler::Label::Label(const string& name, size_t stream_location) :
     name(name), stream_location(stream_location),
     byte_location(0xFFFFFFFFFFFFFFFF) { }
+
+string AMD64Assembler::Label::str() const {
+  return string_printf("Label(name=%s, stream_location=%zu, byte_location=%zu)",
+      this->name.c_str(), this->stream_location, this->byte_location);
+}
 
 
 
