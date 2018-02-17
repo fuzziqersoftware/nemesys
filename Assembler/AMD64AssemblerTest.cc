@@ -12,15 +12,27 @@
 using namespace std;
 
 
-static void* assemble(CodeBuffer& code, AMD64Assembler& as) {
+static void* assemble(CodeBuffer& code, AMD64Assembler& as,
+    const char* expected_disassembly = NULL, bool check_disassembly = true) {
   multimap<size_t, string> compiled_labels;
   unordered_set<size_t> patch_offsets;
   string data = as.assemble(patch_offsets, &compiled_labels);
   void* ret = code.append(data, &patch_offsets);
 
-  //print_data(stderr, ret, data.size(), reinterpret_cast<uint64_t>(ret));
-  //string disassembly = AMD64Assembler::disassemble(ret, data.size());
-  //fprintf(stderr, "%s\n", disassembly.c_str());
+  if (check_disassembly) {
+    if (expected_disassembly) {
+      string disassembly = AMD64Assembler::disassemble(ret, data.size(), 0,
+          &compiled_labels);
+      assert(disassembly == expected_disassembly);
+
+    } else {
+      print_data(stderr, ret, data.size(), reinterpret_cast<uint64_t>(ret));
+      string disassembly = AMD64Assembler::disassemble(ret, data.size(),
+        reinterpret_cast<int64_t>(ret), &compiled_labels);
+      fprintf(stderr, "%s\n", disassembly.c_str());
+      assert(false);
+    }
+  }
 
   return ret;
 }
@@ -58,7 +70,25 @@ void test_trivial_function() {
   as.write_pop(rbp);
   as.write_ret();
 
-  void* function = assemble(code, as);
+  const char* expected_disassembly = "\
+0000000000000000   55                              push     rbp\n\
+0000000000000001   48 89 E5                        mov      rbp, rsp\n\
+0000000000000004   48 8B 17                        mov      rdx, [rdi]\n\
+0000000000000007   48 F7 D2                        not      rdx\n\
+000000000000000A   48 85 D2                        test     rdx, rdx\n\
+000000000000000D   0F 94 C6                        sete     dh\n\
+0000000000000010   49 89 D2                        mov      r10, rdx\n\
+0000000000000013   4D 85 D2                        test     r10, r10\n\
+0000000000000016   41 0F 94 C2                     sete     r10b\n\
+000000000000001A   49 81 F2 3F 3F 00 00            xor      r10, 16191\n\
+0000000000000021   49 83 F2 40                     xor      r10, 64\n\
+0000000000000025   41 80 F2 01                     xor      r10b, 1\n\
+0000000000000029   4C 89 D0                        mov      rax, r10\n\
+000000000000002C   48 89 07                        mov      [rdi], rax\n\
+000000000000002F   5D                              pop      rbp\n\
+0000000000000030   C3                              ret\n";
+
+  void* function = assemble(code, as, expected_disassembly);
 
   uint64_t data = 0x0102030405060708;
   uint64_t (*fn)(uint64_t*) = reinterpret_cast<uint64_t (*)(uint64_t*)>(function);
@@ -90,7 +120,7 @@ void test_jump_boundaries() {
     as.write_mov(rax, rdi);
     as.write_ret();
 
-    void* function = assemble(code, as);
+    void* function = assemble(code, as, NULL, false);
     int64_t (*fn)(int64_t) = reinterpret_cast<int64_t (*)(int64_t)>(function);
 
     assert(fn(x) == x);
@@ -116,7 +146,19 @@ void test_pow() {
   as.write_jnz("_pow_again");
   as.write_ret();
 
-  void* function = assemble(code, as);
+  const char* expected_disassembly = "\
+0000000000000000   48 C7 C0 01 00 00 00            mov      rax, 0x00000001\n\
+_pow_again:\n\
+0000000000000007   48 F7 C6 01 00 00 00            test     rsi, 0x00000001\n\
+000000000000000E   74 04                           je       +0x4 ; _pow_skip_base\n\
+0000000000000010   48 0F AF C7                     imul     rax, rdi\n\
+_pow_skip_base:\n\
+0000000000000014   48 0F AF FF                     imul     rdi, rdi\n\
+0000000000000018   48 D1 EE                        shr      rsi, 1\n\
+000000000000001B   75 EA                           jne      -0x16 ; _pow_again\n\
+000000000000001D   C3                              ret\n";
+
+  void* function = assemble(code, as, expected_disassembly);
   int64_t (*pow)(int64_t, int64_t) = reinterpret_cast<int64_t (*)(int64_t, int64_t)>(function);
 
   assert(pow(0, 0) == 1);
@@ -200,7 +242,45 @@ void test_quicksort() {
   as.write_pop(rsi);
   as.write_jmp("0");
 
-  void* function = assemble(code, as);
+  const char* expected_disassembly = "\
+0000000000000000   48 89 FA                        mov      rdx, rdi\n\
+0000000000000003   48 31 FF                        xor      rdi, rdi\n\
+0000000000000006   48 FF CE                        dec      rsi\n\
+0:\n\
+0000000000000009   48 39 F7                        cmp      rdi, rsi\n\
+000000000000000C   7C 01                           jl       +0x1 ; 1\n\
+000000000000000E   C3                              ret\n\
+1:\n\
+000000000000000F   48 8D 0C 37                     lea      rcx, [rdi + rsi]\n\
+0000000000000013   48 D1 E9                        shr      rcx, 1\n\
+0000000000000016   48 8B 04 F2                     mov      rax, [rdx + rsi * 8]\n\
+000000000000001A   48 87 04 CA                     xchg     rax, [rdx + rcx * 8]\n\
+000000000000001E   48 89 04 F2                     mov      [rdx + rsi * 8], rax\n\
+0000000000000022   4C 8D 47 FF                     lea      r8, [rdi - 0x1]\n\
+0000000000000026   49 89 F9                        mov      r9, rdi\n\
+2:\n\
+0000000000000029   49 FF C0                        inc      r8\n\
+000000000000002C   49 39 F0                        cmp      r8, rsi\n\
+000000000000002F   7D 17                           jge      +0x17 ; 3\n\
+0000000000000031   4A 39 04 C2                     cmp      [rdx + r8 * 8], rax\n\
+0000000000000035   7D F2                           jge      -0xE ; 2\n\
+0000000000000037   4A 8B 0C CA                     mov      rcx, [rdx + r9 * 8]\n\
+000000000000003B   4A 87 0C C2                     xchg     rcx, [rdx + r8 * 8]\n\
+000000000000003F   4A 89 0C CA                     mov      [rdx + r9 * 8], rcx\n\
+0000000000000043   49 FF C1                        inc      r9\n\
+0000000000000046   EB E1                           jmp      -0x1F ; 2\n\
+3:\n\
+0000000000000048   4A 87 04 CA                     xchg     rax, [rdx + r9 * 8]\n\
+000000000000004C   48 89 04 F2                     mov      [rdx + rsi * 8], rax\n\
+0000000000000050   56                              push     rsi\n\
+0000000000000051   49 8D 41 01                     lea      rax, [r9 + 0x1]\n\
+0000000000000055   50                              push     rax\n\
+0000000000000056   49 8D 71 FF                     lea      rsi, [r9 - 0x1]\n\
+000000000000005A   E8 AA FF FF FF                  call     -0x56 ; 0\n\
+000000000000005F   5F                              pop      rdi\n\
+0000000000000060   5E                              pop      rsi\n\
+0000000000000061   EB A6                           jmp      -0x5A ; 0\n";
+  void* function = assemble(code, as, expected_disassembly);
   int64_t (*quicksort)(int64_t*, int64_t) = reinterpret_cast<int64_t (*)(int64_t*, int64_t)>(function);
 
   vector<vector<int64_t>> cases = {
@@ -253,7 +333,23 @@ void test_hash_fnv1a64() {
   as.write_mov(rax, rdx);
   as.write_ret();
 
-  void* function = assemble(code, as);
+  const char* expected_disassembly = "\
+0000000000000000   48 BA 25 23 22 84 E4 9C F2 CB   movabs   rdx, 0xCBF29CE484222325\n\
+000000000000000A   48 01 FE                        add      rsi, rdi\n\
+000000000000000D   48 31 C0                        xor      rax, rax\n\
+0000000000000010   48 B9 B3 01 00 00 00 01 00 00   movabs   rcx, 0x00000100000001B3\n\
+000000000000001A   EB 0C                           jmp      +0xC ; check_end\n\
+continue:\n\
+000000000000001C   8A 07                           mov      al, [rdi]\n\
+000000000000001E   48 31 C2                        xor      rdx, rax\n\
+0000000000000021   48 0F AF D1                     imul     rdx, rcx\n\
+0000000000000025   48 FF C7                        inc      rdi\n\
+check_end:\n\
+0000000000000028   48 39 F7                        cmp      rdi, rsi\n\
+000000000000002B   75 EF                           jne      -0x11 ; continue\n\
+000000000000002D   48 89 D0                        mov      rax, rdx\n\
+0000000000000030   C3                              ret\n";
+  void* function = assemble(code, as, expected_disassembly);
   uint64_t (*hash)(const void*, size_t) = reinterpret_cast<uint64_t (*)(const void*, size_t)>(function);
 
   assert(hash("", 0) == fnv1a64("", 0));
@@ -275,7 +371,13 @@ void test_float_move_load_multiply() {
   as.write_mulsd(xmm0, xmm1);
   as.write_ret();
 
-  void* function = assemble(code, as);
+  const char* expected_disassembly = "\
+0000000000000000   66 48 0F 7E C0                  movq     rax, xmm0\n\
+0000000000000005   66 48 0F 6E C0                  movq     xmm0, rax\n\
+000000000000000A   F2 0F 10 0F                     movsd    xmm1, [rdi]\n\
+000000000000000E   F2 0F 59 C1                     mulsd    xmm0, xmm1\n\
+0000000000000012   C3                              ret\n";
+  void* function = assemble(code, as, expected_disassembly);
   double (*mul)(double*, double) = reinterpret_cast<double (*)(double*, double)>(function);
 
   double x = 1.5;
@@ -296,7 +398,14 @@ void test_float_neg() {
   as.write_movq_to_xmm(xmm0, rax);
   as.write_ret();
 
-  void* function = assemble(code, as);
+  const char* expected_disassembly = "\
+0000000000000000   66 48 0F 7E C0                  movq     rax, xmm0\n\
+0000000000000005   48 D1 C0                        rol      rax, 1\n\
+0000000000000008   48 83 F0 01                     xor      rax, 1\n\
+000000000000000C   48 D1 C8                        ror      rax, 1\n\
+000000000000000F   66 48 0F 6E C0                  movq     xmm0, rax\n\
+0000000000000014   C3                              ret\n";
+  void* function = assemble(code, as, expected_disassembly);
   double (*neg)(double) = reinterpret_cast<double (*)(double)>(function);
 
   assert(neg(1.5) == -1.5);
@@ -313,7 +422,7 @@ void test_absolute_patches() {
   as.write_label("label1");
   as.write_ret();
 
-  void* function = assemble(code, as);
+  void* function = assemble(code, as, NULL, false);
   size_t (*fn)() = reinterpret_cast<size_t (*)()>(function);
 
   // the movabs opcode is 10 bytes long

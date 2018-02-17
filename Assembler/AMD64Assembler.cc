@@ -1118,11 +1118,16 @@ void AMD64Assembler::write_jmp(const MemoryReference& mem) {
   this->write_rm(Operation::CALL_JMP_ABS, mem, 4, OperandSize::DoubleWord);
 }
 
+void AMD64Assembler::write_jmp_abs(const void* addr) {
+  this->stream.emplace_back("", Operation::JMP8, Operation::JMP32,
+      reinterpret_cast<int64_t>(addr));
+}
+
 string AMD64Assembler::generate_jmp(Operation op8, Operation op32,
     int64_t opcode_address, int64_t target_address, OperandSize* offset_size) {
   int64_t offset = target_address - opcode_address;
 
-  if (op8) { // may be omitted for call opcodes
+  if (op8 != Operation::NOP) { // may be omitted for call opcodes
     int64_t offset8 = offset - 2 - (static_cast<int64_t>(op8) > 0xFF);
     if ((offset8 >= -0x80) && (offset8 <= 0x7F)) {
       string data;
@@ -1152,43 +1157,66 @@ string AMD64Assembler::generate_jmp(Operation op8, Operation op32,
     return data;
   }
 
-  // the nasty case: we have to use a 64-bit offset. here we do this by putting
-  // the address on the stack, and "returning" to it
-  // TODO: support conditional jumps and 64-bit calls here
-  if (op32 != Operation::JMP32) {
-    throw runtime_error("64-bit calls and conditional jumps not yet implemented");
-  }
-  string data;
-  // push <low 4 bytes of address>
-  data += 0x68;
-  data.append(reinterpret_cast<const char*>(&target_address), 4);
-  // mov [rsp+4], <high 4 bytes of address>
-  data += 0xC7;
-  data += 0x44;
-  data += 0x24;
-  data += 0x04;
-  data.append(reinterpret_cast<const char*>(&target_address) + 4, 4);
-  // ret
-  data += 0xC3;
+  // the nasty case: we have to use a 64-bit offset. there doesn't seem to be a
+  // good way to do this in amd64 assembly, so we'll emulate it with an absolute
+  // call instead.
   if (offset_size) {
     *offset_size = OperandSize::QuadWord;
   }
+  return AMD64Assembler::generate_absolute_jmp_position_independent(op8, op32,
+      target_address);
+}
+
+string AMD64Assembler::generate_absolute_jmp_position_independent(Operation op8,
+    Operation op32, int64_t target_address) {
+  // only two cases are supported: absolute calls and absolute jumps
+  // (conditional opcodes are not supported)
+
+  string data;
+  if ((op8 == Operation::JMP8) && (op32 == Operation::JMP32)) {
+    // we emulate this by pushing the absolute address on the stack and
+    // "returning" to it
+
+    // push <low 4 bytes of address>
+    data += 0x68;
+    data.append(reinterpret_cast<const char*>(&target_address), 4);
+    // mov [rsp + 4], <high 4 bytes of address>
+    data += 0xC7;
+    data += 0x44;
+    data += 0x24;
+    data += 0x04;
+    data.append(reinterpret_cast<const char*>(&target_address) + 4, 4);
+    // ret
+    data += 0xC3;
+
+  } else if ((op8 == Operation::NOP) && (op32 == Operation::CALL32)) {
+    // TODO: implement this for realz. something like this might work:
+    // call lolz
+    // lolz:
+    // add [rsp], <number of bytes between lolz and end of ret opcode>
+    // push <low 4 bytes of address>
+    // mov [rsp + 4], <high 4 bytes of address>
+    // ret
+    throw invalid_argument("position-independent absolute calls not yet implemented");
+
+  } else {
+    throw invalid_argument("position-independent absolute jumps may only use unconditional opcodes");
+  }
+
   return data;
 }
 
 void AMD64Assembler::write_call(const string& label_name) {
-  this->stream.emplace_back(label_name, Operation::ADD_STORE8, Operation::CALL32);
+  this->stream.emplace_back(label_name, Operation::NOP, Operation::CALL32);
 }
 
 void AMD64Assembler::write_call(const MemoryReference& mem) {
   this->write_rm(Operation::CALL_JMP_ABS, mem, 2, OperandSize::DoubleWord);
 }
 
-void AMD64Assembler::write_jmp(void* addr) {
-  // TODO: we can use a real jmp opcode if addr is within 2GB of this opcode;
-  // too lazy to do it right now since this will usually be used for far jumps
-  this->write_push(reinterpret_cast<int64_t>(addr));
-  this->write_ret();
+void AMD64Assembler::write_call_abs(const void* addr) {
+  this->stream.emplace_back("", Operation::NOP, Operation::CALL32,
+      reinterpret_cast<int64_t>(addr));
 }
 
 void AMD64Assembler::write_ret(uint16_t stack_bytes) {
@@ -1734,7 +1762,7 @@ void AMD64Assembler::write(const string& data) {
 }
 
 string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
-    multimap<size_t, string>* label_offsets, bool skip_missing_labels) {
+    multimap<size_t, string>* label_offsets, int64_t base_address) {
   string code;
 
   // general strategy: assemble everything in order. for backward jumps, we know
@@ -1804,21 +1832,27 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
     }
 
     // if this stream item is a jump opcode, find the relevant label
-    if (item.relative_jump_opcode8 || item.relative_jump_opcode32) {
-      Label* label = NULL;
-      try {
-        label = this->name_to_label.at(item.data);
-      } catch (const out_of_range& e) {
-        if (!skip_missing_labels) {
+    if (item.is_jump_call()) {
+      if (item.absolute_target) {
+        if (base_address) {
+          code += this->generate_jmp(item.op8, item.op32,
+              base_address + code.size(), item.absolute_target);
+        } else {
+          code += this->generate_absolute_jmp_position_independent(item.op8,
+              item.op32, item.absolute_target);
+        }
+
+      } else {
+        Label* label = NULL;
+        try {
+          label = this->name_to_label.at(item.data);
+        } catch (const out_of_range& e) {
           throw runtime_error("nonexistent label: " + item.data);
         }
-      }
 
-      if (label) {
         // if the label's address is known, we can easily write a jump opcode
         if (label->byte_location <= code.size()) {
-          code += this->generate_jmp(item.relative_jump_opcode8,
-              item.relative_jump_opcode32, code.size(),
+          code += this->generate_jmp(item.op8, item.op32, code.size(),
               label->byte_location);
 
         // else, we have to estimate how far away the label will be
@@ -1839,9 +1873,9 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
                  (where_stream_location < target_stream_location) &&
                  (max_displacement < 0x0108);
                where_it++, where_stream_location++) {
-            if (where_it->relative_jump_opcode8 || where_it->relative_jump_opcode32) {
+            if (where_it->is_jump_call()) {
               // assume it's a 32-bit jump
-              max_displacement += 5 + (where_it->relative_jump_opcode32 > 0xFF);
+              max_displacement += 5 + (where_it->op32 > 0xFF);
             } else {
               max_displacement += where_it->data.size();
             }
@@ -1850,8 +1884,7 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
 
           // generate a bogus forward jmp opcode, and the appropriate patches
           OperandSize offset_size;
-          code += this->generate_jmp(item.relative_jump_opcode8,
-              item.relative_jump_opcode32, code.size(),
+          code += this->generate_jmp(item.op8, item.op32, code.size(),
               code.size() + max_displacement, &offset_size);
           if (offset_size == OperandSize::Byte) {
             label->patches.emplace_back(code.size() - 1, 1, false);
@@ -1875,9 +1908,7 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
       try {
         label = this->name_to_label.at(item.patch_label_name);
       } catch (const out_of_range& e) {
-        if (!skip_missing_labels) {
-          throw runtime_error("nonexistent label: " + item.patch_label_name);
-        }
+        throw invalid_argument("nonexistent label: " + item.patch_label_name);
       }
 
       if (label) {
@@ -1913,31 +1944,35 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
 }
 
 AMD64Assembler::StreamItem::StreamItem(const string& data) : data(data),
-    relative_jump_opcode8(Operation::ADD_STORE8),
-    relative_jump_opcode32(Operation::ADD_STORE8), patch(0, 0, false) { }
-
-AMD64Assembler::StreamItem::StreamItem(const string& data, Operation opcode8,
-    Operation opcode32) : data(data), relative_jump_opcode8(opcode8),
-    relative_jump_opcode32(opcode32), patch(0, 0, false) { }
+    op8(Operation::NOP), op32(Operation::NOP), absolute_target(0),
+    patch(0, 0, false) { }
 
 AMD64Assembler::StreamItem::StreamItem(const string& data,
     const string& patch_label_name, size_t where, uint8_t size, bool absolute) :
-    data(data), relative_jump_opcode8(Operation::ADD_STORE8),
-    relative_jump_opcode32(Operation::ADD_STORE8),
+    data(data), op8(Operation::NOP), op32(Operation::NOP), absolute_target(0),
     patch_label_name(patch_label_name), patch(where, size, absolute) { }
 
+AMD64Assembler::StreamItem::StreamItem(const string& data, Operation op8,
+    Operation op32, int64_t absolute_target) : data(data), op8(op8),
+    op32(op32), absolute_target(absolute_target), patch(0, 0, false) { }
+
 string AMD64Assembler::StreamItem::str() const {
-  string ret = "StreamItem(data=[" + format_data_string(this->data) + "]";
-  if (this->relative_jump_opcode8) {
-    ret += string_printf(", relative_jump_opcode8=%X", this->relative_jump_opcode8);
+  string data_str;
+  if (this->is_jump_call()) {
+    data_str = "\"" + this->data + "\"";
+  } else {
+    data_str = "[" + format_data_string(this->data) + "]";
   }
-  if (this->relative_jump_opcode32) {
-    ret += string_printf(", relative_jump_opcode32=%X", this->relative_jump_opcode32);
-  }
-  if (!this->patch_label_name.empty()) {
-    ret += string_printf(", patch_label_name=%s", this->patch_label_name.c_str());
-  }
-  return ret + ")";
+
+  string patch_str = this->patch.str();
+  return string_printf("StreamItem(data=[%s], op8=%02X, op32=%02X, "
+      "absolute_target=0x%" PRIX64 ", patch_label_name=%s, patch=%s)",
+      data_str.c_str(), this->op8, this->op32, this->absolute_target,
+      this->patch_label_name.c_str(), patch_str.c_str());
+}
+
+bool AMD64Assembler::StreamItem::is_jump_call() const {
+  return (this->op8 != Operation::NOP) || (this->op32 != Operation::NOP);
 }
 
 AMD64Assembler::Patch::Patch(size_t where, uint8_t size, bool absolute) :
@@ -1971,7 +2006,7 @@ static const char* jmp_names[] = {
     "js", "jns", "jp", "jnp", "jl", "jge", "jle", "jg"};
 
 string AMD64Assembler::disassemble(const void* vdata, size_t size,
-    uint64_t addr, const multimap<size_t, string>* label_offsets) {
+    size_t addr, const multimap<size_t, string>* label_offsets) {
   const uint8_t* data = reinterpret_cast<const uint8_t*>(vdata);
   map<size_t, string> addr_to_text;
   multimap<size_t, string> addr_to_label;
@@ -2264,6 +2299,9 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
           "pop", NULL, NULL, NULL, NULL, NULL, NULL, NULL};
       opcode_text = AMD64Assembler::disassemble_rm(data, size, offset, NULL,
           false, names, ext, reg_ext, base_ext, index_ext, OperandSize::QuadWord);
+
+    } else if (opcode == 0x90) {
+      opcode_text = "nop";
 
     } else if ((opcode & 0xF8) == 0xB8) {
       Register reg = make_reg(reg_ext, opcode & 7);

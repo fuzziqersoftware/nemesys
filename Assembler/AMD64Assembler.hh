@@ -1,10 +1,10 @@
 #pragma once
 
 #include <deque>
+#include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
-
-#include "CodeBuffer.hh"
 
 
 enum Operation {
@@ -102,6 +102,7 @@ enum Operation {
   MOV_LOAD   = 0x8B,
   LEA        = 0x8D,
   POP_RM     = 0x8F,
+  NOP        = 0x90,
   SHIFT8_IMM = 0xC0,
   SHIFT_IMM  = 0xC1,
   RET_IMM    = 0xC2,
@@ -400,14 +401,10 @@ public:
   AMD64Assembler& operator=(AMD64Assembler&&) = delete;
   ~AMD64Assembler() = default;
 
-  // skip_missing_labels should only be used when debugging callers; it may
-  // cause assemble() to return incorrect offsets for jmp/call opcodes
   std::string assemble(std::unordered_set<size_t>& patch_offsets,
       std::multimap<size_t, std::string>* label_offsets = NULL,
-      bool skip_missing_labels = false);
-
-  static std::string disassemble(const void* vdata, size_t size,
-      uint64_t addr = 0,
+      int64_t base_address = 0);
+  static std::string disassemble(const void* vdata, size_t size, size_t addr = 0,
       const std::multimap<size_t, std::string>* label_offsets = NULL);
 
   void reset();
@@ -535,9 +532,10 @@ public:
   void write_nop();
   void write_jmp(const std::string& label_name);
   void write_jmp(const MemoryReference& mem);
-  void write_jmp(void* addr);
+  void write_jmp_abs(const void* addr);
   void write_call(const std::string& label_name);
   void write_call(const MemoryReference& mem);
+  void write_call_abs(const void* addr);
   void write_ret(uint16_t stack_bytes = 0);
   void write_jo(const std::string& label_name);
   void write_jno(const std::string& label_name);
@@ -694,7 +692,9 @@ public:
 
 private:
   static std::string generate_jmp(Operation op8, Operation op32,
-    int64_t opcode_address, int64_t target_address, OperandSize* offset_size = NULL);
+      int64_t opcode_address, int64_t target_address, OperandSize* offset_size = NULL);
+  static std::string generate_absolute_jmp_position_independent(Operation op8,
+      Operation op32, int64_t target_address);
   static std::string generate_rm(Operation op, const MemoryReference& mem,
       Register reg, OperandSize size, uint32_t extra_prefixes = 0,
       bool skip_64bit_prefix = false);
@@ -733,19 +733,25 @@ private:
   };
 
   struct StreamItem {
-    std::string data;
-    Operation relative_jump_opcode8; // 0 if not a relative jump
-    Operation relative_jump_opcode32; // 0 if not a relative jump
+    std::string data; // for jump/call, label name; for data, opcode data
+
+    // jump/call opcodes. if both are NOP, then this is a data item
+    Operation op8;
+    Operation op32;
+    int64_t absolute_target;
 
     std::string patch_label_name; // blank for no patch
     Patch patch; // relative to start of data string
 
     StreamItem(const std::string& data);
-    StreamItem(const std::string& data, Operation opcode8, Operation opcode32);
     StreamItem(const std::string& data, const std::string& patch_label_name,
         size_t where, uint8_t size, bool absolute);
+    StreamItem(const std::string& data, Operation op8, Operation op32,
+        int64_t absolute_target = 0);
 
     std::string str() const;
+
+    bool is_jump_call() const;
   };
   std::deque<StreamItem> stream;
 
