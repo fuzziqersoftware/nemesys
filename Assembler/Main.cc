@@ -12,6 +12,17 @@
 using namespace std;
 
 
+void print_usage(const char* argv0) {
+  fprintf(stderr, "\
+Usage: %s [--parse-data] [filename]\n\
+\n\
+Disassembles AMD64 assembly code into Intel-syntax source.\n\
+If filename is not given, read from stdin.\n\
+If --parse-data is given, expect the input to be hex characters in ASCII text.\n",
+      argv0);
+}
+
+
 int main(int argc, char** argv) {
 
   const char* filename = NULL;
@@ -19,6 +30,11 @@ int main(int argc, char** argv) {
   for (int x = 1; x < argc; x++) {
     if (!strcmp(argv[x], "--parse-data")) {
       parse_data = true;
+
+    } else if (!strcmp(argv[x], "--help") || !strcmp(argv[x], "-h")) {
+      print_usage(argv[0]);
+      return 0;
+
     } else {
       if (filename) {
         fprintf(stderr, "multiple filenames given\n");
