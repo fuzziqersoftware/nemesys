@@ -6,10 +6,10 @@
 #include <phosg/Strings.hh>
 
 #include "Debug.hh"
-#include "Parser/SourceFile.hh"
-#include "Parser/PythonLexer.hh"
-#include "Parser/PythonParser.hh"
-#include "Environment.hh"
+#include "AST/SourceFile.hh"
+#include "AST/PythonLexer.hh"
+#include "AST/PythonParser.hh"
+#include "AST/Environment.hh"
 #include "Analysis.hh"
 #include "BuiltinFunctions.hh"
 #include "Modules/__nemesys__.hh"

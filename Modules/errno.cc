@@ -9,7 +9,7 @@
 #include <unordered_map>
 
 #include "../Analysis.hh"
-#include "../Environment.hh"
+#include "../AST/Environment.hh"
 #include "../Types/Dictionary.hh"
 
 using namespace std;

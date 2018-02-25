@@ -9,14 +9,14 @@
 #include <phosg/Strings.hh>
 
 #include "Debug.hh"
-#include "Parser/PythonLexer.hh"
-#include "Parser/PythonParser.hh"
-#include "Parser/PythonASTNodes.hh"
-#include "Parser/PythonASTVisitor.hh"
+#include "AST/Environment.hh"
+#include "AST/PythonLexer.hh"
+#include "AST/PythonParser.hh"
+#include "AST/PythonASTNodes.hh"
+#include "AST/PythonASTVisitor.hh"
 #include "AnnotationVisitor.hh"
 #include "AnalysisVisitor.hh"
 #include "CompilationVisitor.hh"
-#include "Environment.hh"
 #include "BuiltinFunctions.hh"
 #include "Types/Dictionary.hh"
 #include "Types/List.hh"
@@ -778,6 +778,8 @@ int64_t GlobalAnalysis::construct_value(const Variable& value,
       } else if (value.extension_types[0].type == ValueType::Unicode) {
         key_length = reinterpret_cast<size_t (*)(const void*)>(unicode_length);
         key_at = reinterpret_cast<uint8_t (*)(const void*, size_t)>(unicode_at);
+      } else {
+        throw compile_error("dictionary key type does not have sequence functions");
       }
 
       uint64_t flags = (type_has_refcount(value.extension_types[0].type) ? DictionaryFlag::KeysAreObjects : 0) |

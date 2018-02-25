@@ -14,81 +14,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "Types/Format.hh"
-#include "Types/Reference.hh"
+#include "../Types/Format.hh"
+#include "../Types/Reference.hh"
 
 using namespace std;
-
-
-
-static vector<Variable> compute_list_extension_type(
-    const vector<shared_ptr<Variable>>& list_value) {
-  // lists must have an extension type! if it's empty, we can't know what the
-  // extension type is, so we'll make it Indeterminate for now
-  Variable extension_type = list_value.empty() ?
-      Variable() : list_value[0]->type_only();
-
-  // all items in the list must have the same type, but can be an extended type
-  for (const auto& it : list_value) {
-    if (extension_type != it->type_only()) {
-      throw invalid_argument("list contains multiple types");
-    }
-  }
-
-  vector<Variable> ret;
-  ret.emplace_back(move(extension_type));
-  return ret;
-}
-
-static vector<Variable> compute_tuple_extension_type(
-    const vector<shared_ptr<Variable>>& tuple_value) {
-  // a tuple's extension types are the types of ALL of the elements
-  vector<Variable> ret;
-  for (const auto& it : tuple_value) {
-    ret.emplace_back(it->type_only());
-  }
-  return ret;
-}
-
-static vector<Variable> compute_set_extension_type(
-    const unordered_set<Variable>& set_value) {
-  // basically the same as for List
-
-  Variable extension_type = set_value.empty() ?
-      Variable() : set_value.begin()->type_only();
-  for (const auto& it : set_value) {
-    if (extension_type != it.type_only()) {
-      throw invalid_argument("set contains multiple types");
-    }
-  }
-
-  vector<Variable> ret;
-  ret.emplace_back(move(extension_type));
-  return ret;
-}
-
-static vector<Variable> compute_dict_extension_type(
-    const unordered_map<Variable, shared_ptr<Variable>>& dict_value) {
-  // basically the same as for List/Set, but we have a key and value type
-
-  Variable key_type = dict_value.empty() ?
-      Variable() : dict_value.begin()->first.type_only();
-  Variable value_type = dict_value.empty() ?
-      Variable() : dict_value.begin()->second->type_only();
-  for (const auto& it : dict_value) {
-    if (key_type != it.first.type_only()) {
-      throw invalid_argument("dict contains multiple key types");
-    }
-    if (value_type != it.second->type_only()) {
-      throw invalid_argument("dict contains multiple value types");
-    }
-  }
-
-  vector<Variable> ret;
-  ret.emplace_back(move(key_type));
-  ret.emplace_back(move(value_type));
-  return ret;
-}
 
 
 
@@ -200,7 +129,8 @@ Variable::Variable(ValueType type,
   if (this->type == ValueType::Tuple) {
     this->extension_types = compute_tuple_extension_type(*this->list_value);
   } else {
-    this->extension_types = compute_list_extension_type(*this->list_value);
+    this->extension_types.emplace_back(compute_list_extension_type(
+        *this->list_value));
   }
 }
 Variable::Variable(ValueType type, vector<shared_ptr<Variable>>&& list_value) :
@@ -213,7 +143,8 @@ Variable::Variable(ValueType type, vector<shared_ptr<Variable>>&& list_value) :
   if (this->type == ValueType::Tuple) {
     this->extension_types = compute_tuple_extension_type(*this->list_value);
   } else {
-    this->extension_types = compute_list_extension_type(*this->list_value);
+    this->extension_types.emplace_back(compute_list_extension_type(
+        *this->list_value));
   }
 }
 
@@ -225,7 +156,8 @@ Variable::Variable(ValueType type, const unordered_set<Variable>& set_value) :
   if (this->type != ValueType::Set) {
     throw invalid_argument(string_printf("incorrect construction: Variable(%d, const unordered_set<...>&)", type));
   }
-  this->extension_types = compute_set_extension_type(*this->set_value);
+  this->extension_types.emplace_back(compute_set_extension_type(
+      *this->set_value));
 }
 Variable::Variable(ValueType type, unordered_set<Variable>&& set_value) :
     type(type), value_known(true),
@@ -234,7 +166,8 @@ Variable::Variable(ValueType type, unordered_set<Variable>&& set_value) :
   if (this->type != ValueType::Set) {
     throw invalid_argument(string_printf("incorrect construction: Variable(%d, unordered_set<...>&&)", type));
   }
-  this->extension_types = compute_set_extension_type(*this->set_value);
+  this->extension_types.emplace_back(compute_set_extension_type(
+      *this->set_value));
 }
 
 // Dict
@@ -246,7 +179,9 @@ Variable::Variable(ValueType type,
   if (this->type != ValueType::Dict) {
     throw invalid_argument(string_printf("incorrect construction: Variable(%d, const unordered_map<...>&)", type));
   }
-  this->extension_types = compute_dict_extension_type(*this->dict_value);
+  auto ex_types = compute_dict_extension_type(*this->dict_value);
+  this->extension_types.emplace_back(move(ex_types.first));
+  this->extension_types.emplace_back(move(ex_types.second));
 }
 Variable::Variable(ValueType type, unordered_map<Variable, shared_ptr<Variable>>&& dict_value) :
     type(type), value_known(true),
@@ -255,7 +190,9 @@ Variable::Variable(ValueType type, unordered_map<Variable, shared_ptr<Variable>>
   if (this->type != ValueType::Dict) {
     throw invalid_argument(string_printf("incorrect construction: Variable(%d, unordered_map<...>&&)", type));
   }
-  this->extension_types = compute_dict_extension_type(*this->dict_value);
+  auto ex_types = compute_dict_extension_type(*this->dict_value);
+  this->extension_types.emplace_back(move(ex_types.first));
+  this->extension_types.emplace_back(move(ex_types.second));
 }
 
 // Instance
@@ -809,6 +746,87 @@ string type_signature_for_variables(const vector<Variable>& vars,
   }
 
   return ret;
+}
+
+
+
+Variable compute_list_extension_type(
+    const vector<shared_ptr<Variable>>& list_value, bool allow_indeterminate) {
+  // lists must have an extension type! if it's empty, we can't know what the
+  // extension type is, so we'll make it Indeterminate for now
+  Variable extension_type = list_value.empty() ?
+      Variable() : list_value[0]->type_only();
+
+  // all items in the list must have the same type, but can be an extended type
+  for (const auto& it : list_value) {
+    if (extension_type != it->type_only()) {
+      if (allow_indeterminate) {
+        extension_type = Variable(ValueType::Indeterminate);
+      } else {
+        throw invalid_argument("list contains multiple types");
+      }
+    }
+  }
+
+  return extension_type;
+}
+
+vector<Variable> compute_tuple_extension_type(
+    const vector<shared_ptr<Variable>>& tuple_value) {
+  // a tuple's extension types are the types of ALL of the elements
+  vector<Variable> ret;
+  for (const auto& it : tuple_value) {
+    ret.emplace_back(it->type_only());
+  }
+  return ret;
+}
+
+Variable compute_set_extension_type(const unordered_set<Variable>& set_value,
+    bool allow_indeterminate) {
+  // basically the same as for List
+
+  Variable extension_type = set_value.empty() ?
+      Variable() : set_value.begin()->type_only();
+  for (const auto& it : set_value) {
+    if (extension_type != it.type_only()) {
+      if (allow_indeterminate) {
+        extension_type = Variable(ValueType::Indeterminate);
+      } else {
+        throw invalid_argument("set contains multiple types");
+      }
+    }
+  }
+
+  return extension_type;
+}
+
+pair<Variable, Variable> compute_dict_extension_type(
+    const unordered_map<Variable, shared_ptr<Variable>>& dict_value,
+    bool allow_indeterminate) {
+  // basically the same as for List/Set, but we have a key and value type
+
+  Variable key_type = dict_value.empty() ?
+      Variable() : dict_value.begin()->first.type_only();
+  Variable value_type = dict_value.empty() ?
+      Variable() : dict_value.begin()->second->type_only();
+  for (const auto& it : dict_value) {
+    if (key_type != it.first.type_only()) {
+      if (allow_indeterminate) {
+        key_type = Variable(ValueType::Indeterminate);
+      } else {
+        throw invalid_argument("dict contains multiple key types");
+      }
+    }
+    if (value_type != it.second->type_only()) {
+      if (allow_indeterminate) {
+        value_type = Variable(ValueType::Indeterminate);
+      } else {
+        throw invalid_argument("dict contains multiple value types");
+      }
+    }
+  }
+
+  return make_pair(key_type, value_type);
 }
 
 

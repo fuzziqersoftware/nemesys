@@ -6,11 +6,11 @@
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
 
-#include "Parser/PythonLexer.hh"
-#include "Parser/PythonParser.hh"
-#include "Parser/PythonASTNodes.hh"
-#include "Parser/PythonASTVisitor.hh"
-#include "Environment.hh"
+#include "AST/PythonLexer.hh"
+#include "AST/PythonParser.hh"
+#include "AST/PythonASTNodes.hh"
+#include "AST/PythonASTVisitor.hh"
+#include "AST/Environment.hh"
 #include "BuiltinFunctions.hh"
 
 using namespace std;

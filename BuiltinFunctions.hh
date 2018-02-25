@@ -3,7 +3,7 @@
 #include <string>
 #include <unordered_map>
 
-#include "Environment.hh"
+#include "AST/Environment.hh"
 #include "Analysis.hh"
 #include "Types/Instance.hh"
 

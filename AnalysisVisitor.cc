@@ -7,11 +7,11 @@
 #include <phosg/Strings.hh>
 
 #include "Debug.hh"
-#include "Parser/PythonLexer.hh"
-#include "Parser/PythonParser.hh"
-#include "Parser/PythonASTNodes.hh"
-#include "Parser/PythonASTVisitor.hh"
-#include "Environment.hh"
+#include "AST/PythonLexer.hh"
+#include "AST/PythonParser.hh"
+#include "AST/PythonASTNodes.hh"
+#include "AST/PythonASTVisitor.hh"
+#include "AST/Environment.hh"
 #include "BuiltinFunctions.hh"
 
 using namespace std;
@@ -70,6 +70,8 @@ void AnalysisVisitor::visit(ListConstructor* a) {
     item->accept(this);
     items.emplace_back(new Variable(move(this->current_value)));
   }
+
+  a->value_type = compute_list_extension_type(items);
   this->current_value = Variable(ValueType::List, move(items));
 }
 
@@ -79,6 +81,8 @@ void AnalysisVisitor::visit(SetConstructor* a) {
     item->accept(this);
     items.emplace(move(this->current_value));
   }
+
+  a->value_type = compute_set_extension_type(items);
   this->current_value = Variable(ValueType::Set, move(items));
 }
 
@@ -91,6 +95,10 @@ void AnalysisVisitor::visit(DictConstructor* a) {
     items.emplace(piecewise_construct, forward_as_tuple(move(key)),
         forward_as_tuple(new Variable(move(this->current_value))));
   }
+
+  auto ex_types = compute_dict_extension_type(items);
+  a->key_type = move(ex_types.first);
+  a->value_type = move(ex_types.second);
   this->current_value = Variable(ValueType::Dict, move(items));
 }
 
@@ -99,6 +107,7 @@ void AnalysisVisitor::visit(TupleConstructor* a) {
   for (auto item : a->items) {
     item->accept(this);
     items.emplace_back(new Variable(move(this->current_value)));
+    a->value_types.emplace_back(items.back()->type_only());
   }
   this->current_value = Variable(ValueType::Tuple, move(items));
 }

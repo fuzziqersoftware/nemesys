@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "PythonOperators.hh"
+#include "Environment.hh"
 
 
 
@@ -148,6 +149,9 @@ struct ListConstructor : Expression {
   ListConstructor(std::vector<std::shared_ptr<Expression>>&& items,
       size_t file_offset);
 
+  // annotations
+  Variable value_type;
+
   virtual std::string str() const;
   virtual void accept(ASTVisitor* v);
 };
@@ -159,6 +163,10 @@ struct DictConstructor : Expression {
   DictConstructor(std::vector<std::pair<std::shared_ptr<Expression>, std::shared_ptr<Expression>>>&& items,
       size_t file_offset);
 
+  // annotations
+  Variable key_type;
+  Variable value_type;
+
   virtual std::string str() const;
   virtual void accept(ASTVisitor* v);
 };
@@ -168,6 +176,9 @@ struct SetConstructor : Expression {
 
   SetConstructor(std::vector<std::shared_ptr<Expression>>&& items,
       size_t file_offset);
+
+  // annotations
+  Variable value_type;
 
   virtual std::string str() const;
   virtual void accept(ASTVisitor* v);
@@ -179,6 +190,9 @@ struct TupleConstructor : Expression {
   TupleConstructor(size_t file_offset);
   TupleConstructor(std::vector<std::shared_ptr<Expression>>&& items,
       size_t file_offset);
+
+  // annotations
+  std::vector<Variable> value_types;
 
   virtual std::string str() const;
   virtual void accept(ASTVisitor* v);

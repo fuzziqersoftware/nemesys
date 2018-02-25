@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "../Environment.hh"
+#include "../AST/Environment.hh"
 #include "../Exception.hh"
 #include "Strings.hh"
 #include "Tuple.hh"

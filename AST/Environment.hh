@@ -7,7 +7,7 @@
 #include <vector>
 #include <string>
 
-#include "Parser/PythonOperators.hh"
+#include "PythonOperators.hh"
 
 
 
@@ -128,6 +128,18 @@ bool type_has_refcount(ValueType type);
 
 std::string type_signature_for_variables(const std::vector<Variable>& vars,
     bool allow_indeterminate = false);
+
+Variable compute_list_extension_type(
+    const std::vector<std::shared_ptr<Variable>>& list_value,
+    bool allow_indeterminate = true);
+std::vector<Variable> compute_tuple_extension_type(
+    const std::vector<std::shared_ptr<Variable>>& tuple_value);
+Variable compute_set_extension_type(
+    const std::unordered_set<Variable>& set_value,
+    bool allow_indeterminate = true);
+std::pair<Variable, Variable> compute_dict_extension_type(
+    const std::unordered_map<Variable, std::shared_ptr<Variable>>& dict_value,
+    bool allow_indeterminate = true);
 
 Variable execute_unary_operator(UnaryOperator oper, const Variable& var);
 Variable execute_binary_operator(BinaryOperator oper, const Variable& left,

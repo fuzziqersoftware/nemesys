@@ -13,7 +13,7 @@
 
 #include "../Analysis.hh"
 #include "../BuiltinFunctions.hh"
-#include "../Environment.hh"
+#include "../AST/Environment.hh"
 #include "../Types/Dictionary.hh"
 
 using namespace std;

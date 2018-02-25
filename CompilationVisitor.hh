@@ -8,10 +8,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "Parser/SourceFile.hh"
-#include "Parser/PythonASTNodes.hh"
-#include "Parser/PythonASTVisitor.hh"
-#include "Environment.hh"
+#include "AST/SourceFile.hh"
+#include "AST/PythonASTNodes.hh"
+#include "AST/PythonASTVisitor.hh"
+#include "AST/Environment.hh"
 #include "Analysis.hh"
 #include "Assembler/AMD64Assembler.hh"
 

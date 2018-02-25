@@ -2,10 +2,10 @@ CXX=g++
 CXXLD=g++
 OBJECTS=Main.o Debug.o \
 	Assembler/CodeBuffer.o Assembler/AMD64Assembler.o \
-	Parser/SourceFile.o Parser/PythonLexer.o Parser/PythonParser.o Parser/PythonOperators.o Parser/PythonASTNodes.o Parser/PythonASTVisitor.o \
+	AST/Environment.o AST/SourceFile.o AST/PythonLexer.o AST/PythonParser.o AST/PythonOperators.o AST/PythonASTNodes.o AST/PythonASTVisitor.o \
 	Types/Reference.o Types/Strings.o Types/Format.o Types/Tuple.o Types/List.o Types/Dictionary.o Types/Instance.o \
 	Modules/__nemesys__.o Modules/sys.o Modules/math.o Modules/posix.o Modules/errno.o Modules/time.o \
-	Environment.o Analysis.o \
+	Analysis.o \
 	BuiltinFunctions.o CommonObjects.o \
 	Exception.o Exception-Assembly.o \
 	AnnotationVisitor.o AnalysisVisitor.o CompilationVisitor.o
@@ -39,6 +39,6 @@ Types/DictionaryTest: Types/DictionaryTest.o Debug.o Types/Dictionary.o Types/St
 	$(CXXLD) $(LDFLAGS) -o Types/DictionaryTest $^ $(LIBS)
 
 clean:
-	rm -rf *.o nemesys nemesys.dSYM Assembler/*.o Assembler/*Test Assembler/amd64dasm Parser/*.o Modules/*.o Types/*.o Types/*Test
+	rm -rf *.o nemesys nemesys.dSYM Assembler/*.o Assembler/*Test Assembler/amd64dasm AST/*.o Modules/*.o Types/*.o Types/*Test
 
 .PHONY: all clean test
