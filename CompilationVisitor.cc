@@ -1172,7 +1172,11 @@ void CompilationVisitor::visit(ListConstructor* a) {
   this->as.write_label(string_printf("__ListConstructor_%p_allocate", a));
   vector<MemoryReference> int_args({rdi, rsi, r14});
   this->as.write_mov(int_args[0], a->items.size());
-  this->as.write_xor(int_args[1], int_args[1]); // we'll set items_are_objects later
+  if (type_has_refcount(a->value_type.type)) {
+    this->as.write_mov(int_args[1], 1);
+  } else {
+    this->as.write_xor(int_args[1], int_args[1]);
+  }
   this->write_function_call(common_object_reference(void_fn_ptr(&list_new)),
       int_args, {}, -1, this->target_register);
 
@@ -1181,7 +1185,6 @@ void CompilationVisitor::visit(ListConstructor* a) {
   this->write_push(rax);
 
   // generate code for each item and track the extension type
-  Variable extension_type;
   size_t item_index = 0;
   for (const auto& item : a->items) {
     this->as.write_label(string_printf("__ListConstructor_%p_item_%zu", a, item_index));
@@ -1195,13 +1198,11 @@ void CompilationVisitor::visit(ListConstructor* a) {
     }
     item_index++;
 
-    // merge the type with the known extension type
-    if (extension_type.type == ValueType::Indeterminate) {
-      extension_type = move(this->current_type);
-      extension_type.clear_value();
-    } else if (!extension_type.types_equal(this->current_type)) {
-      throw compile_error("list contains different object types: " +
-          extension_type.type_only().str() + " and " + this->current_type.type_only().str());
+    // typecheck the value
+    if (!a->value_type.types_equal(this->current_type)) {
+      throw compile_error("list analysis produced different type than compilation: " +
+          a->value_type.type_only().str() + " (analysis) vs " +
+          this->current_type.type_only().str() + " (compilation)");
     }
   }
 
@@ -1209,17 +1210,12 @@ void CompilationVisitor::visit(ListConstructor* a) {
   this->as.write_label(string_printf("__ListConstructor_%p_finalize", a));
   this->write_pop(this->target_register);
 
-  // if the extension type is an object of some sort, set the destructor flag
-  if (type_has_refcount(extension_type.type)) {
-    this->as.write_mov(MemoryReference(this->target_register, 0x20), 1);
-  }
-
   // restore the regs we saved
   this->write_pop_reserved_registers(previously_reserved_registers);
   this->write_pop(rbx);
 
   // the result type is a new reference to a List[extension_type]
-  vector<Variable> extension_types({extension_type});
+  vector<Variable> extension_types({a->value_type});
   this->current_type = Variable(ValueType::List, extension_types);
   this->holding_reference = true;
 }
@@ -1267,33 +1263,46 @@ void CompilationVisitor::visit(TupleConstructor* a) {
   this->write_push(rax);
 
   // generate code for each item and track the extension type
-  vector<Variable> extension_types;
-  for (const auto& item : a->items) {
-    this->as.write_label(string_printf("__TupleConstructor_%p_item_%zu", a, extension_types.size()));
+  if (a->value_types.size() != a->items.size()) {
+    throw compile_error("tuple item count and type count do not match");
+  }
+  for (size_t x = 0; x < a->items.size(); x++) {
+    const auto& item = a->items[x];
+    const auto& expected_type = a->value_types[x];
+
+    this->as.write_label(string_printf("__TupleConstructor_%p_item_%zu", a, x));
     item->accept(this);
     if (this->current_type.type == ValueType::Float) {
-      this->as.write_movsd(MemoryReference(rbx, extension_types.size() * 8),
+      this->as.write_movsd(MemoryReference(rbx, x * 8),
           MemoryReference(this->float_target_register));
     } else {
-      this->as.write_mov(MemoryReference(rbx, extension_types.size() * 8),
+      this->as.write_mov(MemoryReference(rbx, x * 8),
           MemoryReference(this->target_register));
     }
-    extension_types.emplace_back(move(this->current_type));
+
+    if (!expected_type.types_equal(this->current_type)) {
+      string analysis_type_str = expected_type.type_only().str();
+      string compilation_type_str = this->current_type.type_only().str();
+      throw compile_error(string_printf(
+          "tuple analysis produced different type than compilation "
+          "for item %zu: %s (analysis) vs %s (compilation)", x,
+          analysis_type_str.c_str(), compilation_type_str.c_str()));
+    }
   }
 
   // generate code to write the has_refcount map
   // TODO: we can coalesce these writes for tuples larger than 8 items
   this->as.write_label(string_printf("__TupleConstructor_%p_has_refcount_map", a));
   size_t types_handled = 0;
-  while (types_handled < extension_types.size()) {
+  while (types_handled < a->value_types.size()) {
     uint8_t value = 0;
-    for (size_t x = 0; (x < 8) && ((types_handled + x) < extension_types.size()); x++) {
-      if (type_has_refcount(extension_types[types_handled + x].type)) {
+    for (size_t x = 0; (x < 8) && ((types_handled + x) < a->value_types.size()); x++) {
+      if (type_has_refcount(a->value_types[types_handled + x].type)) {
         value |= (0x80 >> x);
       }
     }
     this->as.write_mov(MemoryReference(rbx,
-        extension_types.size() * 8 + (types_handled / 8)), value, OperandSize::Byte);
+        a->value_types.size() * 8 + (types_handled / 8)), value, OperandSize::Byte);
     types_handled += 8;
   }
 
@@ -1306,7 +1315,7 @@ void CompilationVisitor::visit(TupleConstructor* a) {
   this->write_pop(rbx);
 
   // the result type is a new reference to a Tuple[extension_types]
-  this->current_type = Variable(ValueType::Tuple, extension_types);
+  this->current_type = Variable(ValueType::Tuple, a->value_types);
   this->holding_reference = true;
 }
 

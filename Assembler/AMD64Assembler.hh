@@ -401,12 +401,28 @@ public:
   AMD64Assembler& operator=(AMD64Assembler&&) = delete;
   ~AMD64Assembler() = default;
 
+  // assemble the generated code (from previous calls to write_X functions) into
+  // an executable binary string. returns the assembled data and a set of patch
+  // offsets, which must be passed to CodeBuffer::append or
+  // CodeBuffer::overwrite. of label_offsets is given, returns the label offsets
+  // relative to the start of the assembled code. if base_address is nonzero,
+  // the assembler uses it as a hint to convert absolute jumps into relative
+  // jumps when possible. if autodefine_labels is true, doesn't fail on
+  // undefined labels - instead, just leaves them as unpatched offsets. it's a
+  // bad idea to execute any code assembled with autodefine_labels = true; it
+  // should be used only for debugging.
   std::string assemble(std::unordered_set<size_t>& patch_offsets,
       std::multimap<size_t, std::string>* label_offsets = NULL,
-      int64_t base_address = 0);
+      int64_t base_address = 0, bool autodefine_labels = false);
+
+  // disassembles the given binary data into a (multi-line) human-readable
+  // string.
+  static std::string disassemble(const std::string& data, size_t addr = 0,
+      const std::multimap<size_t, std::string>* label_offsets = NULL);
   static std::string disassemble(const void* vdata, size_t size, size_t addr = 0,
       const std::multimap<size_t, std::string>* label_offsets = NULL);
 
+  // deletes the stored results of all previous write_X calls
   void reset();
 
   // don't do this unless you really know what you're doing

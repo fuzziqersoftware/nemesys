@@ -499,7 +499,7 @@ FunctionContext::Fragment GlobalAnalysis::compile_scope(ModuleAnalysis* module,
       fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
           scope_name.c_str());
       const string& compiled = v->assembler().assemble(patch_offsets,
-          &compiled_labels, true);
+          &compiled_labels, 0, true);
       string disassembly = AMD64Assembler::disassemble(compiled.data(),
           compiled.size(), 0, &compiled_labels);
       fprintf(stderr, "\n%s\n", disassembly.c_str());

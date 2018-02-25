@@ -1762,7 +1762,8 @@ void AMD64Assembler::write(const string& data) {
 }
 
 string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
-    multimap<size_t, string>* label_offsets, int64_t base_address) {
+    multimap<size_t, string>* label_offsets, int64_t base_address,
+    bool autodefine_labels) {
   string code;
 
   // general strategy: assemble everything in order. for backward jumps, we know
@@ -1847,7 +1848,13 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
         try {
           label = this->name_to_label.at(item.data);
         } catch (const out_of_range& e) {
-          throw runtime_error("nonexistent label: " + item.data);
+          if (autodefine_labels) {
+            this->labels.emplace_back(item.data, 0);
+            label = &this->labels.back();
+            this->name_to_label.emplace(item.data, label);
+          } else {
+            throw runtime_error("nonexistent label: " + item.data);
+          }
         }
 
         // if the label's address is known, we can easily write a jump opcode
@@ -1908,7 +1915,13 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
       try {
         label = this->name_to_label.at(item.patch_label_name);
       } catch (const out_of_range& e) {
-        throw invalid_argument("nonexistent label: " + item.patch_label_name);
+        if (autodefine_labels) {
+          this->labels.emplace_back(item.patch_label_name, 0);
+          label = &this->labels.back();
+          this->name_to_label.emplace(item.patch_label_name, label);
+        } else {
+          throw runtime_error("nonexistent label: " + item.patch_label_name);
+        }
       }
 
       if (label) {
@@ -1929,10 +1942,13 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
     stream_location++;
   }
 
-  // bugcheck: make sure there are no patches waiting
-  for (const auto& label : this->labels) {
-    if (!label.patches.empty()) {
-      throw logic_error("some patches were not applied");
+  // bugcheck: make sure there are no patches waiting. but if some labels were
+  // autocreated, then allow incomplete patches
+  if (!autodefine_labels) {
+    for (const auto& label : this->labels) {
+      if (!label.patches.empty()) {
+        throw logic_error("some patches were not applied");
+      }
     }
   }
 
@@ -2004,6 +2020,12 @@ static const char* math_op_names[] = {
 static const char* jmp_names[] = {
     "jo", "jno", "jb", "jae", "je", "jne", "jbe", "ja",
     "js", "jns", "jp", "jnp", "jl", "jge", "jle", "jg"};
+
+string AMD64Assembler::disassemble(const string& data, size_t addr,
+    const multimap<size_t, string>* label_offsets) {
+  return AMD64Assembler::disassemble(data.data(), data.size(), addr,
+      label_offsets);
+}
 
 string AMD64Assembler::disassemble(const void* vdata, size_t size,
     size_t addr, const multimap<size_t, string>* label_offsets) {

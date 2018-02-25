@@ -274,7 +274,11 @@ ListConstructor::ListConstructor(vector<shared_ptr<Expression>>&& items,
     size_t file_offset) : Expression(file_offset), items(move(items)) { }
 
 string ListConstructor::str() const {
-  return "[" + comma_str_list(this->items) + "]";
+  string ret = "[" + comma_str_list(this->items);
+  if (this->value_type.type != ValueType::Indeterminate) {
+    ret += " /*value_type=" + this->value_type.str() + "*/";
+  }
+  return ret + "]";
 }
 
 void ListConstructor::accept(ASTVisitor* v) {
@@ -300,6 +304,11 @@ string DictConstructor::str() const {
     ret += ": ";
     ret += it.second->str();
   }
+  if ((this->key_type.type != ValueType::Indeterminate) ||
+      (this->value_type.type != ValueType::Indeterminate)) {
+    ret += " /*key_type=" + this->key_type.str() +
+           ",value_type=" + this->value_type.str() + "*/";
+  }
   return "{" + ret + "}";
 }
 
@@ -313,7 +322,11 @@ SetConstructor::SetConstructor(vector<shared_ptr<Expression>>&& items,
     size_t file_offset) : Expression(file_offset), items(move(items)) { }
 
 string SetConstructor::str() const {
-  return "set(" + comma_str_list(this->items) + ")";
+  string ret = "set([" + comma_str_list(this->items) + "]";
+  if (this->value_type.type != ValueType::Indeterminate) {
+    ret += " /*value_type=" + this->value_type.str() + "*/";
+  }
+  return ret + ")";
 }
 
 void SetConstructor::accept(ASTVisitor* v) {
