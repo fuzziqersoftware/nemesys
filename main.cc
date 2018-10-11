@@ -73,6 +73,7 @@ int main(int argc, char* argv[]) {
   vector<const char*> sys_argv;
   bool module_is_code = false;
   bool module_is_filename = true;
+  vector<string> import_paths({"."});
   int x;
   for (x = 1; x < argc; x++) {
     if (!strncmp(argv[x], "-X", 2)) {
@@ -80,6 +81,9 @@ int main(int argc, char* argv[]) {
       for (const auto& debug_flag_str : debug_flag_strs) {
         debug_flags |= debug_flag_for_name(debug_flag_str.c_str());
       }
+
+    } else if (!strncmp(argv[x], "-A", 2)) {
+      import_paths.emplace_back(&argv[x][2]);
 
     } else if (!strcmp(argv[x], "-h") || !strcmp(argv[x], "-?") || !strcmp(argv[x], "--help")) {
       print_usage(argv[0]);
@@ -115,7 +119,7 @@ int main(int argc, char* argv[]) {
   }
 
   // set up the global environment
-  global.reset(new GlobalAnalysis({"."}));
+  global.reset(new GlobalAnalysis(import_paths));
   create_default_builtin_names();
 
   // populate the sys module appropriately
