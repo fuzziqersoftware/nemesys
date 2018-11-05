@@ -18,12 +18,12 @@ _quicksort:
   xor   rdi, rdi
   dec   rsi
 
-0:
+_quicksort__recursive_call:
   # first check if start < end; if not, return without doing anything
   cmp   rdi, rsi
-  jl    1f
+  jl    _quicksort__dont_return
   ret
-1:
+_quicksort__dont_return:
 
   # compute pivot_idx = (start + end) / 2 in rcx
   lea   rcx, [rdi + rsi]
@@ -40,16 +40,16 @@ _quicksort:
   # so we can increment it at the beginning of the loop.
   lea   r8, [rdi - 1]
   mov   r9, rdi
-2:
+_quicksort__continue_bucketing:
 
   # increment r8, then end the loop if r8 >= end (all values are bucketed)
   inc   r8
   cmp   r8, rsi
-  jge   3f
+  jge   _quicksort__done_bucketing
 
   # if a[r8] >= pivot_value, leave this value in the high bucket (increment r8)
   cmp   [rdx + r8 * 8], rax
-  jge   2b
+  jge   _quicksort__continue_bucketing
 
   # a[r8] < pivot_value, so swap a[r8] and a[r9] and increment r9. this moves
   # a[r9] into the low bucket, and moves the first element in the high bucket to
@@ -58,8 +58,8 @@ _quicksort:
   xchg  rcx, [rdx + r8 * 8]
   mov   [rdx + r9 * 8], rcx
   inc   r9
-  jmp   2b
-3:
+  jmp   _quicksort__continue_bucketing
+_quicksort__done_bucketing:
 
   # done bucketing. swap a[end] and a[j] to put the pivot value between the
   # buckets, so we can recur on both buckets. (rax is still pivot_value)
@@ -74,9 +74,9 @@ _quicksort:
 
   # recur on the first half by calling quicksort(start, pivot_idx - 1)
   lea   rsi, [r9 - 1]
-  call  0b
+  call  _quicksort__recursive_call
 
   # now recur on the second half
   pop   rdi
   pop   rsi
-  jmp   0b
+  jmp   _quicksort__recursive_call

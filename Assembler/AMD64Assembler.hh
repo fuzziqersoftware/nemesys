@@ -351,6 +351,7 @@ enum Register {
 };
 
 enum OperandSize {
+  Unknown = -2,
   Automatic = -1,
   Byte = 0,
   Word = 1,
@@ -435,6 +436,7 @@ public:
 
   // interrupt opcodes
   void write_int(uint8_t num);
+  void write_syscall();
 
   // stack opcodes
   void write_push(Register r);

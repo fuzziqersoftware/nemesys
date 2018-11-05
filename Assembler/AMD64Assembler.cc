@@ -10,6 +10,9 @@ using namespace std;
 
 const char* name_for_register(Register r, OperandSize size) {
   switch (size) {
+    case OperandSize::Unknown:
+      throw invalid_argument("unknown operand size");
+
     case OperandSize::Automatic:
       throw invalid_argument("unresolved operand size");
 
@@ -667,6 +670,10 @@ void AMD64Assembler::write_int(uint8_t num) {
     data += num;
     this->write(data);
   }
+}
+
+void AMD64Assembler::write_syscall() {
+  this->write("\x0F\x05");
 }
 
 
@@ -2085,7 +2092,10 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
         opcode = data[offset];
         offset++;
 
-        if ((opcode & 0xFE) == 0x10) {
+        if (opcode == 0x05) {
+          opcode_text = "syscall";
+
+        } else if ((opcode & 0xFE) == 0x10) {
           if (!xmm_prefix) {
             opcode_text = "<<unknown-0F-non-xmm>>";
           } else {
