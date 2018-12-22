@@ -7,13 +7,43 @@ Guiding ideas behind this project:
 - nemesys does not aim to support everything that CPython supports. Reasonable restrictions can be placed on the language that make it easier to statically analyze and compile; it is explicitly a non-goal of this project to support all existing Python code.
 - With the above in mind, nemesys should operate on pure, unmodified Python code, without any auxiliary information (for example, like Cython's .pxd files). All code that runs in nemesys should also run in CPython, unless it uses the `__nemesys__` built-in module.
 
-## Conventions
+## Type system
+
+The basic types are:
+
+    None                - NULL
+    Bool                - true or false
+    Int                 - signed 64-bit integer
+    Float               - double-precision floating-point number
+    Bytes               - arbitrary-length binary data
+    Unicode             - arbitrary-length UTF-8 encoded data
+    List[A]             - mutable collection of objects of type A
+    Tuple[A, ...]       - immutable collection of objects of possibly-disparate types
+    Set[K]              - mutable collection of objects of type K
+    Dict[K, V]          - mutable mapping of keys of type K to values of type V
+    Function[R, A, ...] - function returning type R with arguments of types A, ...
+    Class[S, A, ...]    - definition of a user-defined type with superclass S and constructor arguments of types A, ...
+    Instance[C]         - instantiated class object
+    Module              - definition of an imported module
+
+Future work: allow S to be a tuple (for multiple inheritance).
+
+### Value representation
+
+Nontrivial types are represented as pointers to allocated objects. All objects have the following header fields:
+
+    uint64_t reference_count
+    void (*destructor)()
+
+All objects must be destructible (destructor must never be NULL).
 
 ### Refcounting semantics
 
 Unlike CPython, not everything is an object. Trivial types (None, booleans, integers, and floats) do not have reference counts - they're passed by value. Modules, functions, and classes also do not have reference counts; they are never deleted. Everything else has a reference count - this includes bytes objects, unicode objects, lists, tuples, sets, dicts, and class instance objects.
 
 The reference count of an object includes all instances of pointers to that object, including instances in CPU registers. All functions that return references to objects return owned references. All functions compiled by nemesys that take objects as arguments accept only owned references, and will delete those references before returning (that is, the caller is responsible for adding references to arguments, but not deleting those references after the function returns). Some built-in functions take borrowed references as arguments; most notably, the built-in data structure functions take borrowed references to all of their arguments, and will not delete those references before returning.
+
+## Conventions
 
 ### Calling convention
 

@@ -1,14 +1,13 @@
 CXX=g++
 CXXLD=g++
-OBJECTS=Main.o Debug.o \
-	Assembler/CodeBuffer.o Assembler/AMD64Assembler.o \
-	AST/Environment.o AST/SourceFile.o AST/PythonLexer.o AST/PythonParser.o AST/PythonOperators.o AST/PythonASTNodes.o AST/PythonASTVisitor.o \
-	Types/Reference.o Types/Strings.o Types/Format.o Types/Tuple.o Types/List.o Types/Dictionary.o Types/Instance.o \
-	Modules/__nemesys__.o Modules/sys.o Modules/math.o Modules/posix.o Modules/errno.o Modules/time.o \
-	Analysis.o \
-	BuiltinFunctions.o CommonObjects.o \
-	Exception.o Exception-Assembly.o \
-	AnnotationVisitor.o AnalysisVisitor.o CompilationVisitor.o
+# TODO: this is bad. make real Makefiles in the subdirectories, you lazy bum
+OBJECTS=Source/Main.o Source/Debug.o \
+	Source/Assembler/CodeBuffer.o Source/Assembler/AMD64Assembler.o \
+	Source/AST/SourceFile.o Source/AST/PythonLexer.o Source/AST/PythonParser.o Source/AST/PythonASTNodes.o Source/AST/PythonASTVisitor.o \
+	Source/Types/Reference.o Source/Types/Strings.o Source/Types/Format.o Source/Types/Tuple.o Source/Types/List.o Source/Types/Dictionary.o Source/Types/Instance.o \
+	Source/Modules/__nemesys__.o Source/Modules/sys.o Source/Modules/math.o Source/Modules/posix.o Source/Modules/errno.o Source/Modules/time.o \
+	Source/Environment/Operators.o Source/Environment/Value.o \
+	Source/Compiler/Compile.o Source/Compiler/Contexts.o Source/Compiler/BuiltinFunctions.o Source/Compiler/CommonObjects.o Source/Compiler/Exception.o Source/Compiler/Exception-Assembly.o Source/Compiler/AnnotationVisitor.o Source/Compiler/AnalysisVisitor.o Source/Compiler/CompilationVisitor.o
 CXXFLAGS=-g -Wall -Werror -std=c++14 -I/opt/local/include
 LDFLAGS=-L/opt/local/lib
 LIBS=-lphosg -lpthread
@@ -19,29 +18,29 @@ else
 	CXXFLAGS += -DLINUX
 endif
 
-all: Assembler/amd64dasm Assembler/amd64asm test
+all: amd64dasm amd64asm nemesys test
 
-test: nemesys Assembler/AMD64AssemblerTest Types/DictionaryTest
-	./Assembler/AMD64AssemblerTest
-	./Types/DictionaryTest
+test: nemesys Source/Assembler/AMD64AssemblerTest Source/Types/DictionaryTest
+	./Source/Assembler/AMD64AssemblerTest
+	./Source/Types/DictionaryTest
 	(cd tests ; ./run_tests.sh)
 
 nemesys: $(OBJECTS)
 	$(CXXLD) $(LDFLAGS) -o nemesys $^ $(LIBS)
 
-Assembler/AMD64AssemblerTest: Assembler/CodeBuffer.o Assembler/AMD64Assembler.o Assembler/AMD64AssemblerTest.o
-	$(CXXLD) $(LDFLAGS) -o Assembler/AMD64AssemblerTest $^ $(LIBS)
+Source/Assembler/AMD64AssemblerTest: Source/Assembler/CodeBuffer.o Source/Assembler/AMD64Assembler.o Source/Assembler/AMD64AssemblerTest.o
+	$(CXXLD) $(LDFLAGS) -o Source/Assembler/AMD64AssemblerTest $^ $(LIBS)
 
-Assembler/amd64dasm: Assembler/AMD64Assembler.o Assembler/amd64dasm.o
-	$(CXXLD) $(LDFLAGS) -o Assembler/amd64dasm $^ $(LIBS)
+amd64dasm: Source/Assembler/AMD64Assembler.o Source/Assembler/amd64dasm.o
+	$(CXXLD) $(LDFLAGS) -o amd64dasm $^ $(LIBS)
 
-Assembler/amd64asm: Assembler/AMD64Assembler.o Assembler/FileAssembler.o Assembler/amd64asm.o
-	$(CXXLD) $(LDFLAGS) -o Assembler/amd64asm $^ $(LIBS)
+amd64asm: Source/Assembler/AMD64Assembler.o Source/Assembler/FileAssembler.o Source/Assembler/amd64asm.o
+	$(CXXLD) $(LDFLAGS) -o amd64asm $^ $(LIBS)
 
-Types/DictionaryTest: Types/DictionaryTest.o Debug.o Types/Dictionary.o Types/Strings.o Types/Reference.o Types/Instance.o Exception.o Exception-Assembly.o
-	$(CXXLD) $(LDFLAGS) -o Types/DictionaryTest $^ $(LIBS)
+Source/Types/DictionaryTest: Source/Types/DictionaryTest.o Source/Debug.o Source/Types/Dictionary.o Source/Types/Strings.o Source/Types/Reference.o Source/Types/Instance.o Source/Compiler/Exception.o Source/Compiler/Exception-Assembly.o
+	$(CXXLD) $(LDFLAGS) -o Source/Types/DictionaryTest $^ $(LIBS)
 
 clean:
-	rm -rf *.o nemesys nemesys.dSYM Assembler/*.o Assembler/*Test Assembler/amd64dasm AST/*.o Modules/*.o Types/*.o Types/*Test
+	rm -rf *.o nemesys amd64dasm amd64asm *.dSYM Source/Assembler/*.o Source/Assembler/*Test Source/*.o Source/AST/*.o Source/Environment/*.o Source/Compiler/*.o Source/Modules/*.o Source/Types/*.o Source/Types/*Test
 
 .PHONY: all clean test
