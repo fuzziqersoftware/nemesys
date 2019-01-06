@@ -11,14 +11,6 @@ using namespace std;
 
 
 
-template <typename T> void ASTVisitor::visit_list(vector<shared_ptr<T>>& list) {
-  for (size_t x = 0; x < list.size(); x++) {
-    list[x]->accept(this);
-  }
-}
-
-
-
 void ASTVisitor::visit(AttributeLValueReference* a) { }
 void ASTVisitor::visit(ArrayIndexLValueReference* a) { }
 void ASTVisitor::visit(ArraySliceLValueReference* a) { }

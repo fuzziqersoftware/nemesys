@@ -174,7 +174,7 @@ void TupleLValueReference::accept(ASTVisitor* v) {
 
 UnaryOperation::UnaryOperation(UnaryOperator oper, shared_ptr<Expression> expr,
     size_t file_offset) : Expression(file_offset), oper(oper), expr(expr),
-    split_id(0) { }
+    split_id(-1) { }
 
 static const char* unary_operator_names[] = {
   "not ",
@@ -189,7 +189,7 @@ static const char* unary_operator_names[] = {
 string UnaryOperation::str() const {
   auto expr_str = this->expr->str();
   if (this->oper == UnaryOperator::Yield) {
-    string split_id_str = this->split_id ? string_printf("/*split=%" PRIu64 "*/ ", this->split_id) : "";
+    string split_id_str = (this->split_id >= 0) ? string_printf("/*split=%" PRIu64 "*/ ", this->split_id) : "";
     return string_printf("(yield %s%s)", split_id_str.c_str(), expr_str.c_str());
   }
   return string_printf("(%s%s)",
@@ -492,10 +492,10 @@ FunctionCall::FunctionCall(shared_ptr<Expression> function,
     shared_ptr<Expression> varargs, shared_ptr<Expression> varkwargs,
     size_t file_offset) : Expression(file_offset), function(function),
     args(move(args)), kwargs(move(kwargs)), varargs(varargs),
-    varkwargs(varkwargs), function_id(0), split_id(0), callee_function_id(0) { }
+    varkwargs(varkwargs), function_id(0), split_id(-1), callee_function_id(0) { }
 
 string FunctionCall::str() const {
-  string split_id_str = this->split_id ?
+  string split_id_str = (this->split_id >= 0) ?
       string_printf("/*split=%" PRId64 "*/", this->split_id) : "";
   string callee_id_str = this->callee_function_id ?
       string_printf("/*callee=%" PRId64 "*/", this->callee_function_id) : "";
@@ -954,14 +954,14 @@ void RaiseStatement::accept(ASTVisitor* v) {
 
 YieldStatement::YieldStatement(shared_ptr<Expression> expr, bool from,
     size_t file_offset) : FlowStatement(file_offset), expr(expr), from(from),
-    split_id(0) { }
+    split_id(-1) { }
 
 string YieldStatement::str() const {
   string prefix = "yield ";
   if (this->from) {
     prefix += "from ";
   }
-  string split_id_str = this->split_id ? string_printf("/*split=%" PRIu64 "*/ ", this->split_id) : "";
+  string split_id_str = (this->split_id >= 0) ? string_printf("/*split=%" PRIu64 "*/ ", this->split_id) : "";
   return prefix + split_id_str + str_or_null(this->expr);
 }
 

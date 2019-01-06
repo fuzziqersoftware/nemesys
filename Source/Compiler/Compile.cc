@@ -7,6 +7,7 @@
 #include "../AST/PythonParser.hh"
 #include "../Compiler/AnnotationVisitor.hh"
 #include "../Compiler/AnalysisVisitor.hh"
+#include "../Compiler/BuiltinFunctions.hh"
 #include "../Compiler/CompilationVisitor.hh"
 #include "../Types/List.hh"
 #include "../Types/Dictionary.hh"
@@ -124,7 +125,8 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
 
   // prevent infinite recursion: advance_module_phase cannot be called for a
   // module on which it is already executing (unless it would do nothing, above)
-  if (!global->modules_in_progress.emplace(module).second) {
+  string scope_name = module->name + "+ADVANCE";
+  if (!global->scopes_in_progress.emplace(scope_name).second) {
     throw compile_error("cyclic import dependency on module " + module->name);
   }
 
@@ -181,7 +183,7 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
           if (module->ast_root.get()) {
             module->ast_root->print(stderr);
 
-            fprintf(stderr, "# split count: %" PRIu64 "\n", module->root_scope_num_splits);
+            fprintf(stderr, "# split count: %" PRIu64 "\n", module->root_fragment_num_splits);
           }
 
           for (const auto& it : module->globals) {
@@ -238,9 +240,7 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
 
       case ModuleContext::Phase::Analyzed: {
         if (module->ast_root.get()) {
-          auto fragment = compile_scope(global, module);
-          module->compiled_root_scope = reinterpret_cast<void*(*)()>(const_cast<void*>(fragment.compiled));
-          module->compiled_labels = move(fragment.compiled_labels);
+          compile_fragment(global, module, &module->root_fragment);
 
           if (debug_flags & DebugFlag::ShowCompileDebug) {
             fprintf(stderr, "[%s] ======== executing root scope\n",
@@ -249,7 +249,8 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
 
           // all imports are done statically, so we can't translate this to a
           // python exception - just fail
-          void* exc = module->compiled_root_scope();
+          void* (*compiled_root_scope)() = reinterpret_cast<void* (*)()>(const_cast<void*>(module->root_fragment.compiled));
+          void* exc = compiled_root_scope();
           if (exc) {
             int64_t class_id = *reinterpret_cast<int64_t*>(reinterpret_cast<int64_t*>(exc) + 2);
             ClassContext* cls = global->context_for_class(class_id);
@@ -274,124 +275,282 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
     }
   }
 
-  global->modules_in_progress.erase(module);
+  global->scopes_in_progress.erase(scope_name);
 }
 
-FunctionContext::Fragment compile_scope(GlobalContext* global,
-    ModuleContext* module, FunctionContext* fn,
-    const unordered_map<string, Value>* local_overrides) {
 
-  // if a context is given, then the module must match it
-  if (fn && (fn->module != module)) {
-    throw compile_error("module context incorrect for function");
+void compile_fragment(GlobalContext* global, ModuleContext* module,
+    Fragment* f) {
+  if (f->function && (f->function->module != module)) {
+    throw compile_error("module context does not match fragment function module");
+  }
+  if (f->function && (f->arg_types.size() != f->function->args.size())) {
+    throw compile_error("function and fragment have different argument counts");
   }
 
-  // if a context is not given, local_overrides must not be given either
-  if (!fn && local_overrides) {
-    throw compile_error("local overrides cannot be given for module scope");
+  // generate the scope name
+  string scope_name;
+  if (f->function) {
+    auto* cls = global->context_for_class(f->function->class_id);
+    if (cls) {
+      scope_name = string_printf("%s.%s.%s+%" PRId64, module->name.c_str(),
+          cls->name.c_str(), f->function->name.c_str(), f->function->id);
+    } else {
+      scope_name = string_printf("%s.%s+%" PRId64, module->name.c_str(),
+          f->function->name.c_str(), f->function->id);
+    }
+
+    scope_name += '(';
+    bool is_first = true;
+    for (size_t x = 0; x < f->arg_types.size(); x++) {
+      if (!is_first) {
+        scope_name += ',';
+      } else {
+        is_first = false;
+      }
+      scope_name += f->function->args[x].name;
+      scope_name += '=';
+      scope_name += f->arg_types[x].str();
+    }
+    scope_name += ')';
+
+  } else {
+    scope_name = module->name + "+ROOT";
   }
 
   // create the compilation visitor
-  string scope_name;
-  multimap<size_t, string> compiled_labels;
-  unordered_set<size_t> patch_offsets;
-  unique_ptr<CompilationVisitor> v;
-  if (fn) {
-    auto* cls = global->context_for_class(fn->class_id);
-    if (cls) {
-      scope_name = string_printf("%s.%s.%s+%" PRId64, module->name.c_str(),
-          cls->name.c_str(), fn->name.c_str(), fn->id);
-    } else {
-      scope_name = string_printf("%s.%s+%" PRId64, module->name.c_str(),
-          fn->name.c_str(), fn->id);
-    }
-    if (local_overrides) {
-      scope_name += '(';
-      bool is_first = true;
-      for (const auto& override : *local_overrides) {
-        if (!is_first) {
-          scope_name += ',';
-        } else {
-          is_first = false;
-        }
-        scope_name += override.first;
-        scope_name += '=';
-        scope_name += override.second.str();
-      }
-      scope_name += ')';
-    }
-    v.reset(new CompilationVisitor(global, module, fn->id, 0, local_overrides));
-  } else {
-    scope_name = module->name;
-    v.reset(new CompilationVisitor(global, module));
-  }
+  CompilationVisitor v(global, module, f);
 
-  // write the local overrides, if any
-  if ((debug_flags & DebugFlag::ShowCompileDebug) && local_overrides &&
-      !local_overrides->empty()) {
-    fprintf(stderr, "[%s] ======== compiling with local overrides\n",
-        scope_name.c_str());
-    for (const auto& it : *local_overrides) {
-      string value_str = it.second.str();
-      fprintf(stderr, "%s = %s\n", it.first.c_str(), value_str.c_str());
-    }
-    fputc('\n', stderr);
-  }
-
-  static unordered_set<string> scopes_in_progress;
-  if (!scopes_in_progress.emplace(scope_name).second) {
+  if (!global->scopes_in_progress.emplace(scope_name).second) {
     throw compile_error("recursive compilation attempt");
   }
 
   // compile it
   try {
-    if (fn) {
-      fn->ast_root->accept(v.get());
+    if (f->function) {
+      f->function->ast_root->accept(&v);
     } else {
-      module->ast_root->accept(v.get());
+      module->ast_root->accept(&v);
     }
 
-  } catch (const compile_error& e) {
-    scopes_in_progress.erase(scope_name);
+  } catch (const CompilationVisitor::terminated_by_split&) {
+    // ignore this; the fragment was compiled but is incomplete (contains calls
+    // to the JIT compiler)
+
+  } catch (compile_error& e) {
+    if (e.where < 0) {
+      e.where = v.get_file_offset();
+    }
+
+    global->scopes_in_progress.erase(scope_name);
     if (debug_flags & DebugFlag::ShowCodeSoFar) {
       fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
           scope_name.c_str());
-      const string& compiled = v->assembler().assemble(patch_offsets,
-          &compiled_labels, 0, true);
+
+      unordered_set<size_t> patch_offsets;
+      const string& compiled = v.assembler().assemble(&patch_offsets,
+          &f->compiled_labels, 0, true);
       string disassembly = AMD64Assembler::disassemble(compiled.data(),
-          compiled.size(), 0, &compiled_labels);
+          compiled.size(), 0, &f->compiled_labels);
       fprintf(stderr, "\n%s\n", disassembly.c_str());
     }
     global->print_compile_error(stderr, module, e);
     throw;
   }
-  scopes_in_progress.erase(scope_name);
+  global->scopes_in_progress.erase(scope_name);
 
   if (debug_flags & DebugFlag::ShowCompileDebug) {
     fprintf(stderr, "[%s] ======== scope compiled\n\n",
         scope_name.c_str());
   }
 
-  Value return_type(ValueType::None);
-  if (v->return_types().size() > 1) {
-    throw compile_error("scope has multiple return types");
-  }
-  if (!v->return_types().empty()) {
-    // there's exactly one return type
-    return_type = *v->return_types().begin();
+  // modules cannot return values
+  if (!f->function && !v.return_types().empty()) {
+    throw compile_error("module root scope provided a return type");
   }
 
-  string compiled = v->assembler().assemble(patch_offsets, &compiled_labels);
-  const void* executable = global->code.append(compiled, &patch_offsets);
+  if (v.return_types().size() > 1) {
+    throw compile_error("scope has multiple return types");
+  }
+  if (!v.return_types().empty()) {
+    // there's exactly one return type
+    f->return_type = *v.return_types().begin();
+  } else {
+    f->return_type = Value(ValueType::None);
+  }
+
+  unordered_set<size_t> patch_offsets;
+  f->compiled_labels.clear();
+  string compiled = v.assembler().assemble(&patch_offsets, &f->compiled_labels);
+  f->compiled = global->code.append(compiled, &patch_offsets);
   module->compiled_size += compiled.size();
+
+  f->resolve_call_split_labels();
 
   if (debug_flags & DebugFlag::ShowAssembly) {
     fprintf(stderr, "[%s] ======== scope assembled\n", scope_name.c_str());
-    uint64_t addr = reinterpret_cast<uint64_t>(executable);
-    string disassembly = AMD64Assembler::disassemble(executable,
-        compiled.size(), addr, &compiled_labels);
-    fprintf(stderr, "\n%s\n", disassembly.c_str());
+    uint64_t addr = reinterpret_cast<uint64_t>(f->compiled);
+    string disassembly = AMD64Assembler::disassemble(f->compiled,
+        compiled.size(), addr, &f->compiled_labels);
+    fprintf(stderr, "\n%s", disassembly.c_str());
+
+    for (size_t x = 0; x < f->call_split_offsets.size(); x++) {
+      ssize_t offset = f->call_split_offsets[x];
+      if (offset < 0) {
+        fprintf(stderr, "# split %zu is missing\n", x);
+      } else {
+        uint64_t addr = reinterpret_cast<uint64_t>(reinterpret_cast<const uint8_t*>(f->compiled) + offset);
+        fprintf(stderr, "# split %zu at offset %zu (%016" PRIX64 ")\n", x, offset, addr);
+      }
+    }
+  }
+}
+
+
+const void* jit_compile_scope(GlobalContext* global, int64_t callsite_token,
+    uint64_t* int_args, void** raise_exception) {
+  if (debug_flags & DebugFlag::ShowJITEvents) {
+    fprintf(stderr, "[jit_callsite:%" PRId64 "] ======== jit compile call\n",
+        callsite_token);
   }
 
-  return FunctionContext::Fragment(return_type, executable, move(compiled_labels));
+  auto create_compiler_error_exception = [&](const char* what) -> void* {
+    if (debug_flags & DebugFlag::ShowJITEvents) {
+      fprintf(stderr, "[jit_callsite:%" PRId64 "] failed: %s\n",
+          callsite_token, what);
+    }
+    // TODO: this is a memory leak! we need to call delete_reference
+    // appropriately here based on the contents of int_args and their types
+    return create_single_attr_instance(NemesysCompilerError_class_id,
+        reinterpret_cast<int64_t>(what));
+  };
+
+  // get the callsite object
+  GlobalContext::UnresolvedFunctionCall* callsite;
+  try {
+    callsite = &global->unresolved_callsites.at(callsite_token);
+  } catch (const out_of_range&) {
+    *raise_exception = create_compiler_error_exception(
+        "callsite reference object is missing");
+    return NULL;
+  }
+
+  if (debug_flags & DebugFlag::ShowJITEvents) {
+    string s = callsite->str();
+    fprintf(stderr, "[jit_callsite:%" PRId64 "] callsite is %s\n",
+        callsite_token, s.c_str());
+  }
+
+  // get the caller function object (if it's not a module root scope)
+  FunctionContext* caller_fn = NULL;
+  if (callsite->caller_function_id) {
+    try {
+      caller_fn = &global->function_id_to_context.at(callsite->caller_function_id);
+    } catch (const out_of_range&) {
+      *raise_exception = create_compiler_error_exception(
+          "caller function context is missing");
+      return NULL;
+    }
+  }
+
+  // get the caller fragment object
+  Fragment* caller_fragment;
+  if (caller_fn) {
+    try {
+      caller_fragment = &caller_fn->fragments.at(callsite->caller_fragment_index);
+    } catch (const out_of_range&) {
+      *raise_exception = create_compiler_error_exception(
+          "caller fragment is missing");
+      return NULL;
+    }
+  } else {
+    caller_fragment = &callsite->caller_module->root_fragment;
+  }
+
+  if (caller_fragment->call_split_offsets[callsite->caller_split_id] < 0) {
+    if (debug_flags & DebugFlag::ShowJITEvents) {
+      fprintf(stderr, "[jit_callsite:%" PRId64 "] caller fragment does not contain split %" PRId64 "; recompiling\n",
+          callsite_token, callsite->caller_split_id);
+    }
+
+    // get the callee function object
+    FunctionContext* callee_fn;
+    try {
+      callee_fn = &global->function_id_to_context.at(callsite->callee_function_id);
+    } catch (const out_of_range&) {
+      *raise_exception = create_compiler_error_exception(
+          "callee function context is missing");
+      return NULL;
+    }
+
+    if (debug_flags & DebugFlag::ShowJITEvents) {
+      fprintf(stderr, "[jit_callsite:%" PRId64 "] callee function id is %" PRId64 " (%s)\n",
+          callsite_token, callsite->callee_function_id, callee_fn->name.c_str());
+      fprintf(stderr, "[jit_callsite:%" PRId64 "] advancing module to Analyzed phase\n",
+          callsite_token);
+    }
+
+    // make sure the callee module is in a reasonable state. note that we don't
+    // advance it to Imported here because its root scope could currently be
+    // running (which would mean it's still in Analyzed)
+    advance_module_phase(global, callee_fn->module, ModuleContext::Phase::Analyzed);
+
+    // check if a fragment already exists - someone else might have compiled it
+    // before us
+    int64_t callee_fragment_index = callee_fn->fragment_index_for_call_args(callsite->arg_types);
+    if (callee_fragment_index == -1) {
+      // there's no appropriate fragment
+
+      if (debug_flags & DebugFlag::ShowJITEvents) {
+        fprintf(stderr, "[jit_callsite:%" PRId64 "] creating new fragment\n",
+            callsite_token);
+      }
+
+      int64_t callee_fragment_index = callee_fn->fragments.size();
+      callee_fn->fragments.emplace_back(callee_fn, callee_fragment_index, callsite->arg_types);
+
+      if (debug_flags & DebugFlag::ShowJITEvents) {
+        fprintf(stderr, "[jit_callsite:%" PRId64 "] compiling fragment\n",
+            callsite_token);
+      }
+
+      // compile the thing
+      try {
+        compile_fragment(global, callee_fn->module, &callee_fn->fragments.back());
+      } catch (const exception& e) {
+        *raise_exception = create_compiler_error_exception(e.what());
+        return NULL;
+      }
+    }
+
+    if (debug_flags & DebugFlag::ShowJITEvents) {
+      fprintf(stderr, "[jit_callsite:%" PRId64 "] using callee fragment %" PRId64 "\n",
+          callsite_token, callee_fragment_index);
+      fprintf(stderr, "[jit_callsite:%" PRId64 "] recompiling caller fragment\n",
+          callsite_token);
+    }
+
+    try {
+      compile_fragment(global, callsite->caller_module, caller_fragment);
+    } catch (const exception& e) {
+      *raise_exception = create_compiler_error_exception(e.what());
+      return NULL;
+    }
+  }
+
+  // now the caller fragment should have more splits than needed
+  size_t caller_split_offset = caller_fragment->call_split_offsets[callsite->caller_split_id];
+  if (caller_split_offset < 0) {
+    throw compile_error(string_printf(
+        "caller fragment did not have enough splits after recompilation (have %zu, need id %" PRId64 ")",
+        caller_fragment->call_split_offsets.size(), callsite->caller_split_id));
+  }
+  const void* split_location = reinterpret_cast<const uint8_t*>(caller_fragment->compiled) + caller_split_offset;
+
+  if (debug_flags & DebugFlag::ShowJITEvents) {
+    fprintf(stderr, "[jit_callsite:%" PRId64 "] compilation successful; returning to %p\n",
+        callsite_token, split_location);
+  }
+
+  return split_location;
 }

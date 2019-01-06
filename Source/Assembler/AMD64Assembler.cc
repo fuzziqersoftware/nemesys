@@ -1768,7 +1768,7 @@ void AMD64Assembler::write(const string& data) {
   this->stream.emplace_back(data);
 }
 
-string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
+string AMD64Assembler::assemble(unordered_set<size_t>* patch_offsets,
     multimap<size_t, string>* label_offsets, int64_t base_address,
     bool autodefine_labels) {
   string code;
@@ -1808,7 +1808,10 @@ string AMD64Assembler::assemble(unordered_set<size_t>& patch_offsets,
     // 64-bit patch
     } else if (p.size == 8) {
       if (p.absolute) {
-        patch_offsets.emplace(p.where);
+        if (!patch_offsets) {
+          throw runtime_error("absolute patch required but patch_offsets not present");
+        }
+        patch_offsets->emplace(p.where);
       }
       *reinterpret_cast<int64_t*>(&code[p.where]) = value;
 

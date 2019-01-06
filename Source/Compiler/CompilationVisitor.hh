@@ -19,14 +19,21 @@
 
 class CompilationVisitor : public RecursiveASTVisitor {
 public:
-  // note: local_overrides is the argument types
+  class terminated_by_split : public std::runtime_error {
+  public:
+    terminated_by_split(int64_t callsite_token);
+    virtual ~terminated_by_split() = default;
+
+    int64_t callsite_token;
+  };
+
   CompilationVisitor(GlobalContext* global, ModuleContext* module,
-      int64_t target_function_id = 0, int64_t target_split_id = 0,
-      const std::unordered_map<std::string, Value>* local_overrides = NULL);
+      Fragment* fragment);
   ~CompilationVisitor() = default;
 
   AMD64Assembler& assembler();
-  const std::unordered_set<Value>& return_types();
+  const std::unordered_set<Value>& return_types() const;
+  size_t get_file_offset() const;
 
   using RecursiveASTVisitor::visit;
 
@@ -94,13 +101,7 @@ private:
   // environment
   GlobalContext* global;
   ModuleContext* module;
-  std::unordered_map<std::string, Value> local_overrides;
-
-  // targeting
-  FunctionContext* target_function;
-  int64_t target_split_id;
-  int64_t target_fragment_id;
-  std::unordered_map<std::string, int64_t> variable_to_stack_offset;
+  Fragment* fragment;
 
   // output values
   std::unordered_set<Value> function_return_types;
@@ -116,6 +117,8 @@ private:
   Register target_register;
   Register float_target_register;
   int64_t stack_bytes_used;
+  std::unordered_map<std::string, int64_t> variable_to_stack_offset;
+  std::unordered_map<std::string, Value> local_variable_types;
 
   std::string return_label;
   std::string exception_return_label;

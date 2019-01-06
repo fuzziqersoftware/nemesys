@@ -205,7 +205,7 @@ void AnnotationVisitor::visit(UnaryOperation* a) {
           a->file_offset);
     }
 
-    a->split_id = ++fn->num_splits;
+    a->split_id = fn->num_splits++;
   }
 }
 
@@ -226,9 +226,9 @@ void AnnotationVisitor::visit(FunctionCall* a) {
 
   auto* fn = this->current_function();
   if (!fn) {
-    a->split_id = ++this->module->root_scope_num_splits;
+    a->split_id = this->module->root_fragment_num_splits++;
   } else {
-    a->split_id = ++fn->num_splits;
+    a->split_id = fn->num_splits++;
   }
 }
 

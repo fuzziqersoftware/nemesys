@@ -190,7 +190,7 @@ print('39.0 % 5.0 == ' + repr(39.0 % 5.0))
 print('39.0 ** 3.0 == ' + repr(39.0 ** 3.0))
 
 # exponentiation has a special case for Int and Int when exponent < 0; nemesys
-# doesn't implement this (it raises ValueError) because it can dynamically
+# doesn't implement this (it raises ValueError) because it can't dynamically
 # change the variable type
 if sys.version == 'nemesys':
   try:

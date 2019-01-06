@@ -91,9 +91,11 @@ A class does not have to define `__init__`. If a class doesn't define `__init__`
 
 If a built-in class doesn't define `__init__`, though, then it doesn't appear in the global namespace at all, so it can't be instantiated because Python code can't even refer to it. It can only be instantiated by C/C++ functions and returned to Python code.
 
-A function may have multiple fragments. A fragment is a compiled implementation of a function with completely-defined types. This is how nemesys implements function polymorphism - a function's argument types aren't necessarily known at definition time, so the argument variables are left as indeterminate types during static analysis. Then at call compilation time, the types of all arguments are known, and this signature is used to refer to the correct fragment, which can then be compiled if necessary and called.
+A function may have multiple fragments. A fragment is a compiled implementation of a function with completely-defined argument types. This is how nemesys implements function polymorphism - a function's argument types aren't necessarily known at definition time, so the argument variables are left as indeterminate types during static analysis. Then at call compilation time, the types of all arguments are known, and this signature is used to refer to the correct fragment, which can then be compiled if necessary and called.
 
 For example, the function `sum_all_arguments` in tests/functions.py ends up having 3 fragments - one that takes all ints, one that takes all unicode objects, and one that takes all ints except arguments 2, 3, and 4, which are floats. If another module later imports this module and calls the function with different combinations of argument types, more fragments will be generated and compiled for this function.
+
+Fragments may be incompletely compiled; that is, they may contain calls to the compiler and missing code that depends on the result of those calls. Currently this only happens when an uncompiled fragment is called. When such a callsite is executed, it instead calls into the compiler, which compiles both the called fragment and caller fragment. It then returns to the location in the (newly-recompiled) caller fragment immediately before the call to the (new-compiled) callee fragment, and execution continues in the new version of the caller fragment.
 
 ## Compilation procedure
 

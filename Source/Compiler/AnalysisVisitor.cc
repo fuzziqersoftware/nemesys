@@ -205,12 +205,6 @@ void AnalysisVisitor::visit(FunctionCall* a) {
       }
     }
   }
-
-  // if we know the return type, we can cancel this split - it won't affect the
-  // local variable signature
-  if (this->current_value.type != ValueType::Indeterminate) {
-    a->split_id = 0;
-  }
 }
 
 void AnalysisVisitor::visit(ArrayIndex* a) {

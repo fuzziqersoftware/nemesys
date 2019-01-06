@@ -817,7 +817,7 @@ AssembledFile assemble_file(const string& data) {
   }
 
   try {
-    ret.code = as.assemble(ret.patch_offsets, &ret.label_offsets);
+    ret.code = as.assemble(&ret.patch_offsets, &ret.label_offsets);
   } catch (const exception& e) {
     ret.errors.emplace_back(string_printf("assembly error: %s", e.what()));
   }

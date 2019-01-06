@@ -42,35 +42,48 @@ static const int64_t default_available_float_registers = 0xFFFF; // all of them
 
 
 
+CompilationVisitor::terminated_by_split::terminated_by_split(
+    int64_t callsite_token) : runtime_error("terminated by split"),
+    callsite_token(callsite_token) { }
+
+
+
 CompilationVisitor::CompilationVisitor(GlobalContext* global,
-    ModuleContext* module, int64_t target_function_id, int64_t target_split_id,
-    const unordered_map<string, Value>* local_overrides) : file_offset(-1),
-    global(global), module(module),
-    target_function(this->global->context_for_function(target_function_id)),
-    target_split_id(target_split_id),
+    ModuleContext* module, Fragment* fragment) : file_offset(-1),
+    global(global), module(module), fragment(fragment),
     available_int_registers(default_available_int_registers),
     available_float_registers(default_available_float_registers),
     target_register(rax), float_target_register(xmm0), stack_bytes_used(0),
     holding_reference(false), evaluating_instance_pointer(false),
     in_finally_block(false) {
 
-  if (target_function_id) {
+  if (this->fragment->function) {
+    if (this->fragment->function->args.size() != this->fragment->arg_types.size()) {
+      throw compile_error("fragment and function take different argument counts");
+    }
 
-    // sanity check
-    if (!this->target_function) {
-      throw compile_error(string_printf("function %" PRId64 " apparently does not exist", target_function_id));
+    // populate local_variable_types with the argument types
+    for (size_t x = 0; x < this->fragment->arg_types.size(); x++) {
+      this->local_variable_types.emplace(this->fragment->function->args[x].name,
+          this->fragment->arg_types[x]);
     }
-    if (!local_overrides) {
-      throw compile_error("no local overrides given to function call");
-    }
-    this->local_overrides = *local_overrides;
 
-    // make sure everything in local_overrides actually refers to a local
-    for (const auto& it : this->local_overrides) {
-      if (!this->target_function->locals.count(it.first)) {
-        throw compile_error(string_printf("argument %s in function %" PRId64 " overrides a nonlocal variable", it.first.c_str(), target_function_id));
-      }
+    // populate the rest of the locals
+    for (const auto& it : this->fragment->function->locals) {
+      this->local_variable_types.emplace(it.first, it.second);
     }
+
+    // clear the split labels and offsets
+    this->fragment->call_split_offsets.resize(this->fragment->function->num_splits);
+    this->fragment->call_split_labels.resize(this->fragment->function->num_splits);
+  } else {
+    this->fragment->call_split_offsets.resize(this->module->root_fragment_num_splits);
+    this->fragment->call_split_labels.resize(this->module->root_fragment_num_splits);
+  }
+
+  for (size_t x = 0; x < this->fragment->call_split_offsets.size(); x++) {
+    this->fragment->call_split_offsets[x] = -1;
+    this->fragment->call_split_labels[x].clear();
   }
 }
 
@@ -78,8 +91,12 @@ AMD64Assembler& CompilationVisitor::assembler() {
   return this->as;
 }
 
-const unordered_set<Value>& CompilationVisitor::return_types() {
+const unordered_set<Value>& CompilationVisitor::return_types() const {
   return this->function_return_types;
+}
+
+size_t CompilationVisitor::get_file_offset() const {
+  return this->file_offset;
 }
 
 
@@ -475,20 +492,32 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
     // if we get here, then the right-side value is the one that will be
     // returned; delete the reference we may be holding to the left-side value
+    bool left_holding_reference = this->holding_reference;
     this->write_delete_held_reference(MemoryReference(this->target_register));
 
     // generate code for the right value
     Value left_type = move(this->current_type);
-    a->right->accept(this);
-    this->as.write_label(label_name);
-    if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
-      throw compile_error("non-held reference to right binary operator argument",
-          this->file_offset);
-    }
+    try {
+      a->right->accept(this);
 
-    if (left_type != this->current_type) {
-      throw compile_error("logical combine operator has different return types", this->file_offset);
+      if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+        throw compile_error("non-held reference to right binary operator argument",
+            this->file_offset);
+      }
+      if (left_type != this->current_type) {
+        throw compile_error("logical combine operator has different return types", this->file_offset);
+      }
+      if (left_holding_reference != this->holding_reference) {
+        throw compile_error("logical combine operator has different reference semantics", this->file_offset);
+      }
+
+    } catch (const terminated_by_split&) {
+      // we don't know what type right will be, so just use left_type for now
+      this->current_type = left_type;
+      this->holding_reference = left_holding_reference;
     }
+    this->as.write_label(label_name);
+
     return;
   }
 
@@ -496,12 +525,14 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   // into different registers
   // TODO: it's kind of stupid that we push the result onto the stack; figure
   // out a way to implement this without using memory access
+  // TODO: delete the held reference to left if right raises
   this->as.write_label(string_printf("__BinaryOperation_%p_evaluate_left", a));
   a->left->accept(this);
   Value left_type = move(this->current_type);
   if (left_type.type == ValueType::Float) {
     this->as.write_movq_from_xmm(target_mem, this->float_target_register);
   }
+
   this->write_push(this->target_register); // so right doesn't clobber it
   bool left_holding_reference = type_has_refcount(this->current_type.type);
   if (left_holding_reference && !this->holding_reference) {
@@ -510,7 +541,13 @@ void CompilationVisitor::visit(BinaryOperation* a) {
   }
 
   this->as.write_label(string_printf("__BinaryOperation_%p_evaluate_right", a));
-  a->right->accept(this);
+  try {
+    a->right->accept(this);
+  } catch (const terminated_by_split& e) {
+    // TODO: delete reference to right if needed
+    this->adjust_stack(8);
+    throw;
+  }
   Value& right_type = this->current_type;
   if (right_type.type == ValueType::Float) {
     this->as.write_movq_from_xmm(target_mem, this->float_target_register);
@@ -1138,21 +1175,49 @@ void CompilationVisitor::visit(TernaryOperation* a) {
   this->write_current_truth_value_test();
   this->as.write_jz(false_label); // skip left
 
+  int64_t left_callsite_token = -1, right_callsite_token = -1;
+
   // generate code for the left (True) value
   this->write_delete_held_reference(MemoryReference(this->target_register));
-  a->left->accept(this);
+  try {
+    a->left->accept(this);
+  } catch (const terminated_by_split& e) {
+    left_callsite_token = e.callsite_token;
+  }
   this->as.write_jmp(end_label);
   Value left_type = move(this->current_type);
+  bool left_holding_reference = this->holding_reference;
 
   // generate code for the right (False) value
   this->as.write_label(false_label);
   this->write_delete_held_reference(MemoryReference(this->target_register));
-  a->right->accept(this);
+  try {
+    a->right->accept(this);
+  } catch (const terminated_by_split& e) {
+    right_callsite_token = e.callsite_token;
+  }
   this->as.write_label(end_label);
 
-  // TODO: support different value types (maybe by splitting the function)
-  if (left_type != this->current_type) {
-    throw compile_error("sides have different types", this->file_offset);
+  // if both of the values were terminated by a split, terminate the entire
+  // thing and don't typecheck
+  if ((left_callsite_token >= 0) && (right_callsite_token >= 0)) {
+    throw terminated_by_split(left_callsite_token);
+  }
+
+  // if right was terminated, use the type for left
+  if (right_callsite_token >= 0) {
+    this->current_type = left_type;
+    this->holding_reference = left_holding_reference;
+
+  // if neither was terminated, check that right and left have the same types
+  } else if (left_callsite_token < 0) {
+    // TODO: support different value types (maybe by splitting the function)
+    if (left_type != this->current_type) {
+      throw compile_error("sides have different types", this->file_offset);
+    }
+    if (left_holding_reference != this->holding_reference) {
+      throw compile_error("sides have different reference semantics", this->file_offset);
+    }
   }
 }
 
@@ -1189,7 +1254,15 @@ void CompilationVisitor::visit(ListConstructor* a) {
   size_t item_index = 0;
   for (const auto& item : a->items) {
     this->as.write_label(string_printf("__ListConstructor_%p_item_%zu", a, item_index));
-    item->accept(this);
+    try {
+      item->accept(this);
+    } catch (const terminated_by_split& e) {
+      // TODO: delete unfinished list object
+      this->adjust_stack(8);
+      this->as.write_pop(rbx);
+      throw;
+    }
+
     if (this->current_type.type == ValueType::Float) {
       this->as.write_movsd(MemoryReference(rbx, item_index * 8),
           MemoryReference(this->float_target_register));
@@ -1272,7 +1345,15 @@ void CompilationVisitor::visit(TupleConstructor* a) {
     const auto& expected_type = a->value_types[x];
 
     this->as.write_label(string_printf("__TupleConstructor_%p_item_%zu", a, x));
-    item->accept(this);
+    try {
+      item->accept(this);
+    } catch (const terminated_by_split& e) {
+      // TODO: delete unfinished tuple object
+      this->adjust_stack(8);
+      this->as.write_pop(rbx);
+      throw;
+    }
+
     if (this->current_type.type == ValueType::Float) {
       this->as.write_movsd(MemoryReference(rbx, x * 8),
           MemoryReference(this->float_target_register));
@@ -1350,8 +1431,8 @@ void CompilationVisitor::visit(LambdaDefinition* a) {
 
   // if this definition is not the function being compiled, don't recur; instead
   // treat it as an assignment (of the function context to the local/global var)
-  if (!this->target_function ||
-      (this->target_function->id != a->function_id)) {
+  if (!this->fragment->function ||
+      (this->fragment->function->id != a->function_id)) {
     // if the function being declared is a closure, fail
     // TODO: actually implement this check
 
@@ -1516,247 +1597,254 @@ void CompilationVisitor::visit(FunctionCall* a) {
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
 
   // reserve enough stack space for the worst case - all args are ints (since
-  // there are fewer int registers available)
+  // there are fewer int registers available and floats are less common)
   ssize_t arg_stack_bytes = this->write_function_call_stack_prep(arg_values.size());
 
-  // generate code for the arguments
-  Register original_target_register = this->target_register;
-  Register original_float_target_register = this->float_target_register;
-  size_t int_registers_used = 0, float_registers_used = 0, stack_offset = 0;
-  for (size_t arg_index = 0; arg_index < arg_values.size(); arg_index++) {
-    auto& arg = arg_values[arg_index];
+  try {
+    // generate code for the arguments
+    Register original_target_register = this->target_register;
+    Register original_float_target_register = this->float_target_register;
+    size_t int_registers_used = 0, float_registers_used = 0, stack_offset = 0;
+    for (size_t arg_index = 0; arg_index < arg_values.size(); arg_index++) {
+      auto& arg = arg_values[arg_index];
 
-    // if it's an int, it goes into the next int register; if it's a float, it
-    // goes into the next float register. if either of these are exhausted, it
-    // goes onto the stack
-    if (int_registers_used == int_argument_register_order.size()) {
-      this->target_register = this->available_register();
-    } else {
-      this->target_register = int_argument_register_order[int_registers_used];
-    }
-    if (float_registers_used == float_argument_register_order.size()) {
-      // TODO: none of the registers will be available when this happens; figure
-      // out a way to deal with this
-      this->float_target_register = this->available_register(Register::None, true);
-    } else {
-      this->float_target_register = float_argument_register_order[float_registers_used];
-    }
-
-    // generate code for the argument's value
-
-    // if the argument has a passed value, generate code to compute it
-    if (arg.passed_value.get()) {
-      // if this argument is `self`, then it actually comes from the function
-      // expression (and we evaluate the instance pointer there instead)
-      if (arg.evaluate_instance_pointer) {
-        this->as.write_label(string_printf("__FunctionCall_%p_get_instance_pointer", a));
-        if (this->evaluating_instance_pointer) {
-          throw compile_error("recursive instance pointer evaluation", this->file_offset);
-        }
-        this->evaluating_instance_pointer = true;
-        a->function->accept(this);
-        if (this->evaluating_instance_pointer) {
-          throw compile_error("instance pointer evaluation failed", this->file_offset);
-        }
-        if (!type_has_refcount(this->current_type.type)) {
-          throw compile_error("instance pointer evaluation resulted in " + this->current_type.str(),
-              this->file_offset);
-        }
-        arg.type = move(this->current_type);
-
+      // if it's an int, it goes into the next int register; if it's a float, it
+      // goes into the next float register. if either of these are exhausted, it
+      // goes onto the stack
+      if (int_registers_used == int_argument_register_order.size()) {
+        this->target_register = this->available_register();
       } else {
-        this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_passed_value",
+        this->target_register = int_argument_register_order[int_registers_used];
+      }
+      if (float_registers_used == float_argument_register_order.size()) {
+        // TODO: none of the registers will be available when this happens; figure
+        // out a way to deal with this
+        this->float_target_register = this->available_register(Register::None, true);
+      } else {
+        this->float_target_register = float_argument_register_order[float_registers_used];
+      }
+
+      // generate code for the argument's value
+
+      // if the argument has a passed value, generate code to compute it
+      if (arg.passed_value.get()) {
+        // if this argument is `self`, then it actually comes from the function
+        // expression (and we evaluate the instance pointer there instead)
+        if (arg.evaluate_instance_pointer) {
+          this->as.write_label(string_printf("__FunctionCall_%p_get_instance_pointer", a));
+          if (this->evaluating_instance_pointer) {
+            throw compile_error("recursive instance pointer evaluation", this->file_offset);
+          }
+          this->evaluating_instance_pointer = true;
+          a->function->accept(this);
+          if (this->evaluating_instance_pointer) {
+            throw compile_error("instance pointer evaluation failed", this->file_offset);
+          }
+          if (!type_has_refcount(this->current_type.type)) {
+            throw compile_error("instance pointer evaluation resulted in " + this->current_type.str(),
+                this->file_offset);
+          }
+          arg.type = move(this->current_type);
+
+        } else {
+          this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_passed_value",
+              a, arg_index));
+          arg.passed_value->accept(this);
+          arg.type = move(this->current_type);
+        }
+
+      // if the argument is the instance object, figure out what it is
+      } else if (fn->is_class_init() && (arg_index == 0)) {
+        if (arg.default_value.type != ValueType::Instance) {
+          throw compile_error("first argument to class constructor is not an instance", this->file_offset);
+        }
+
+        auto* cls = this->global->context_for_class(fn->id);
+        if (!cls) {
+          throw compile_error("__init__ call does not have an associated class");
+        }
+
+        this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_alloc_instance",
             a, arg_index));
-        arg.passed_value->accept(this);
-        arg.type = move(this->current_type);
+        this->write_alloc_class_instance(cls->id);
+
+        arg.type = arg.default_value;
+        this->current_type = Value(ValueType::Instance, cls->id, NULL);
+        this->holding_reference = true;
+
+      // if the argument is the exception block, copy it from r14
+      } else if (arg.is_exception_block) {
+        this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_exception_block",
+            a, arg_index));
+        this->as.write_mov(MemoryReference(this->target_register), r14);
+
+      } else {
+        this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_default_value",
+            a, arg_index));
+        if (!arg.default_value.value_known) {
+          throw compile_error(string_printf(
+              "required function argument %zu (%s) does not have a value",
+              arg_index, arg.name.c_str()), this->file_offset);
+        }
+        this->write_code_for_value(arg.default_value);
+        arg.type = arg.default_value;
       }
 
-    // if the argument is the instance object, figure out what it is
-    } else if (fn->is_class_init() && (arg_index == 0)) {
-      if (arg.default_value.type != ValueType::Instance) {
-        throw compile_error("first argument to class constructor is not an instance", this->file_offset);
-      }
-
-      auto* cls = this->global->context_for_class(fn->id);
-      if (!cls) {
-        throw compile_error("__init__ call does not have an associated class");
-      }
-
-      this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_alloc_instance",
-          a, arg_index));
-      this->write_alloc_class_instance(cls->id);
-
-      arg.type = arg.default_value;
-      this->current_type = Value(ValueType::Instance, cls->id, NULL);
-      this->holding_reference = true;
-
-    // if the argument is the exception block, copy it from r14
-    } else if (arg.is_exception_block) {
-      this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_exception_block",
-          a, arg_index));
-      this->as.write_mov(MemoryReference(this->target_register), r14);
-
-    } else {
-      this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_default_value",
-          a, arg_index));
-      if (!arg.default_value.value_known) {
+      // bugcheck: if the value has a refcount, we had better be holding a
+      // reference to it
+      if (type_has_refcount(arg.type.type) && !this->holding_reference) {
+        string s = arg.type.str();
         throw compile_error(string_printf(
-          "required function argument %zu (%s) does not have a value",
-          arg_index, arg.name.c_str()), this->file_offset);
+            "function call argument %zu (%s) is a non-held reference", arg_index, s.c_str()),
+            this->file_offset);
       }
-      this->write_code_for_value(arg.default_value);
-      arg.type = arg.default_value;
-    }
 
-    // bugcheck: if the value has a refcount, we had better be holding a
-    // reference to it
-    if (type_has_refcount(arg.type.type) && !this->holding_reference) {
-      throw compile_error(string_printf(
-          "function call argument %zu is a non-held reference", arg_index),
-          this->file_offset);
-    }
-
-    // store the value on the stack if needed; otherwise, mark the register as
-    // reserved
-    if (arg.type.type == ValueType::Float) {
-      if (float_registers_used != float_argument_register_order.size()) {
-        this->reserve_register(this->float_target_register, true);
-        float_registers_used++;
+      // store the value on the stack if needed; otherwise, mark the register as
+      // reserved
+      if (arg.type.type == ValueType::Float) {
+        if (float_registers_used != float_argument_register_order.size()) {
+          this->reserve_register(this->float_target_register, true);
+          float_registers_used++;
+        } else {
+          this->as.write_movsd(MemoryReference(rsp, stack_offset),
+              MemoryReference(this->float_target_register));
+          stack_offset += sizeof(double);
+        }
       } else {
-        this->as.write_movsd(MemoryReference(rsp, stack_offset),
-            MemoryReference(this->float_target_register));
-        stack_offset += sizeof(double);
+        if (int_registers_used != int_argument_register_order.size()) {
+          this->reserve_register(this->target_register);
+          int_registers_used++;
+        } else {
+          this->as.write_mov(MemoryReference(rsp, stack_offset),
+              MemoryReference(this->target_register));
+          stack_offset += sizeof(int64_t);
+        }
+      }
+    }
+    this->target_register = original_target_register;
+    this->float_target_register = original_float_target_register;
+
+    // we can now unreserve the argument registers. there should be no reserved
+    // registers at this point because we already saved them above
+    this->release_all_registers(false);
+    this->release_all_registers(true);
+
+    // figure out which fragment to call
+    vector<Value> arg_types;
+    for (const auto& arg : arg_values) {
+      if (arg.is_exception_block) {
+        continue; // don't include exc_block in the type signature
+      }
+      arg_types.emplace_back(arg.type);
+    }
+    int64_t callee_fragment_index = fn->fragment_index_for_call_args(arg_types);
+
+    string returned_label = string_printf("__FunctionCall_%p_returned", a);
+
+    // if there's no existing fragment with the right types and this isn't a
+    // built-in function, write a call to the compiler instead. if this is a
+    // built-in function, fail (there's nothing to recompile)
+    if (callee_fragment_index < 0) {
+      if (fn->is_builtin()) {
+        string args_str;
+        for (const auto& v : arg_types) {
+          if (!args_str.empty()) {
+            args_str += ", ";
+          }
+          args_str += v.str();
+        }
+        throw compile_error(string_printf("callee_fragment %s(%s) does not exist",
+            fn->name.c_str(), args_str.c_str()));
+      }
+
+      // calling the compiler is a little complicated - we already set up the
+      // function call arguments, so we can't just change the call address, and
+      // we need a way to tell the compiler what to compile and replace this
+      // call with. to deal with this, we put some useful info in r10 and r11
+      // before calling it.
+      int64_t callsite_token = this->global->next_callsite_token++;
+      if (this->fragment->function) {
+        this->global->unresolved_callsites.emplace(piecewise_construct,
+            forward_as_tuple(callsite_token), forward_as_tuple(
+              a->callee_function_id, arg_types, this->module,
+              this->fragment->function->id, this->fragment->index, a->split_id));
+      } else {
+        this->global->unresolved_callsites.emplace(piecewise_construct,
+            forward_as_tuple(callsite_token), forward_as_tuple(
+              a->callee_function_id, arg_types, this->module, 0, -1, a->split_id));
+      }
+      if (debug_flags & DebugFlag::ShowJITEvents) {
+        string s = this->global->unresolved_callsites.at(callsite_token).str();
+        fprintf(stderr, "created unresolved callsite %" PRId64 ": %s\n",
+            callsite_token, s.c_str());
+      }
+
+      this->as.write_label(string_printf("__FunctionCall_%p_call_compiler_%" PRId64 "_callsite_%" PRId64,
+          a, a->callee_function_id, callsite_token));
+      this->as.write_mov(r10, reinterpret_cast<int64_t>(this->global));
+      this->as.write_mov(r11, callsite_token);
+      this->as.write_call(common_object_reference(void_fn_ptr(&_resolve_function_call)));
+
+      // we're done here - can't compile any more since we don't know the return
+      // type of this function. but we have to compile the rest of the scope to
+      // get the exception handlers
+      this->current_type = Value();
+      this->holding_reference = false;
+      throw terminated_by_split(callsite_token);
+    }
+
+    // the fragment exists, so we can call it
+    const auto& callee_fragment = fn->fragments[callee_fragment_index];
+
+    string call_split_label = string_printf("__FunctionCall_%p_call_function_%" PRId64 "_fragment_%" PRId64 "_split_%" PRId64,
+        a, a->callee_function_id, callee_fragment_index, a->split_id);
+    this->as.write_label(call_split_label);
+    this->fragment->call_split_labels.at(a->split_id) = call_split_label;
+
+    // call the fragment. note that the stack is already properly aligned here
+    this->as.write_mov(rax, reinterpret_cast<int64_t>(callee_fragment.compiled));
+    this->as.write_call(rax);
+    this->as.write_label(returned_label);
+
+    // if the function raised an exception, the return value is meaningless;
+    // instead we should continue unwinding the stack
+    string no_exc_label = string_printf("__FunctionCall_%p_no_exception", a);
+    this->as.write_test(r15, r15);
+    this->as.write_jz(no_exc_label);
+    this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
+    this->as.write_label(no_exc_label);
+
+    // put the return value into the target register
+    if (callee_fragment.return_type.type == ValueType::Float) {
+      if (this->target_register != rax) {
+        this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
+        this->as.write_movsd(MemoryReference(this->float_target_register), xmm0);
       }
     } else {
-      if (int_registers_used != int_argument_register_order.size()) {
-        this->reserve_register(this->target_register);
-        int_registers_used++;
-      } else {
-        this->as.write_mov(MemoryReference(rsp, stack_offset),
-            MemoryReference(this->target_register));
-        stack_offset += sizeof(int64_t);
+      if (this->target_register != rax) {
+        this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
+        this->as.write_mov(MemoryReference(this->target_register), rax);
       }
     }
+
+    // functions always return new references, unless they return trivial types
+    this->current_type = callee_fragment.return_type;
+    this->holding_reference = type_has_refcount(this->current_type.type);
+
+    // note: we don't have to destroy the function arguments; we passed the
+    // references that we generated directly into the function and it's
+    // responsible for deleting those references
+
+  } catch (const terminated_by_split&) {
+    this->as.write_label(string_printf("__FunctionCall_%p_restore_stack", a));
+    this->adjust_stack(arg_stack_bytes);
+    this->write_pop_reserved_registers(previously_reserved_registers);
+    throw;
   }
-  this->target_register = original_target_register;
-  this->float_target_register = original_float_target_register;
-
-  // we can now unreserve the argument registers. there should be no reserved
-  // registers at this point because we already saved them above
-  this->release_all_registers(false);
-  this->release_all_registers(true);
-
-  // figure out which fragment to call
-  vector<Value> arg_types;
-  unordered_map<string, Value> callee_local_overrides;
-  for (const auto& arg : arg_values) {
-    if (arg.is_exception_block) {
-      continue; // don't include exc_block in the type signature
-    }
-    arg_types.emplace_back(arg.type);
-    callee_local_overrides.emplace(arg.name, arg.type);
-  }
-
-  // get the argument type signature
-  string arg_signature;
-  try {
-    arg_signature = type_signature_for_variables(arg_types);
-  } catch (const invalid_argument& e) {
-    throw compile_error(string_printf(
-        "can\'t generate argument signature for function call: %s", e.what()),
-        this->file_offset);
-  }
-
-  // get the fragment id
-  int64_t fragment_id;
-  try {
-    fragment_id = fn->arg_signature_to_fragment_id.at(arg_signature);
-
-  // if there's no existing fragment with the right types, check if there's a
-  // fragment with Indeterminate extension types.
-  } catch (const std::out_of_range& e) {
-    // TODO: for now, just clear all the extension types and see if there's a
-    // match. this is an ugly hack that works for e.g. len() but won't work for
-    // more complex generic functions
-    for (auto& arg : arg_types) {
-      for (auto& ext_type : arg.extension_types) {
-        ext_type = Value();
-      }
-    }
-    try {
-      arg_signature = type_signature_for_variables(arg_types, true);
-    } catch (const invalid_argument&) {
-      throw compile_error("can\'t generate argument signature for function call", this->file_offset);
-    }
-    try {
-      fragment_id = fn->arg_signature_to_fragment_id.at(arg_signature);
-    } catch (const std::out_of_range& e) {
-
-      // still no match. built-in functions can't be recompiled, so fail
-      if (!fn->module) {
-        throw compile_error(string_printf("built-in fragment %" PRId64 "+%s does not exist",
-            a->callee_function_id, arg_signature.c_str()), this->file_offset);
-      }
-
-      // this isn't a built-in function, so create a new fragment and compile it
-      fragment_id = fn->arg_signature_to_fragment_id.emplace(
-          arg_signature, fn->fragments.size()).first->second;
-    }
-  }
-
-  // get or generate the Fragment object
-  const FunctionContext::Fragment* fragment;
-  try {
-    fragment = &fn->fragments.at(fragment_id);
-  } catch (const std::out_of_range& e) {
-    auto new_fragment = compile_scope(this->global, fn->module, fn,
-        &callee_local_overrides);
-    fragment = &fn->fragments.emplace(fragment_id, move(new_fragment)).first->second;
-  }
-
-  this->as.write_label(string_printf("__FunctionCall_%p_call_fragment_%" PRId64 "_%" PRId64 "_%s",
-      a, a->callee_function_id, fragment_id, arg_signature.c_str()));
-
-  // call the fragment. note that the stack is already properly aligned here
-  this->as.write_mov(rax, reinterpret_cast<int64_t>(fragment->compiled));
-  this->as.write_call(rax);
-
-  // if the function raised an exception, the return value is meaningless;
-  // instead we should continue unwinding the stack
-  string no_exc_label = string_printf("__FunctionCall_%p_no_exception", a);
-  this->as.write_test(r15, r15);
-  this->as.write_jz(no_exc_label);
-  this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
-  this->as.write_label(no_exc_label);
-
-  // put the return value into the target register
-  if (fragment->return_type.type == ValueType::Float) {
-    if (this->target_register != rax) {
-      this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
-      this->as.write_movsd(MemoryReference(this->float_target_register), xmm0);
-    }
-  } else {
-    if (this->target_register != rax) {
-      this->as.write_label(string_printf("__FunctionCall_%p_save_return_value", a));
-      this->as.write_mov(MemoryReference(this->target_register), rax);
-    }
-  }
-
-  // functions always return new references, unless they return trivial types
-  this->current_type = fragment->return_type;
-  this->holding_reference = type_has_refcount(this->current_type.type);
-
-  // note: we don't have to destroy the function arguments; we passed the
-  // references that we generated directly into the function and it's
-  // responsible for deleting those references
 
   // unreserve the argument stack space
   this->as.write_label(string_printf("__FunctionCall_%p_restore_stack", a));
-  if (arg_stack_bytes) {
-    this->adjust_stack(arg_stack_bytes);
-  }
-
-  // pop the registers that we saved earlier
+  this->adjust_stack(arg_stack_bytes);
   this->write_pop_reserved_registers(previously_reserved_registers);
 }
 
@@ -1779,109 +1867,115 @@ void CompilationVisitor::visit(ArrayIndex* a) {
   Register original_target_register = this->target_register;
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
 
-  // I'm lazy and don't want to duplicate work - just call the appropriate
-  // get_item function
+  try {
+    // I'm lazy and don't want to duplicate work - just call the appropriate
+    // get_item function
 
-  if (collection_type.type == ValueType::Dict) {
+    if (collection_type.type == ValueType::Dict) {
 
-    // arg 1 is the dict object
-    if (this->target_register != rdi) {
-      this->as.write_mov(rdi, MemoryReference(this->target_register));
-    }
+      // arg 1 is the dict object
+      if (this->target_register != rdi) {
+        this->as.write_mov(rdi, MemoryReference(this->target_register));
+      }
 
-    // compute the key
-    this->target_register = rsi;
-    this->reserve_register(rdi);
-    a->index->accept(this);
-    if (!this->current_type.types_equal(collection_type.extension_types[0])) {
-      string expr_key_type = this->current_type.str();
-      string dict_key_type = collection_type.extension_types[0].str();
-      string dict_value_type = collection_type.extension_types[1].str();
-      throw compile_error(string_printf("lookup for key of type %s on Dict[%s, %s]",
-          expr_key_type.c_str(), dict_key_type.c_str(), dict_value_type.c_str()),
-          this->file_offset);
-    }
-    if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
-      throw compile_error("not holding reference to key", this->file_offset);
-    }
-    this->release_register(rdi);
-
-    // get the dict item
-    this->write_function_call(common_object_reference(void_fn_ptr(&dictionary_at)),
-        {rdi, rsi, r14}, {}, -1, original_target_register);
-
-    // the return type is the value extension type
-    this->current_type = collection_type.extension_types[1];
-
-  } else if ((collection_type.type == ValueType::List) ||
-             (collection_type.type == ValueType::Tuple)) {
-
-    // arg 1 is the list/tuple object
-    if (this->target_register != rdi) {
-      this->as.write_mov(rdi, MemoryReference(this->target_register));
-    }
-
-    // for lists, the index can be dynamic; compute it now
-    int64_t tuple_index = a->index_value;
-    if (collection_type.type == ValueType::List) {
+      // compute the key
       this->target_register = rsi;
       this->reserve_register(rdi);
       a->index->accept(this);
-      if (this->current_type.type != ValueType::Int) {
-        throw compile_error("list index must be Int; here it\'s " + this->current_type.str(),
+      if (!this->current_type.types_equal(collection_type.extension_types[0])) {
+        string expr_key_type = this->current_type.str();
+        string dict_key_type = collection_type.extension_types[0].str();
+        string dict_value_type = collection_type.extension_types[1].str();
+        throw compile_error(string_printf("lookup for key of type %s on Dict[%s, %s]",
+            expr_key_type.c_str(), dict_key_type.c_str(), dict_value_type.c_str()),
             this->file_offset);
+      }
+      if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
+        throw compile_error("not holding reference to key", this->file_offset);
       }
       this->release_register(rdi);
 
-    // for tuples, the index must be static since the result type depends on it.
-    // for this reason, it also needs to be in range of the extension types
+      // get the dict item
+      this->write_function_call(common_object_reference(void_fn_ptr(&dictionary_at)),
+          {rdi, rsi, r14}, {}, -1, original_target_register);
+
+      // the return type is the value extension type
+      this->current_type = collection_type.extension_types[1];
+
+    } else if ((collection_type.type == ValueType::List) ||
+               (collection_type.type == ValueType::Tuple)) {
+
+      // arg 1 is the list/tuple object
+      if (this->target_register != rdi) {
+        this->as.write_mov(rdi, MemoryReference(this->target_register));
+      }
+
+      // for lists, the index can be dynamic; compute it now
+      int64_t tuple_index = a->index_value;
+      if (collection_type.type == ValueType::List) {
+        this->target_register = rsi;
+        this->reserve_register(rdi);
+        a->index->accept(this);
+        if (this->current_type.type != ValueType::Int) {
+          throw compile_error("list index must be Int; here it\'s " + this->current_type.str(),
+              this->file_offset);
+        }
+        this->release_register(rdi);
+
+      // for tuples, the index must be static since the result type depends on it.
+      // for this reason, it also needs to be in range of the extension types
+      } else {
+        if (!a->index_constant) {
+          throw compile_error("tuple indexes must be constants", this->file_offset);
+        }
+        if (tuple_index < 0) {
+          tuple_index += collection_type.extension_types.size();
+        }
+        if ((tuple_index < 0) || (tuple_index >= static_cast<ssize_t>(
+            collection_type.extension_types.size()))) {
+          throw compile_error("tuple index out of range", this->file_offset);
+        }
+        this->as.write_mov(rsi, tuple_index);
+      }
+
+      // now call the function
+      const void* fn = (collection_type.type == ValueType::List) ?
+          void_fn_ptr(&list_get_item) : void_fn_ptr(&tuple_get_item);
+      this->write_function_call(common_object_reference(fn), {rdi, rsi, r14}, {},
+          -1, original_target_register);
+
+      // for lists, the return type is the extension type
+      if (collection_type.type == ValueType::List) {
+        this->current_type = collection_type.extension_types[0];
+      // for tuples, the return type is one of the extension types, determined by
+      // the static index value
+      } else {
+        this->current_type = collection_type.extension_types[tuple_index];
+      }
+
     } else {
-      if (!a->index_constant) {
-        throw compile_error("tuple indexes must be constants", this->file_offset);
-      }
-      if (tuple_index < 0) {
-        tuple_index += collection_type.extension_types.size();
-      }
-      if ((tuple_index < 0) || (tuple_index >= static_cast<ssize_t>(
-          collection_type.extension_types.size()))) {
-        throw compile_error("tuple index out of range", this->file_offset);
-      }
-      this->as.write_mov(rsi, tuple_index);
+      // TODO
+      throw compile_error("ArrayIndex not yet implemented for collections of type " + collection_type.str(),
+          this->file_offset);
     }
 
-    // now call the function
-    const void* fn = (collection_type.type == ValueType::List) ?
-        void_fn_ptr(&list_get_item) : void_fn_ptr(&tuple_get_item);
-    this->write_function_call(common_object_reference(fn), {rdi, rsi, r14}, {},
-        -1, original_target_register);
+    // if the return value has a refcount, then the function returned a new
+    // reference to it
+    this->holding_reference = type_has_refcount(this->current_type.type);
 
-    // for lists, the return type is the extension type
-    if (collection_type.type == ValueType::List) {
-      this->current_type = collection_type.extension_types[0];
-    // for tuples, the return type is one of the extension types, determined by
-    // the static index value
-    } else {
-      this->current_type = collection_type.extension_types[tuple_index];
+    // if the return value is a float, it's currently in an int register; move
+    // it to an xmm reg if needed
+    if (this->current_type.type == ValueType::Float) {
+      this->as.write_movq_to_xmm(this->float_target_register,
+          MemoryReference(this->target_register));
     }
 
-  } else {
-    // TODO
-    throw compile_error("ArrayIndex not yet implemented for collections of type " + collection_type.str(),
-        this->file_offset);
+  } catch (const terminated_by_split&) {
+    this->write_pop_reserved_registers(previously_reserved_registers);
+    this->target_register = original_target_register;
+    throw;
   }
 
-  // if the return value has a refcount, then the function returned a new
-  // reference to it
-  this->holding_reference = type_has_refcount(this->current_type.type);
-
-  // if the return value is a float, it's currently in an int register; move it
-  // to an xmm reg if needed
-  if (this->current_type.type == ValueType::Float) {
-    this->as.write_movq_to_xmm(this->float_target_register,
-        MemoryReference(this->target_register));
-  }
-
-  // restore state
   this->write_pop_reserved_registers(previously_reserved_registers);
   this->target_register = original_target_register;
 }
@@ -2170,7 +2264,7 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     this->target_register = value_register;
     this->release_register(this->target_register);
 
-  // if a->base is missing, then it's a simple local variable write
+  // if a->base is missing, then it's a simple variable write
   } else {
     VariableLocation loc = this->location_for_variable(a->name);
 
@@ -2181,11 +2275,7 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     if (loc.is_global) {
       target_variable = &this->module->globals.at(loc.name);
     } else {
-      try {
-        target_variable = &this->local_overrides.at(loc.name);
-      } catch (const out_of_range&) {
-        target_variable = &this->target_function->locals.at(loc.name);
-      }
+      target_variable = &this->local_variable_types.at(loc.name);
     }
     if (!target_variable) {
       throw compile_error("target variable not found");
@@ -2252,9 +2342,11 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   // generate the function's code
   this->target_register = rax;
   this->as.write_label(string_printf("__ModuleStatement_%p_body", a));
-  this->RecursiveASTVisitor::visit(a);
+  try {
+    this->visit_list(a->items);
+  } catch (const terminated_by_split&) { }
 
-  // hooray we're done
+  // we're done; write the cleanup
   this->as.write_label(string_printf("__ModuleStatement_%p_return", a));
   this->adjust_stack(return_exception_block_size);
   this->as.write_mov(rax, r15);
@@ -2372,6 +2464,7 @@ void CompilationVisitor::visit(GlobalStatement* a) {
 
 void CompilationVisitor::visit(ExecStatement* a) {
   this->file_offset = a->file_offset;
+
   throw compile_error("exec is not supported", this->file_offset);
 }
 
@@ -2469,7 +2562,7 @@ void CompilationVisitor::visit(ContinueStatement* a) {
 void CompilationVisitor::visit(ReturnStatement* a) {
   this->file_offset = a->file_offset;
 
-  if (!this->target_function) {
+  if (!this->fragment->function) {
     throw compile_error("return statement outside function definition", a->file_offset);
   }
 
@@ -2542,7 +2635,9 @@ void CompilationVisitor::visit(IfStatement* a) {
   // and just generate the body
   if (a->always_true) {
     this->as.write_label(string_printf("__IfStatement_%p_always_true", a));
-    this->visit_list(a->items);
+    try {
+      this->visit_list(a->items);
+    } catch (const terminated_by_split&) { }
     return;
   }
 
@@ -2569,7 +2664,9 @@ void CompilationVisitor::visit(IfStatement* a) {
 
     // generate the body statements, then jump to the end (skip the elifs/else
     // if the condition was true)
-    this->visit_list(a->items);
+    try {
+      this->visit_list(a->items);
+    } catch (const terminated_by_split&) { }
     this->as.write_jmp(end_label);
   }
 
@@ -2629,7 +2726,9 @@ void CompilationVisitor::visit(ElseStatement* a) {
   // just do the sub-statements; the encapsulating logic is all in TryStatement
   // or IfStatement
   this->as.write_label(string_printf("__ElseStatement_%p", a));
-  this->visit_list(a->items);
+  try {
+    this->visit_list(a->items);
+  } catch (const terminated_by_split&) { }
 }
 
 void CompilationVisitor::visit(ElifStatement* a) {
@@ -2637,7 +2736,9 @@ void CompilationVisitor::visit(ElifStatement* a) {
 
   // just do the sub-statements; the encapsulating logic is all in IfStatement
   this->as.write_label(string_printf("__ElifStatement_%p", a));
-  this->visit_list(a->items);
+  try {
+    this->visit_list(a->items);
+  } catch (const terminated_by_split&) { }
 }
 
 void CompilationVisitor::visit(ForStatement* a) {
@@ -2656,163 +2757,183 @@ void CompilationVisitor::visit(ForStatement* a) {
   this->write_push(rbx);
   this->as.write_xor(rbx, rbx);
 
-  string next_label = string_printf("__ForStatement_%p_next", a);
-  string end_label = string_printf("__ForStatement_%p_complete", a);
-  string break_label = string_printf("__ForStatement_%p_broken", a);
+  try {
+    string next_label = string_printf("__ForStatement_%p_next", a);
+    string end_label = string_printf("__ForStatement_%p_complete", a);
+    string break_label = string_printf("__ForStatement_%p_broken", a);
 
-  if ((collection_type.type == ValueType::List) ||
-      (collection_type.type == ValueType::Tuple)) {
+    if ((collection_type.type == ValueType::List) ||
+        (collection_type.type == ValueType::Tuple)) {
 
-    // tuples containing disparate types can't be iterated
-    if ((collection_type.type == ValueType::Tuple) &&
-        (!collection_type.extension_types.empty())) {
-      Value uniform_extension_type = collection_type.extension_types[0];
-      for (const Value& extension_type : collection_type.extension_types) {
-        if (uniform_extension_type != extension_type) {
-          string uniform_str = uniform_extension_type.str();
-          string other_str = extension_type.str();
-          throw compile_error(string_printf(
-              "can\'t iterate over Tuple with disparate types (contains %s and %s)",
-              uniform_str.c_str(), other_str.c_str()), this->file_offset);
+      // tuples containing disparate types can't be iterated
+      if ((collection_type.type == ValueType::Tuple) &&
+          (!collection_type.extension_types.empty())) {
+        Value uniform_extension_type = collection_type.extension_types[0];
+        for (const Value& extension_type : collection_type.extension_types) {
+          if (uniform_extension_type != extension_type) {
+            string uniform_str = uniform_extension_type.str();
+            string other_str = extension_type.str();
+            throw compile_error(string_printf(
+                "can\'t iterate over Tuple with disparate types (contains %s and %s)",
+                uniform_str.c_str(), other_str.c_str()), this->file_offset);
+          }
         }
       }
-    }
 
-    ValueType item_type = collection_type.extension_types[0].type;
+      ValueType item_type = collection_type.extension_types[0].type;
 
-    this->as.write_label(next_label);
-    // get the list/tuple object
-    this->as.write_mov(MemoryReference(this->target_register),
-        MemoryReference(rsp, 8));
-
-    // check if we're at the end and skip the body if so
-    this->as.write_cmp(rbx, MemoryReference(this->target_register, 0x10));
-    this->as.write_jge(end_label);
-
-    // get the next item
-    if (collection_type.type == ValueType::List) {
+      this->as.write_label(next_label);
+      // get the list/tuple object
       this->as.write_mov(MemoryReference(this->target_register),
-          MemoryReference(this->target_register, 0x28));
-      if (item_type == ValueType::Float) {
-        this->as.write_movq_to_xmm(this->float_target_register,
-            MemoryReference(this->target_register, 0, rbx, 8));
-      } else {
+          MemoryReference(rsp, 8));
+
+      // check if we're at the end and skip the body if so
+      this->as.write_cmp(rbx, MemoryReference(this->target_register, 0x10));
+      this->as.write_jge(end_label);
+
+      // get the next item
+      if (collection_type.type == ValueType::List) {
         this->as.write_mov(MemoryReference(this->target_register),
-            MemoryReference(this->target_register, 0, rbx, 8));
+            MemoryReference(this->target_register, 0x28));
+        if (item_type == ValueType::Float) {
+          this->as.write_movq_to_xmm(this->float_target_register,
+              MemoryReference(this->target_register, 0, rbx, 8));
+        } else {
+          this->as.write_mov(MemoryReference(this->target_register),
+              MemoryReference(this->target_register, 0, rbx, 8));
+        }
+      } else {
+        if (item_type == ValueType::Float) {
+          this->as.write_movq_to_xmm(this->float_target_register,
+              MemoryReference(this->target_register, 0x18, rbx, 8));
+        } else {
+          this->as.write_mov(MemoryReference(this->target_register),
+              MemoryReference(this->target_register, 0x18, rbx, 8));
+        }
       }
+
+      // increment the item index
+      this->as.write_inc(rbx);
+
+      // if the extension type has a refcount, add a reference
+      if (type_has_refcount(item_type)) {
+        this->write_add_reference(this->target_register);
+      }
+
+      // load the value into the correct local variable slot
+      this->as.write_label(string_printf("__ForStatement_%p_write_value", a));
+      this->current_type = collection_type.extension_types[0];
+      a->variable->accept(this);
+
+      // do the loop body
+      this->as.write_label(string_printf("__ForStatement_%p_body", a));
+      this->break_label_stack.emplace_back(break_label);
+      this->continue_label_stack.emplace_back(next_label);
+      try {
+        this->visit_list(a->items);
+      } catch (const terminated_by_split&) {
+        this->continue_label_stack.pop_back();
+        this->break_label_stack.pop_back();
+        throw;
+      }
+      this->continue_label_stack.pop_back();
+      this->break_label_stack.pop_back();
+      this->as.write_jmp(next_label);
+      this->as.write_label(end_label);
+
+    } else if (collection_type.type == ValueType::Dict) {
+
+      int64_t previously_reserved_registers = this->write_push_reserved_registers();
+
+      // create a SlotContents structure
+      // TODO: figure out how this structure interacts with refcounting and
+      // exceptions (or if it does at all)
+      this->adjust_stack(-sizeof(DictionaryObject::SlotContents));
+      try {
+        this->as.write_mov(MemoryReference(rsp, 0), 0);
+        this->as.write_mov(MemoryReference(rsp, 8), 0);
+        this->as.write_mov(MemoryReference(rsp, 16), 0);
+
+        // get the dict object and SlotContents pointer
+        this->as.write_label(next_label);
+        this->as.write_mov(rdi, MemoryReference(rsp,
+            sizeof(DictionaryObject::SlotContents)));
+        this->as.write_mov(rsi, rsp);
+
+        // call dictionary_next_item
+        this->write_add_reference(rdi);
+        this->write_function_call(
+            common_object_reference(void_fn_ptr(&dictionary_next_item)), {rdi, rsi}, {});
+
+        // if dictionary_next_item returned 0, then we're done
+        this->as.write_test(rax, rax);
+        this->as.write_je(end_label);
+
+        // get the key pointer
+        this->as.write_mov(MemoryReference(this->target_register),
+            MemoryReference(rsp, 0));
+
+        // if the extension type has a refcount, add a reference
+        if (type_has_refcount(collection_type.extension_types[0].type)) {
+          this->write_add_reference(this->target_register);
+        }
+
+        // load the value into the correct local variable slot
+        this->as.write_label(string_printf("__ForStatement_%p_write_key_value", a));
+        this->current_type = collection_type.extension_types[0];
+        a->variable->accept(this);
+
+        // do the loop body
+        this->as.write_label(string_printf("__ForStatement_%p_body", a));
+        this->break_label_stack.emplace_back(break_label);
+        this->continue_label_stack.emplace_back(next_label);
+        try {
+          this->visit_list(a->items);
+        } catch (const terminated_by_split&) {
+          this->continue_label_stack.pop_back();
+          this->break_label_stack.pop_back();
+          throw;
+        }
+        this->continue_label_stack.pop_back();
+        this->break_label_stack.pop_back();
+        this->as.write_jmp(next_label);
+        this->as.write_label(end_label);
+
+      } catch (const terminated_by_split&) {
+        this->adjust_stack(sizeof(DictionaryObject::SlotContents));
+        this->write_pop_reserved_registers(previously_reserved_registers);
+        throw;
+      }
+      this->adjust_stack(sizeof(DictionaryObject::SlotContents));
+      this->write_pop_reserved_registers(previously_reserved_registers);
+
     } else {
-      if (item_type == ValueType::Float) {
-        this->as.write_movq_to_xmm(this->float_target_register,
-            MemoryReference(this->target_register, 0x18, rbx, 8));
-      } else {
-        this->as.write_mov(MemoryReference(this->target_register),
-            MemoryReference(this->target_register, 0x18, rbx, 8));
-      }
+      throw compile_error("iteration not implemented for " + collection_type.str(),
+          this->file_offset);
     }
 
-    // increment the item index
-    this->as.write_inc(rbx);
-
-    // if the extension type has a refcount, add a reference
-    if (type_has_refcount(item_type)) {
-      this->write_add_reference(this->target_register);
+    // if there's an else statement, generate the body here
+    if (a->else_suite.get()) {
+      a->else_suite->accept(this);
     }
 
-    // load the value into the correct local variable slot
-    this->as.write_label(string_printf("__ForStatement_%p_write_value", a));
-    this->current_type = collection_type.extension_types[0];
-    a->variable->accept(this);
+    // any break statement will jump over the loop body and the else statement
+    this->as.write_label(break_label);
 
-    // do the loop body
-    this->as.write_label(string_printf("__ForStatement_%p_body", a));
-    this->break_label_stack.emplace_back(break_label);
-    this->continue_label_stack.emplace_back(next_label);
-    this->visit_list(a->items);
-    this->continue_label_stack.pop_back();
-    this->break_label_stack.pop_back();
-    this->as.write_jmp(next_label);
-    this->as.write_label(end_label);
-
-  } else if (collection_type.type == ValueType::Dict) {
-
-    int64_t previously_reserved_registers = this->write_push_reserved_registers();
-
-    // create a SlotContents structure
-    // TODO: figure out how this structure interacts with refcounting and
-    // exceptions (or if it does at all)
-    this->adjust_stack(-sizeof(DictionaryObject::SlotContents));
-    this->as.write_mov(MemoryReference(rsp, 0), 0);
-    this->as.write_mov(MemoryReference(rsp, 8), 0);
-    this->as.write_mov(MemoryReference(rsp, 16), 0);
-
-    // get the dict object and SlotContents pointer
-    this->as.write_label(next_label);
-    this->as.write_mov(rdi, MemoryReference(rsp,
-        sizeof(DictionaryObject::SlotContents)));
-    this->as.write_mov(rsi, rsp);
-
-    // call dictionary_next_item
-    this->write_add_reference(rdi);
-    this->write_function_call(
-        common_object_reference(void_fn_ptr(&dictionary_next_item)), {rdi, rsi}, {});
-
-    // if dictionary_next_item returned 0, then we're done
-    this->as.write_test(rax, rax);
-    this->as.write_je(end_label);
-
-    // get the key pointer
-    this->as.write_mov(MemoryReference(this->target_register),
-        MemoryReference(rsp, 0));
-
-    // if the extension type has a refcount, add a reference
-    if (type_has_refcount(collection_type.extension_types[0].type)) {
-      this->write_add_reference(this->target_register);
-    }
-
-    // load the value into the correct local variable slot
-    this->as.write_label(string_printf("__ForStatement_%p_write_key_value", a));
-    this->current_type = collection_type.extension_types[0];
-    a->variable->accept(this);
-
-    // do the loop body
-    this->as.write_label(string_printf("__ForStatement_%p_body", a));
-    this->break_label_stack.emplace_back(break_label);
-    this->continue_label_stack.emplace_back(next_label);
-    this->visit_list(a->items);
-    this->continue_label_stack.pop_back();
-    this->break_label_stack.pop_back();
-    this->as.write_jmp(next_label);
-    this->as.write_label(end_label);
-
-    // clean up the stack
-    this->adjust_stack(sizeof(DictionaryObject::SlotContents));
-    this->write_pop_reserved_registers(previously_reserved_registers);
-
-  } else {
-    throw compile_error("iteration not implemented for " + collection_type.str(),
-        this->file_offset);
-  }
-
-  // if there's an else statement, generate the body here
-  if (a->else_suite.get()) {
-    a->else_suite->accept(this);
-  }
-
-  // any break statement will jump over the loop body and the else statement
-  this->as.write_label(break_label);
-
-  // restore rbx
-  this->write_pop(rbx);
-
-  // we still own a reference to the collection; destroy it now
-  // note: all collection types have refcounts; dunno why I bothered checking
-  if (type_has_refcount(collection_type.type)) {
+  } catch (const terminated_by_split&) {
+    // note: all collection types have refcounts, so we don't check the type of
+    // target_register here
+    this->write_pop(rbx);
     this->write_pop(this->target_register);
     this->write_delete_reference(MemoryReference(this->target_register),
         collection_type.type);
-  } else {
-    this->as.write_add(rsp, 8);
+    throw;
   }
+
+  this->write_pop(rbx);
+  this->write_pop(this->target_register);
+  this->write_delete_reference(MemoryReference(this->target_register),
+      collection_type.type);
 }
 
 void CompilationVisitor::visit(WhileStatement* a) {
@@ -2834,7 +2955,9 @@ void CompilationVisitor::visit(WhileStatement* a) {
   this->as.write_label(string_printf("__WhileStatement_%p_body", a));
   this->break_label_stack.emplace_back(break_label);
   this->continue_label_stack.emplace_back(start_label);
-  this->visit_list(a->items);
+  try {
+    this->visit_list(a->items);
+  } catch (const terminated_by_split&) { }
   this->continue_label_stack.pop_back();
   this->break_label_stack.pop_back();
   this->as.write_jmp(start_label);
@@ -2858,7 +2981,9 @@ void CompilationVisitor::visit(ExceptStatement* a) {
 
   // just do the sub-statements; the encapsulating logic is all in TryStatement
   this->as.write_label(string_printf("__FinallyStatement_%p", a));
-  this->visit_list(a->items);
+  try {
+    this->visit_list(a->items);
+  } catch (const terminated_by_split&) { }
 }
 
 void CompilationVisitor::visit(FinallyStatement* a) {
@@ -2874,7 +2999,9 @@ void CompilationVisitor::visit(FinallyStatement* a) {
   this->as.write_xor(r15, r15);
 
   this->as.write_label(string_printf("__FinallyStatement_%p_body", a));
-  this->visit_list(a->items);
+  try {
+    this->visit_list(a->items);
+  } catch (const terminated_by_split&) { }
 
   // if there's now an active exception, then the finally block raised an
   // exception of its own. if there was a saved exception object, destroy it;
@@ -2950,9 +3077,13 @@ void CompilationVisitor::visit(TryStatement* a) {
   size_t stack_bytes_used_on_restore = this->stack_bytes_used;
   this->write_create_exception_block(label_to_class_ids, finally_label);
 
-  // generate the try block body
-  this->as.write_label(string_printf("__TryStatement_%p_body", a));
-  this->visit_list(a->items);
+  // generate the try block body. we catch terminated_by_split here because
+  // calling a split can cause an exception to be raised, and the code might
+  // need to catch it
+  try {
+    this->as.write_label(string_printf("__TryStatement_%p_body", a));
+    this->visit_list(a->items);
+  } catch (const terminated_by_split& e) { }
 
   // remove the exception block from the stack
   // the previous exception block pointer is the first field in the exception
@@ -2967,7 +3098,14 @@ void CompilationVisitor::visit(TryStatement* a) {
   if (a->else_suite.get()) {
     this->as.write_label(string_printf("__TryStatement_%p_create_else_exc_block", a));
     this->write_create_exception_block({}, finally_label);
-    a->else_suite->accept(this);
+    try {
+      a->else_suite->accept(this);
+    } catch (const terminated_by_split&) {
+      this->as.write_label(string_printf("__TryStatement_%p_delete_else_exc_block", a));
+      this->as.write_mov(r14, MemoryReference(rsp, 0));
+      this->adjust_stack_to(stack_bytes_used_on_restore);
+      throw;
+    }
     this->as.write_label(string_printf("__TryStatement_%p_delete_else_exc_block", a));
     this->as.write_mov(r14, MemoryReference(rsp, 0));
     this->adjust_stack_to(stack_bytes_used_on_restore);
@@ -3006,11 +3144,7 @@ void CompilationVisitor::visit(TryStatement* a) {
       if (loc.is_global) {
         target_variable = &this->module->globals.at(loc.name);
       } else {
-        try {
-          target_variable = &this->local_overrides.at(loc.name);
-        } catch (const out_of_range&) {
-          target_variable = &this->target_function->locals.at(loc.name);
-        }
+        target_variable = &this->local_variable_types.at(loc.name);
       }
       if (!target_variable) {
         throw compile_error("target variable not found in exception block");
@@ -3034,7 +3168,9 @@ void CompilationVisitor::visit(TryStatement* a) {
     // generate the except block code
     this->as.write_label(string_printf("__TryStatement_%p_except_%zd_body",
         a, except_index));
-    except->accept(this);
+    try {
+      except->accept(this);
+    } catch (const terminated_by_split&) { }
 
     // we're done here; go to the finally block
     // for the last except block, don't bother jumping; just fall through
@@ -3051,7 +3187,9 @@ void CompilationVisitor::visit(TryStatement* a) {
   // generate the finally block, if any
   this->as.write_label(string_printf("__TryStatement_%p_finally", a));
   if (a->finally_suite.get()) {
-    a->finally_suite->accept(this);
+    try {
+      a->finally_suite->accept(this);
+    } catch (const terminated_by_split&) { }
   }
 
   this->write_pop_reserved_registers(previously_reserved_registers);
@@ -3069,8 +3207,8 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
 
   // if this definition is not the function being compiled, don't recur; instead
   // treat it as an assignment (of the function context to the local/global var)
-  if (!this->target_function ||
-      (this->target_function->id != a->function_id)) {
+  if (!this->fragment->function ||
+      (this->fragment->function->id != a->function_id)) {
 
     // if the function being declared is a closure, fail
     // TODO: actually implement this check
@@ -3088,11 +3226,23 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
   string base_label = string_printf("FunctionDefinition_%p_%s", a, a->name.c_str());
   this->write_function_setup(base_label);
   this->target_register = rax;
-  this->RecursiveASTVisitor::visit(a);
+  try {
+    this->visit_list(a->decorators);
+    for (auto& arg : a->args.args) {
+      if (arg.default_value.get()) {
+        arg.default_value->accept(this);
+      }
+    }
+    this->visit_list(a->items);
+
+  } catch (const terminated_by_split&) {
+    this->write_function_cleanup(base_label);
+    throw;
+  }
 
   // if the function is __init__, implicitly return self (the function cannot
   // explicitly return a value)
-  if (this->target_function->is_class_init()) {
+  if (this->fragment->function->is_class_init()) {
     // the value should be returned in rax
     this->as.write_label(string_printf("__FunctionDefinition_%p_return_self_from_init", a));
 
@@ -3178,26 +3328,28 @@ void CompilationVisitor::visit(ClassDefinition* a) {
 
         // the arg signature is blank since __del__ can't take any arguments
         auto* fn = this->global->context_for_function(del_attr.function_id);
-        int64_t fragment_id = fn->arg_signature_to_fragment_id.emplace(
-            "", fn->fragments.size()).first->second;
 
-        // get or generate the Fragment object
-        const FunctionContext::Fragment* fragment;
-        try {
-          fragment = &fn->fragments.at(fragment_id);
-        } catch (const std::out_of_range& e) {
-          unordered_map<string, Value> local_overrides;
-          local_overrides.emplace("self", Value(ValueType::Instance, a->class_id, NULL));
-          auto new_fragment = compile_scope(this->global, fn->module, fn,
-              &local_overrides);
-          fragment = &fn->fragments.emplace(fragment_id, move(new_fragment)).first->second;
+        // get or generate the Fragment object. this function should have at
+        // most one fragment because __del__ cannot take arguments
+        if (fn->fragments.size() > 1) {
+          throw compile_error("__del__ has multiple fragments");
+        }
+        vector<Value> expected_arg_types({Value(ValueType::Instance, a->class_id, NULL)});
+        if (fn->fragments.empty()) {
+          vector<Value> arg_types({Value(ValueType::Instance, a->class_id, NULL)});
+          fn->fragments.emplace_back(fn, fn->fragments.size(), arg_types);
+          compile_fragment(this->global, fn->module, &fn->fragments.back());
+        }
+        auto fragment = fn->fragments.back();
+        if (fragment.arg_types != expected_arg_types) {
+          throw compile_error("__del__ fragment takes incorrect argument types");
         }
 
         // generate the call to the fragment. note that the instance pointer is
         // still in rdi, so we don't have to do anything to prepare
         dtor_as.write_lock();
         dtor_as.write_inc(MemoryReference(rbx, 0)); // reference for the function arg
-        dtor_as.write_mov(rax, reinterpret_cast<int64_t>(fragment->compiled));
+        dtor_as.write_mov(rax, reinterpret_cast<int64_t>(fragment.compiled));
         dtor_as.write_call(rax);
 
         // __del__ can add new references to the object; if this happens, don't
@@ -3279,7 +3431,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       // assemble it
       multimap<size_t, string> compiled_labels;
       unordered_set<size_t> patch_offsets;
-      string compiled = dtor_as.assemble(patch_offsets, &compiled_labels);
+      string compiled = dtor_as.assemble(&patch_offsets, &compiled_labels);
       cls->destructor = this->global->code.append(compiled, &patch_offsets);
       this->module->compiled_size += compiled.size();
 
@@ -3348,6 +3500,7 @@ void CompilationVisitor::write_code_for_value(const Value& value) {
       throw compile_error("default value has unknown type", this->file_offset);
   }
 }
+
 
 void CompilationVisitor::assert_not_evaluating_instance_pointer() {
   if (this->evaluating_instance_pointer) {
@@ -3521,14 +3674,14 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
   unordered_map<string, int64_t> int_arg_to_stack_offset;
   unordered_map<string, Register> float_arg_to_register;
   size_t arg_stack_offset = sizeof(int64_t) * 2; // after return addr and rbp
-  for (size_t arg_index = 0; arg_index < this->target_function->args.size(); arg_index++) {
-    const auto& arg = this->target_function->args[arg_index];
+  for (size_t arg_index = 0; arg_index < this->fragment->function->args.size(); arg_index++) {
+    const auto& arg = this->fragment->function->args[arg_index];
 
     bool is_float;
     try {
-      is_float = this->local_overrides.at(arg.name).type == ValueType::Float;
+      is_float = this->local_variable_types.at(arg.name).type == ValueType::Float;
     } catch (const out_of_range&) {
-      throw compile_error(string_printf("argument %s not present in local_overrides",
+      throw compile_error(string_printf("argument %s not present in local_variable_types",
           arg.name.c_str()), this->file_offset);
     }
 
@@ -3551,7 +3704,7 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
   }
 
   // set up the local space
-  for (const auto& local : this->target_function->locals) {
+  for (const auto& local : this->fragment->function->locals) {
 
     // if it's a float arg, reserve stack space and write it from the xmm reg
     try {
@@ -3602,8 +3755,8 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
   this->as.write_label(this->exception_return_label);
   this->return_label.clear();
   this->exception_return_label.clear();
-  for (auto it = this->target_function->locals.crbegin();
-       it != this->target_function->locals.crend(); it++) {
+  for (auto it = this->fragment->function->locals.crbegin();
+       it != this->fragment->function->locals.crend(); it++) {
     if (type_has_refcount(it->second.type)) {
       // we have to preserve the value in rax since it's the function's return
       // value, so store it on the stack (in the location we're about to pop)
@@ -3879,29 +4032,29 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
     const string& name) {
 
   // if we're writing a global, use its global slot offset (from R13)
-  if (this->target_function &&
-      this->target_function->explicit_globals.count(name) &&
-      this->target_function->locals.count(name)) {
+  if (this->fragment->function &&
+      this->fragment->function->explicit_globals.count(name) &&
+      this->fragment->function->locals.count(name)) {
     throw compile_error("explicit global is also a local", this->file_offset);
   }
-  if (!this->target_function || !this->target_function->locals.count(name)) {
+  if (!this->fragment->function || !this->fragment->function->locals.count(name)) {
     return this->location_for_global(this->module, name);
   }
 
   // if we're writing a local, use its local slot offset (from RBP)
-  auto it = this->target_function->locals.find(name);
-  if (it == this->target_function->locals.end()) {
+  auto it = this->fragment->function->locals.find(name);
+  if (it == this->fragment->function->locals.end()) {
     throw compile_error("nonexistent local: " + name, this->file_offset);
   }
 
   VariableLocation loc;
   loc.name = name;
   loc.is_global = false;
-  loc.mem = MemoryReference(rbp, sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->target_function->locals.begin(), it))));
+  loc.mem = MemoryReference(rbp, sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->fragment->function->locals.begin(), it))));
 
   // use the argument type if given
   try {
-    loc.type = this->local_overrides.at(name);
+    loc.type = this->local_variable_types.at(name);
   } catch (const out_of_range&) {
     loc.type = it->second;
   }

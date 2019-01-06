@@ -27,6 +27,9 @@ public:
 
 
 
+struct ModuleContext;
+struct FunctionContext;
+
 struct BuiltinFragmentDefinition {
   std::vector<Value> arg_types;
   Value return_type;
@@ -63,9 +66,32 @@ struct BuiltinClassDefinition {
       const void* destructor, bool register_globally);
 };
 
+struct Fragment {
+  FunctionContext* function;
+  size_t index;
+
+  std::vector<Value> arg_types;
+  Value return_type;
+
+  std::vector<ssize_t> call_split_offsets;
+  std::vector<std::string> call_split_labels;
+  const void* compiled;
+  std::multimap<size_t, std::string> compiled_labels;
+
+  Fragment() = delete;
+
+  // dynamic function constructor
+  Fragment(FunctionContext* fn, size_t index,
+      const std::vector<Value>& arg_types);
+  // builtin function constructor
+  Fragment(FunctionContext* fn, size_t index,
+      const std::vector<Value>& arg_types, Value return_type,
+      const void* compiled);
+
+  void resolve_call_split_labels();
+};
 
 
-struct ModuleContext;
 
 struct ClassContext {
   // ClassContext objects are created during the annotation phase of importing,
@@ -131,18 +157,7 @@ struct FunctionContext {
   std::unordered_set<Value> return_types;
 
   // the following are valid when the owning module is Imported or later
-  struct Fragment {
-    Value return_type;
-    const void* compiled;
-    std::multimap<size_t, std::string> compiled_labels;
-
-    Fragment(Value return_type, const void* compiled);
-    Fragment(Value return_type, const void* compiled,
-        std::multimap<size_t, std::string>&& compiled_labels);
-  };
-  std::unordered_map<std::string, int64_t> arg_signature_to_fragment_id;
-
-  std::unordered_map<int64_t, Fragment> fragments;
+  std::vector<Fragment> fragments;
 
   // constructor for dynamic functions (defined in .py files)
   FunctionContext(ModuleContext* module, int64_t id);
@@ -153,6 +168,11 @@ struct FunctionContext {
     bool pass_exception_block);
 
   bool is_class_init() const;
+  bool is_builtin() const;
+
+  // gets the index of the fragment that satisfies the given call args, or -1 if
+  // no appropriate fragment exists
+  int64_t fragment_index_for_call_args(const std::vector<Value>& arg_types);
 };
 
 
@@ -182,10 +202,9 @@ struct ModuleContext {
   std::map<std::string, Value> globals; // values invalid until Analyzed
   int64_t global_base_offset;
 
-  int64_t root_scope_num_splits;
+  int64_t root_fragment_num_splits;
+  Fragment root_fragment;
 
-  std::multimap<size_t, std::string> compiled_labels;
-  void* (*compiled_root_scope)();
   int64_t compiled_size; // size of all compiled blocks (root scope, functions) in this module
 
   // constructor for imported modules
@@ -216,10 +235,33 @@ struct GlobalContext {
   std::unordered_map<std::string, BytesObject*> bytes_constants;
   std::unordered_map<std::wstring, UnicodeObject*> unicode_constants;
 
-  std::unordered_set<ModuleContext*> modules_in_progress;
+  std::unordered_set<std::string> scopes_in_progress;
 
   std::unordered_map<int64_t, FunctionContext> function_id_to_context;
   std::unordered_map<int64_t, ClassContext> class_id_to_context;
+
+  struct UnresolvedFunctionCall {
+    int64_t callee_function_id;
+    std::vector<Value> arg_types;
+
+    ModuleContext* caller_module;
+    int64_t caller_function_id;
+    int64_t caller_fragment_index;
+    int64_t caller_split_id;
+
+    UnresolvedFunctionCall(int64_t callee_function_id,
+        const std::vector<Value>& arg_types, ModuleContext* caller_module,
+        int64_t caller_function_id, int64_t caller_fragment_index,
+        int64_t caller_split_id);
+
+    std::string str() const;
+  };
+
+  // TODO: these should be in the fragment, not in the global context, so we can
+  // clean them up when a fragment is recompiled
+  std::unordered_map<int64_t, UnresolvedFunctionCall> unresolved_callsites;
+  std::atomic<int64_t> next_callsite_token;
+
 
   GlobalContext(const std::vector<std::string>& import_paths);
   ~GlobalContext();

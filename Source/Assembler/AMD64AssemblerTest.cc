@@ -16,7 +16,7 @@ static void* assemble(CodeBuffer& code, AMD64Assembler& as,
     const char* expected_disassembly = NULL, bool check_disassembly = true) {
   multimap<size_t, string> compiled_labels;
   unordered_set<size_t> patch_offsets;
-  string data = as.assemble(patch_offsets, &compiled_labels);
+  string data = as.assemble(&patch_offsets, &compiled_labels);
   void* ret = code.append(data, &patch_offsets);
 
   if (check_disassembly) {

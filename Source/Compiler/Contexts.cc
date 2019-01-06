@@ -52,6 +52,40 @@ BuiltinClassDefinition::BuiltinClassDefinition(const char* name,
 
 
 
+Fragment::Fragment(FunctionContext* fn, size_t index,
+    const std::vector<Value>& arg_types) : function(fn), index(index),
+    arg_types(arg_types) { }
+
+Fragment::Fragment(FunctionContext* fn, size_t index,
+    const std::vector<Value>& arg_types, Value return_type,
+    const void* compiled) : function(fn), index(index),
+    arg_types(arg_types), return_type(return_type), compiled(compiled) { }
+
+void Fragment::resolve_call_split_labels() {
+  unordered_map<string, size_t> label_to_index;
+  for (size_t x = 0; x < this->call_split_labels.size(); x++) {
+    const string& label = this->call_split_labels[x];
+
+    // the label can be missing if the compiler never encountered it due to an
+    // earlier split; just skip it
+    if (label.empty()) {
+      continue;
+    }
+
+    if (!label_to_index.emplace(label, x).second) {
+      throw compile_error("duplicate split label: " + label);
+    }
+  }
+
+  for (const auto& it : this->compiled_labels) {
+    try {
+      this->call_split_offsets[label_to_index.at(it.second)] = it.first;
+    } catch (const out_of_range&) { }
+  }
+}
+
+
+
 ClassContext::ClassContext(ModuleContext* module, int64_t id) : module(module),
     id(id), ast_root(NULL), destructor(NULL) { }
 
@@ -93,14 +127,6 @@ int64_t ClassContext::offset_for_attribute(size_t index) const {
 
 
 
-FunctionContext::Fragment::Fragment(Value return_type, const void* compiled)
-    : return_type(return_type), compiled(compiled) { }
-
-FunctionContext::Fragment::Fragment(Value return_type, const void* compiled,
-    multimap<size_t, string>&& compiled_labels) :
-    return_type(return_type), compiled(compiled),
-    compiled_labels(move(compiled_labels)) { }
-
 FunctionContext::FunctionContext(ModuleContext* module, int64_t id) :
     module(module), id(id), class_id(0), ast_root(NULL), num_splits(0),
     pass_exception_block(false) { }
@@ -137,22 +163,77 @@ FunctionContext::FunctionContext(ModuleContext* module, int64_t id,
     }
   }
 
-  // finally, build the fragment map
+  // finally, create the fragments
   for (const auto& fragment_def : fragments) {
     this->return_types.emplace(fragment_def.return_type);
-
-    // built-in functions are allowed to have Indeterminate argument types; this
-    // means they accept any type (have to be careful with this, of course)
-    string signature = type_signature_for_variables(fragment_def.arg_types, true);
-    int64_t fragment_id = this->arg_signature_to_fragment_id.size() + 1;
-    this->arg_signature_to_fragment_id.emplace(signature, fragment_id);
-    this->fragments.emplace(piecewise_construct, forward_as_tuple(fragment_id),
-        forward_as_tuple(fragment_def.return_type, fragment_def.compiled));
+    this->fragments.emplace_back(this, this->fragments.size(),
+        fragment_def.arg_types, fragment_def.return_type,
+        fragment_def.compiled);
   }
 }
 
 bool FunctionContext::is_class_init() const {
   return this->id == this->class_id;
+}
+
+bool FunctionContext::is_builtin() const {
+  return !this->ast_root;
+}
+
+static int64_t match_function_call_arg_types(const vector<Value>& fn_arg_types,
+    const vector<Value>& arg_types) {
+  if (fn_arg_types.size() != arg_types.size()) {
+    return -1;
+  }
+
+  int64_t promotion_count = 0;
+  for (size_t x = 0; x < arg_types.size(); x++) {
+    if (arg_types[x].type == ValueType::Indeterminate) {
+      throw compile_error("call argument is Indeterminate");
+    }
+
+    if (fn_arg_types[x].type == ValueType::Indeterminate) {
+      promotion_count++;
+      continue; // don't check extension types
+
+    } else if (fn_arg_types[x].type != arg_types[x].type) {
+      return -1; // no match
+    }
+
+    int64_t extension_match_ret = match_function_call_arg_types(
+        fn_arg_types[x].extension_types, arg_types[x].extension_types);
+    if (extension_match_ret < 0) {
+      return extension_match_ret;
+    }
+    promotion_count += extension_match_ret;
+  }
+
+  return promotion_count;
+}
+
+int64_t FunctionContext::fragment_index_for_call_args(
+    const vector<Value>& arg_types) {
+  // go through the existing fragments and see if there are any that can satisfy
+  // this call. if there are multiple matches, choose the most specific one (
+  // the one that has the fewest Indeterminate substitutions)
+  // TODO: this is linear in the number of fragments. make it faster somehow
+  int64_t fragment_index = -1;
+  int64_t best_match_score = -1;
+  for (size_t x = 0; x < this->fragments.size(); x++) {
+    auto& fragment = this->fragments[x];
+
+    int64_t score = match_function_call_arg_types(fragment.arg_types, arg_types);
+    if (score < 0) {
+      continue; // not a match
+    }
+
+    if ((best_match_score < 0) || (score < best_match_score)) {
+      fragment_index = x;
+      best_match_score = score;
+    }
+  }
+
+  return fragment_index;
 }
 
 
@@ -166,7 +247,7 @@ const unordered_set<string> static_initialize_module_attributes({
 ModuleContext::ModuleContext(const string& name, const string& filename,
     bool is_code) : phase(Phase::Initial), name(name),
     source(new SourceFile(filename, is_code)), global_base_offset(-1),
-    root_scope_num_splits(0), compiled_root_scope(NULL), compiled_size(0) {
+    root_fragment_num_splits(0), root_fragment(NULL, -1, {}), compiled_size(0) {
   // TODO: using unescape_unicode is a stupid hack, but these strings can't
   // contain backslashes anyway (right? ...right?)
   this->globals.emplace(piecewise_construct, forward_as_tuple("__name__"),
@@ -183,8 +264,8 @@ ModuleContext::ModuleContext(const string& name, const string& filename,
 ModuleContext::ModuleContext(const string& name,
     const map<string, Value>& globals) : phase(Phase::Initial),
     name(name), source(NULL), ast_root(NULL), globals(globals),
-    global_base_offset(-1), root_scope_num_splits(0), compiled_root_scope(NULL),
-    compiled_size(0) { }
+    global_base_offset(-1), root_fragment_num_splits(0),
+    root_fragment(NULL, -1, {}), compiled_size(0) { }
 
 int64_t ModuleContext::create_builtin_function(BuiltinFunctionDefinition& def) {
   int64_t function_id = ::create_builtin_function(def);
@@ -201,7 +282,8 @@ int64_t ModuleContext::create_builtin_class(BuiltinClassDefinition& def) {
 
 
 GlobalContext::GlobalContext(const vector<string>& import_paths) :
-    import_paths(import_paths), global_space(NULL), global_space_used(0) { }
+    import_paths(import_paths), global_space(NULL), global_space_used(0),
+    next_callsite_token(1) { }
 
 GlobalContext::~GlobalContext() {
   if (this->global_space) {
@@ -221,6 +303,29 @@ GlobalContext::~GlobalContext() {
     }
     delete_reference(it.second);
   }
+}
+
+GlobalContext::UnresolvedFunctionCall::UnresolvedFunctionCall(
+    int64_t callee_function_id, const std::vector<Value>& arg_types,
+    ModuleContext* caller_module, int64_t caller_function_id,
+    int64_t caller_fragment_index, int64_t caller_split_id) :
+    callee_function_id(callee_function_id), arg_types(arg_types),
+    caller_module(caller_module), caller_function_id(caller_function_id),
+    caller_fragment_index(caller_fragment_index),
+    caller_split_id(caller_split_id) { }
+
+string GlobalContext::UnresolvedFunctionCall::str() const {
+  string arg_types_str;
+  for (const Value& v : this->arg_types) {
+    if (!arg_types_str.empty()) {
+      arg_types_str += ',';
+    }
+    arg_types_str += v.str();
+  }
+  return string_printf("UnresolvedFunctionCall(%" PRId64 ", [%s], %p(%s), %" PRId64
+      ", %" PRId64 ", %" PRId64 ")", this->callee_function_id, arg_types_str.c_str(),
+      this->caller_module, this->caller_module->name.c_str(), this->caller_function_id,
+      this->caller_fragment_index, this->caller_split_id);
 }
 
 static void print_source_location(FILE* stream, shared_ptr<const SourceFile> f,

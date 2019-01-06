@@ -9,7 +9,12 @@ struct ASTVisitor {
 
   virtual ~ASTVisitor() = default;
 
-  template <typename T> void visit_list(std::vector<std::shared_ptr<T>>& list);
+  template <typename T>
+  void visit_list(std::vector<std::shared_ptr<T>>& list) {
+    for (size_t x = 0; x < list.size(); x++) {
+      list[x]->accept(this);
+    }
+  }
 
   // expression visitation
   virtual void visit(AttributeLValueReference*);

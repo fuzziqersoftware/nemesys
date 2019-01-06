@@ -32,6 +32,9 @@ DebugFlag debug_flag_for_name(const char* name) {
   if (!strcasecmp(name, "ShowRefcountChanges")) {
     return DebugFlag::ShowRefcountChanges;
   }
+  if (!strcasecmp(name, "ShowJITEvents")) {
+    return DebugFlag::ShowJITEvents;
+  }
   if (!strcasecmp(name, "NoInlineRefcounting")) {
     return DebugFlag::NoInlineRefcounting;
   }

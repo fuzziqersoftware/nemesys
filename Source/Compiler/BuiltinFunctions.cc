@@ -43,6 +43,7 @@ int64_t AssertionError_class_id = 0;
 int64_t IndexError_class_id = 0;
 int64_t KeyError_class_id = 0;
 int64_t OSError_class_id = 0;
+int64_t NemesysCompilerError_class_id = 0;
 int64_t TypeError_class_id = 0;
 int64_t ValueError_class_id = 0;
 
@@ -660,6 +661,8 @@ void create_default_builtin_classes() {
   };
 
   vector<BuiltinClassDefinition> class_defs({
+    declare_message_exception("NemesysCompilerError"),
+
     // TODO: probably all of these should have some attributes
     declare_trivial_exception("ArithmeticError"),
     declare_message_exception("AssertionError"),
@@ -896,6 +899,7 @@ void create_default_builtin_classes() {
   ValueError_class_id = builtin_names.at("ValueError").class_id;
   AssertionError_class_id = builtin_names.at("AssertionError").class_id;
   OSError_class_id = builtin_names.at("OSError").class_id;
+  NemesysCompilerError_class_id = builtin_names.at("NemesysCompilerError").class_id;
 
   BytesObject_class_id = builtin_names.at("bytes").class_id;
   UnicodeObject_class_id = builtin_names.at("unicode").class_id;

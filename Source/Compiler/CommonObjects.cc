@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "BuiltinFunctions.hh"
+#include "Compile.hh"
 #include "Exception.hh"
 #include "../Types/Reference.hh"
 #include "../Types/Strings.hh"
@@ -25,7 +26,7 @@ static const vector<const void*> objects({
   void_fn_ptr(&malloc),
   void_fn_ptr(&free),
 
-  // have to cast ths pointer so the compiler knows which overloaded function
+  // have to cast this pointer so the compiler knows which overloaded function
   // we want
   void_fn_ptr(static_cast<double(*)(double, double)>(&pow)),
 
@@ -33,6 +34,7 @@ static const vector<const void*> objects({
   void_fn_ptr(&delete_reference),
 
   void_fn_ptr(&_unwind_exception_internal),
+  void_fn_ptr(&_resolve_function_call),
 
   void_fn_ptr(&bytes_equal),
   void_fn_ptr(&bytes_compare),

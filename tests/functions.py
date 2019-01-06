@@ -33,7 +33,7 @@ def sum_all_arguments(a, b, c, d, e=0, f=0, g=0, h=0, i=0, j=0):
   print('j is ' + repr(j))
   return a + b + c + d + e + f + g + h + i + j
 
-# this function should work with integers, floats, and strings
+# # this function should work with integers, floats, and strings
 int_sum = sum_all_arguments(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 print('the sum of 10 ints is ' + repr(int_sum))
 int_sum = sum_all_arguments(1, 2, 3, 4)

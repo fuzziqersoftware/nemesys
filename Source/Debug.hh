@@ -15,9 +15,10 @@ enum DebugFlag {
   ShowAssembly        = 0x0000000000000080,
   ShowCodeSoFar       = 0x0000000000000100,
   ShowRefcountChanges = 0x0000000000000200,
+  ShowJITEvents       = 0x0000000000000400,
   NoInlineRefcounting = 0x0000000000010000,
 
-  Code                = 0x00000000000000F0, // transformation steps only
+  Code                = 0x00000000000004F0, // transformation steps only
   Verbose             = 0x000000000000FFFF, // no behaviors, all debug info
   All                 = 0xFFFFFFFFFFFFFFFF, // all behaviors and debug info
 };

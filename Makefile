@@ -7,7 +7,7 @@ OBJECTS=Source/Main.o Source/Debug.o \
 	Source/Types/Reference.o Source/Types/Strings.o Source/Types/Format.o Source/Types/Tuple.o Source/Types/List.o Source/Types/Dictionary.o Source/Types/Instance.o \
 	Source/Modules/__nemesys__.o Source/Modules/sys.o Source/Modules/math.o Source/Modules/posix.o Source/Modules/errno.o Source/Modules/time.o \
 	Source/Environment/Operators.o Source/Environment/Value.o \
-	Source/Compiler/Compile.o Source/Compiler/Contexts.o Source/Compiler/BuiltinFunctions.o Source/Compiler/CommonObjects.o Source/Compiler/Exception.o Source/Compiler/Exception-Assembly.o Source/Compiler/AnnotationVisitor.o Source/Compiler/AnalysisVisitor.o Source/Compiler/CompilationVisitor.o
+	Source/Compiler/Compile.o Source/Compiler/Compile-Assembly.o Source/Compiler/Contexts.o Source/Compiler/BuiltinFunctions.o Source/Compiler/CommonObjects.o Source/Compiler/Exception.o Source/Compiler/Exception-Assembly.o Source/Compiler/AnnotationVisitor.o Source/Compiler/AnalysisVisitor.o Source/Compiler/CompilationVisitor.o
 CXXFLAGS=-g -Wall -Werror -std=c++14 -I/opt/local/include
 LDFLAGS=-L/opt/local/lib
 LIBS=-lphosg -lpthread

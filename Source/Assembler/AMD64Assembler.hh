@@ -412,7 +412,7 @@ public:
   // undefined labels - instead, just leaves them as unpatched offsets. it's a
   // bad idea to execute any code assembled with autodefine_labels = true; it
   // should be used only for debugging.
-  std::string assemble(std::unordered_set<size_t>& patch_offsets,
+  std::string assemble(std::unordered_set<size_t>* patch_offsets = NULL,
       std::multimap<size_t, std::string>* label_offsets = NULL,
       int64_t base_address = 0, bool autodefine_labels = false);
 
