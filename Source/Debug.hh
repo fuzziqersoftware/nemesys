@@ -2,6 +2,9 @@
 
 #include <inttypes.h>
 
+#include <unordered_map>
+#include <string>
+
 
 enum DebugFlag {
   // printing flags are the low 16 bits; the rest are behavioral flags
@@ -26,5 +29,7 @@ enum DebugFlag {
 };
 
 DebugFlag debug_flag_for_name(const char* name);
+
+extern const std::unordered_map<std::string, DebugFlag> name_to_debug_flag;
 
 extern int64_t debug_flags;

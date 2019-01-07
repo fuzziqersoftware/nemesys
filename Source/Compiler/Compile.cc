@@ -256,12 +256,33 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
           void* (*compiled_root_scope)() = reinterpret_cast<void* (*)()>(const_cast<void*>(module->root_fragment.compiled));
           void* exc = compiled_root_scope();
           if (exc) {
-            int64_t class_id = *reinterpret_cast<int64_t*>(reinterpret_cast<int64_t*>(exc) + 2);
-            ClassContext* cls = global->context_for_class(class_id);
+            const InstanceObject* i = reinterpret_cast<const InstanceObject*>(exc);
+            ClassContext* cls = global->context_for_class(i->class_id);
             const char* class_name = cls ? cls->name.c_str() : "<missing>";
-            throw compile_error(string_printf(
+
+            string exc_message = string_printf(
                 "module root scope raised exception of class %" PRId64 " (%s)",
-                class_id, class_name));
+                i->class_id, class_name);
+            if (cls) {
+              try {
+                ValueType message_type = cls->attributes.at("message").type;
+                int64_t message_index = cls->dynamic_attribute_indexes.at("message");
+
+                if (message_type == ValueType::Unicode) {
+                  const UnicodeObject* message = reinterpret_cast<const UnicodeObject*>(i->attributes[message_index]);
+                  BytesObject* message_bytes = unicode_encode_ascii(message);
+                  exc_message += " with message: ";
+                  exc_message += message_bytes->data;
+                  delete_reference(message_bytes);
+
+                } else if (message_type == ValueType::Bytes) {
+                  const BytesObject* message = reinterpret_cast<const BytesObject*>(i->attributes[message_index]);
+                  exc_message += " with message: ";
+                  exc_message += message->data;
+                }
+              } catch (const out_of_range&) { }
+            }
+            throw compile_error(exc_message);
           }
         }
 

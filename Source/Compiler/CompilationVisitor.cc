@@ -2369,8 +2369,8 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   // we're done; write the cleanup
   this->as.write_label(string_printf("__ModuleStatement_%p_return", a));
   this->adjust_stack(return_exception_block_size);
-  this->as.write_mov(rax, r15);
   this->as.write_label(exc_label);
+  this->as.write_mov(rax, r15);
   this->write_pop(r15);
   this->write_pop(r14);
   this->write_pop(r13);

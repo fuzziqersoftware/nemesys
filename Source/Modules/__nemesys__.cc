@@ -52,65 +52,133 @@ static std::shared_ptr<ModuleContext> get_module(UnicodeObject* module_name) {
 
 
 
+static const UnicodeObject* module_phase(ModuleContext* module) {
+  if (!module) {
+    return global->get_or_create_constant(L"Missing");
+  }
+  switch (module->phase) {
+    case ModuleContext::Phase::Initial:
+      return global->get_or_create_constant(L"Initial");
+    case ModuleContext::Phase::Parsed:
+      return global->get_or_create_constant(L"Parsed");
+    case ModuleContext::Phase::Annotated:
+      return global->get_or_create_constant(L"Annotated");
+    case ModuleContext::Phase::Analyzed:
+      return global->get_or_create_constant(L"Analyzed");
+    case ModuleContext::Phase::Imported:
+      return global->get_or_create_constant(L"Imported");
+    default:
+      return global->get_or_create_constant(L"Unknown");
+  }
+}
+
+static BytesObject* module_source(ModuleContext* module) {
+  if (!module) {
+    return bytes_new(NULL, 0);
+  }
+  if (!module->source.get()) {
+    return bytes_new(NULL, 0);
+  }
+  const string& data = module->source->data();
+  return bytes_new(data.data(), data.size());
+}
+
+
 void __nemesys___initialize() {
   Value None(ValueType::None);
   Value Bool(ValueType::Bool);
   Value Int(ValueType::Int);
   Value Bytes(ValueType::Bytes);
   Value Unicode(ValueType::Unicode);
+  Value Function(ValueType::Function);
+  Value Module(ValueType::Module);
 
   vector<BuiltinFunctionDefinition> module_function_defs({
-    {"module_phase", {Unicode}, Unicode, void_fn_ptr([](UnicodeObject* module_name) -> const UnicodeObject* {
-      auto module = get_module(module_name);
-      delete_reference(module_name);
-      if (!module.get()) {
-        return global->get_or_create_constant(L"Missing");
-      }
-      switch (module->phase) {
-        case ModuleContext::Phase::Initial:
-          return global->get_or_create_constant(L"Initial");
-        case ModuleContext::Phase::Parsed:
-          return global->get_or_create_constant(L"Parsed");
-        case ModuleContext::Phase::Annotated:
-          return global->get_or_create_constant(L"Annotated");
-        case ModuleContext::Phase::Analyzed:
-          return global->get_or_create_constant(L"Analyzed");
-        case ModuleContext::Phase::Imported:
-          return global->get_or_create_constant(L"Imported");
-        default:
-          return global->get_or_create_constant(L"Unknown");
-      }
+
+    {"get_module", {Unicode}, Module, void_fn_ptr([](UnicodeObject* module_name) -> ModuleContext* {
+      return get_module(module_name).get();
     }), false, false},
 
-    {"module_compiled_size", {Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
+
+
+
+    {"module_phase", {FragDef({Unicode}, Unicode, void_fn_ptr([](UnicodeObject* module_name) {
+      auto module = get_module(module_name);
+      delete_reference(module_name);
+      return module_phase(module.get());
+
+    })), FragDef({Module}, Unicode, void_fn_ptr(module_phase))}, false, false},
+
+    {"module_compiled_size", {FragDef({Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
       auto module = get_module(module_name);
       delete_reference(module_name);
       return module.get() ? module->compiled_size : -1;
-    }), false, false},
 
-    {"module_global_base", {Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
+    })), FragDef({Module}, Int, void_fn_ptr([](ModuleContext* module) -> int64_t {
+      return module ? module->compiled_size : -1;
+
+    }))}, false, false},
+
+    {"module_global_base_offset", {FragDef({Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
       auto module = get_module(module_name);
       delete_reference(module_name);
       return module.get() ? module->global_base_offset : -1;
-    }), false, false},
 
-    {"module_global_count", {Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
+    })), FragDef({Module}, Int, void_fn_ptr([](ModuleContext* module) -> int64_t {
+      return module ? module->global_base_offset : -1;
+
+    }))}, false, false},
+
+    {"module_global_count", {FragDef({Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
       auto module = get_module(module_name);
       delete_reference(module_name);
       return module.get() ? module->globals.size() : -1;
-    }), false, false},
 
-    {"module_source", {Unicode}, Bytes, void_fn_ptr([](UnicodeObject* module_name) -> BytesObject* {
+    })), FragDef({Module}, Int, void_fn_ptr([](ModuleContext* module) -> int64_t {
+      return module ? module->globals.size() : -1;
+
+    }))}, false, false},
+
+    {"module_source", {FragDef({Unicode}, Bytes, void_fn_ptr([](UnicodeObject* module_name) {
       auto module = get_module(module_name);
       delete_reference(module_name);
-      if (!module.get()) {
-        return bytes_new(NULL, 0);
+      return module_source(module.get());
+
+    })), FragDef({Module}, Bytes, void_fn_ptr(module_source))}, false, false},
+
+    {"function_id", {Function}, Int, void_fn_ptr([](FunctionContext* fn) -> int64_t {
+      if (!fn) {
+        return 0;
       }
-      if (!module->source.get()) {
-        return bytes_new(NULL, 0);
+      return fn->id;
+    }), false, false},
+
+    {"function_class_id", {Function}, Int, void_fn_ptr([](FunctionContext* fn) -> int64_t {
+      if (!fn) {
+        return 0;
       }
-      const string& data = module->source->data();
-      return bytes_new(data.data(), data.size());
+      return fn->class_id;
+    }), false, false},
+
+    {"function_fragment_count", {Function}, Int, void_fn_ptr([](FunctionContext* fn) -> int64_t {
+      if (!fn) {
+        return -1;
+      }
+      return fn->fragments.size();
+    }), false, false},
+
+    {"function_split_count", {Function}, Int, void_fn_ptr([](FunctionContext* fn) -> int64_t {
+      if (!fn) {
+        return -1;
+      }
+      return fn->num_splits;
+    }), false, false},
+
+    {"function_pass_exception_block", {Function}, Bool, void_fn_ptr([](FunctionContext* fn) -> bool {
+      if (!fn) {
+        return false;
+      }
+      return fn->pass_exception_block;
     }), false, false},
 
     {"code_buffer_size", {}, Int, void_fn_ptr([]() -> int64_t {
@@ -137,14 +205,6 @@ void __nemesys___initialize() {
       return debug_flags;
     }), false, false},
 
-    {"test_debug_flag", {Unicode}, Bool, void_fn_ptr([](UnicodeObject* flag_name) -> bool {
-      BytesObject* flag_name_bytes = unicode_encode_ascii(flag_name);
-      delete_reference(flag_name);
-      int64_t flag = static_cast<int64_t>(debug_flag_for_name(flag_name_bytes->data));
-      delete_reference(flag_name_bytes);
-      return debug_flags & flag;
-    }), false, false},
-
     {"set_debug_flags", {Int}, None, void_fn_ptr([](int64_t new_debug_flags) {
       debug_flags = new_debug_flags;
     }), false, false},
@@ -160,5 +220,11 @@ void __nemesys___initialize() {
 
   for (auto& def : module_function_defs) {
     __nemesys___module->create_builtin_function(def);
+  }
+
+  // add debug flags as constants
+  for (const auto& it : name_to_debug_flag) {
+    __nemesys___module->globals.emplace("DebugFlag_" + it.first,
+        Value(ValueType::Int, static_cast<int64_t>(it.second)));
   }
 }

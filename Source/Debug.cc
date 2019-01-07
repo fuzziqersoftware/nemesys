@@ -3,6 +3,8 @@
 #include <inttypes.h>
 #include <string.h>
 
+using namespace std;
+
 
 DebugFlag debug_flag_for_name(const char* name) {
   if (!strcasecmp(name, "ShowSearchDebug")) {
@@ -52,5 +54,26 @@ DebugFlag debug_flag_for_name(const char* name) {
   }
   return static_cast<DebugFlag>(0);
 }
+
+
+const unordered_map<string, DebugFlag> name_to_debug_flag({
+  {"ShowSearchDebug"    , DebugFlag::ShowSearchDebug},
+  {"ShowSourceDebug"    , DebugFlag::ShowSourceDebug},
+  {"ShowLexDebug"       , DebugFlag::ShowLexDebug},
+  {"ShowParseDebug"     , DebugFlag::ShowParseDebug},
+  {"ShowAnnotateDebug"  , DebugFlag::ShowAnnotateDebug},
+  {"ShowAnalyzeDebug"   , DebugFlag::ShowAnalyzeDebug},
+  {"ShowCompileDebug"   , DebugFlag::ShowCompileDebug},
+  {"ShowAssembly"       , DebugFlag::ShowAssembly},
+  {"ShowCodeSoFar"      , DebugFlag::ShowCodeSoFar},
+  {"ShowRefcountChanges", DebugFlag::ShowRefcountChanges},
+  {"ShowJITEvents"      , DebugFlag::ShowJITEvents},
+  {"ShowCompileErrors"  , DebugFlag::ShowCompileErrors},
+  {"NoInlineRefcounting", DebugFlag::NoInlineRefcounting},
+  {"NoEagerCompilation" , DebugFlag::NoEagerCompilation},
+  {"Code"               , DebugFlag::Code},
+  {"Verbose"            , DebugFlag::Verbose},
+  {"All"                , DebugFlag::All},
+});
 
 int64_t debug_flags = 0;

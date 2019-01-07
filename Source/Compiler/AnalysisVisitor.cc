@@ -503,8 +503,8 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
       try {
         this->current_value = module->globals.at(a->name);
       } catch (const out_of_range&) {
-        throw compile_error("module attribute lookup refers to missing attribute",
-            a->file_offset);
+        throw compile_error(string_printf("module %s has no attribute %s",
+            module->name.c_str(), a->name.c_str()), a->file_offset);
       }
     }
   }
