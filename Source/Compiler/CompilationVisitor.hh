@@ -179,7 +179,7 @@ private:
 
   void write_alloc_class_instance(int64_t class_id, bool initialize_attributes = true);
 
-  void write_raise_exception(int64_t class_id);
+  void write_raise_exception(int64_t class_id, const wchar_t* message = NULL);
   void write_create_exception_block(
       const std::vector<std::pair<std::string, std::unordered_set<int64_t>>>& label_to_class_ids,
       const std::string& exception_return_label);

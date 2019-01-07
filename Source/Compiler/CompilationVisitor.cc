@@ -1060,7 +1060,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_label(string_printf("__BinaryOperation_%p_pow_check_neg", a));
         this->as.write_cmp(right_mem, 0);
         this->as.write_jge(positive_label);
-        this->write_raise_exception(ValueError_class_id);
+        this->write_raise_exception(ValueError_class_id, L"exponent must be nonnegative");
         this->as.write_label(positive_label);
 
         // implementation mirrors notes/pow.s except that we load the base value
@@ -1185,7 +1185,7 @@ void CompilationVisitor::visit(TernaryOperation* a) {
     left_callsite_token = e.callsite_token;
   }
   this->as.write_jmp(end_label);
-  Value left_type = move(this->current_type);
+  Value left_type = this->current_type;
   bool left_holding_reference = this->holding_reference;
 
   // generate code for the right (False) value
@@ -1783,7 +1783,11 @@ void CompilationVisitor::visit(FunctionCall* a) {
           a, a->callee_function_id, callsite_token));
       this->as.write_mov(r10, reinterpret_cast<int64_t>(this->global));
       this->as.write_mov(r11, callsite_token);
-      this->as.write_call(common_object_reference(void_fn_ptr(&_resolve_function_call)));
+
+      // if this call ever returns to this point in the code, it must raise an
+      // exception, so just go directly to the exception handler if it does.
+      this->as.write_push(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));
+      this->as.write_jmp(common_object_reference(void_fn_ptr(&_resolve_function_call)));
 
       // we're done here - can't compile any more since we don't know the return
       // type of this function. but we have to compile the rest of the scope to
@@ -3897,24 +3901,31 @@ void CompilationVisitor::write_alloc_class_instance(int64_t class_id,
   }
 }
 
-void CompilationVisitor::write_raise_exception(int64_t class_id) {
+void CompilationVisitor::write_raise_exception(int64_t class_id,
+    const wchar_t* message) {
   auto* cls = this->global->context_for_class(class_id);
 
-  // this form can only be used for exceptions that don't take an argument
-  if (cls->instance_size() != sizeof(InstanceObject)) {
-    throw compile_error("incorrect exception raise form generated");
+  this->write_alloc_class_instance(class_id, false);
+
+  if (message) {
+    // this form can only be used for exceptions that take exactly one argument
+    if (cls->instance_size() != sizeof(InstanceObject) + sizeof(void*)) {
+      throw compile_error("incorrect exception raise form generated");
+    }
+
+    // set the attribute appropriately
+    const UnicodeObject* constant = this->global->get_or_create_constant(message);
+    this->as.write_mov(r15, reinterpret_cast<int64_t>(constant));
+    this->as.write_mov(MemoryReference(this->target_register, sizeof(InstanceObject)), r15);
+
+  } else {
+    // this form can only be used for exceptions that don't take an argument
+    if (cls->instance_size() != sizeof(InstanceObject)) {
+      throw compile_error("incorrect exception raise form generated");
+    }
   }
 
-  this->write_alloc_class_instance(class_id, false);
   this->as.write_mov(r15, MemoryReference(this->target_register));
-
-  // TODO: implement form of this function that zeroes attributes (like below)
-  // and calls __init__ appropriately
-  // zero everything else in the class
-  //this->as.write_xor(rax, rax);
-  //for (size_t x = sizeof(InstanceObject); x < cls->instance_size(); x += 8) {
-  //  this->as.write_mov(MemoryReference(r15, x), rax);
-  //}
 
   // raise the exception
   this->as.write_jmp(common_object_reference(void_fn_ptr(&_unwind_exception_internal)));

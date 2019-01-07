@@ -24,6 +24,7 @@ test: nemesys Source/Assembler/AMD64AssemblerTest Source/Types/DictionaryTest
 	./Source/Assembler/AMD64AssemblerTest
 	./Source/Types/DictionaryTest
 	(cd tests ; ./run_tests.sh)
+	(cd tests_independent ; ./run_tests.sh)
 
 nemesys: $(OBJECTS)
 	$(CXXLD) $(LDFLAGS) -o nemesys $^ $(LIBS)

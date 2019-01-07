@@ -169,7 +169,9 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
           try {
             module->ast_root->accept(&v);
           } catch (const compile_error& e) {
-            global->print_compile_error(stderr, module, e);
+            if (debug_flags & DebugFlag::ShowCompileErrors) {
+              global->print_compile_error(stderr, module, e);
+            }
             throw;
           }
         }
@@ -203,7 +205,9 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
           try {
             module->ast_root->accept(&v);
           } catch (const compile_error& e) {
-            global->print_compile_error(stderr, module, e);
+            if (debug_flags & DebugFlag::ShowCompileErrors) {
+              global->print_compile_error(stderr, module, e);
+            }
             throw;
           }
         }
@@ -343,18 +347,20 @@ void compile_fragment(GlobalContext* global, ModuleContext* module,
     }
 
     global->scopes_in_progress.erase(scope_name);
-    if (debug_flags & DebugFlag::ShowCodeSoFar) {
-      fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
-          scope_name.c_str());
+    if (debug_flags & DebugFlag::ShowCompileErrors) {
+      if (debug_flags & DebugFlag::ShowCodeSoFar) {
+        fprintf(stderr, "[%s] ======== compilation failed\ncode so far:\n",
+            scope_name.c_str());
 
-      unordered_set<size_t> patch_offsets;
-      const string& compiled = v.assembler().assemble(&patch_offsets,
-          &f->compiled_labels, 0, true);
-      string disassembly = AMD64Assembler::disassemble(compiled.data(),
-          compiled.size(), 0, &f->compiled_labels);
-      fprintf(stderr, "\n%s\n", disassembly.c_str());
+        unordered_set<size_t> patch_offsets;
+        const string& compiled = v.assembler().assemble(&patch_offsets,
+            &f->compiled_labels, 0, true);
+        string disassembly = AMD64Assembler::disassemble(compiled.data(),
+            compiled.size(), 0, &f->compiled_labels);
+        fprintf(stderr, "\n%s\n", disassembly.c_str());
+      }
+      global->print_compile_error(stderr, module, e);
     }
-    global->print_compile_error(stderr, module, e);
     throw;
   }
   global->scopes_in_progress.erase(scope_name);
@@ -419,10 +425,13 @@ const void* jit_compile_scope(GlobalContext* global, int64_t callsite_token,
       fprintf(stderr, "[jit_callsite:%" PRId64 "] failed: %s\n",
           callsite_token, what);
     }
+
     // TODO: this is a memory leak! we need to call delete_reference
     // appropriately here based on the contents of int_args and their types
+
+    UnicodeObject* message = bytes_decode_ascii(what);
     return create_single_attr_instance(NemesysCompilerError_class_id,
-        reinterpret_cast<int64_t>(what));
+        reinterpret_cast<int64_t>(message));
   };
 
   // get the callsite object

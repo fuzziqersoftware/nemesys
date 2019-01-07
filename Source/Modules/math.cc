@@ -78,7 +78,8 @@ void math_initialize() {
 
     {"factorial", {Int}, Int, void_fn_ptr([](int64_t a, ExceptionBlock* exc_block) -> int64_t {
       if (a < 0) {
-        raise_python_exception(exc_block, create_instance(ValueError_class_id));
+        raise_python_exception_with_message(exc_block, ValueError_class_id,
+            "factorial input must be nonnegative");
       }
       int64_t ret = 1;
       for (; a > 1; a--) {

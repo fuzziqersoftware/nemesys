@@ -62,7 +62,8 @@ BytesObject* bytes_concat(const BytesObject* a, const BytesObject* b,
 char bytes_at(const BytesObject* s, size_t which,
     ExceptionBlock* exc_block) {
   if (which >= s->count) {
-    raise_python_exception(exc_block, create_instance(IndexError_class_id));
+    raise_python_exception_with_message(exc_block, IndexError_class_id,
+        "bytes index out of range");
     throw out_of_range("index out of range for bytes object");
   }
   return s->data[which];
@@ -159,7 +160,8 @@ UnicodeObject* unicode_concat(const UnicodeObject* a, const UnicodeObject* b,
 wchar_t unicode_at(const UnicodeObject* s, size_t which,
     ExceptionBlock* exc_block) {
   if (which >= s->count) {
-    raise_python_exception(exc_block, create_instance(IndexError_class_id));
+    raise_python_exception_with_message(exc_block, IndexError_class_id,
+        "unicode index out of range");
     throw out_of_range("index out of range for unicode object");
   }
   return s->data[which];

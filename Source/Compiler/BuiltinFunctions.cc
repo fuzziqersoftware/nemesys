@@ -370,7 +370,8 @@ static void create_default_builtin_functions() {
       delete_reference(s);
 
       if (endptr != s->data + s->count) {
-        raise_python_exception(exc_block, create_instance(ValueError_class_id));
+        raise_python_exception_with_message(exc_block, ValueError_class_id,
+            "invalid value for int()");
       }
       return ret;
 
@@ -381,7 +382,8 @@ static void create_default_builtin_functions() {
       delete_reference(s);
 
       if (endptr != s->data + s->count) {
-        raise_python_exception(exc_block, create_instance(ValueError_class_id));
+        raise_python_exception_with_message(exc_block, ValueError_class_id,
+            "invalid value for int()");
       }
       return ret;
 
@@ -409,7 +411,8 @@ static void create_default_builtin_functions() {
       delete_reference(s);
 
       if (endptr != s->data + s->count) {
-        raise_python_exception(exc_block, create_instance(ValueError_class_id));
+        raise_python_exception_with_message(exc_block, ValueError_class_id,
+            "invalid value for float()");
       }
       return ret;
 
@@ -420,7 +423,8 @@ static void create_default_builtin_functions() {
       delete_reference(s);
 
       if (endptr != s->data + s->count) {
-        raise_python_exception(exc_block, create_instance(ValueError_class_id));
+        raise_python_exception_with_message(exc_block, ValueError_class_id,
+            "invalid value for float()");
       }
       return ret;
     }))}, true, true},
@@ -524,7 +528,8 @@ static void create_default_builtin_functions() {
     // Unicode chr(Int)
     {"chr", {Int}, Unicode, void_fn_ptr([](int64_t i, ExceptionBlock* exc_block) -> UnicodeObject* {
       if (i >= 0x110000) {
-        raise_python_exception(exc_block, create_instance(ValueError_class_id));
+        raise_python_exception_with_message(exc_block, ValueError_class_id,
+            "invalid value for chr()");
       }
 
       UnicodeObject* s = unicode_new(NULL, 1);
@@ -537,7 +542,8 @@ static void create_default_builtin_functions() {
     // Int ord(Unicode)
     {"ord", {FragDef({Bytes}, Int, void_fn_ptr([](BytesObject* s, ExceptionBlock* exc_block) -> int64_t {
       if (s->count != 1) {
-        raise_python_exception(exc_block, create_instance(TypeError_class_id));
+        raise_python_exception_with_message(exc_block, ValueError_class_id,
+            "string contains more than one character");
       }
 
       int64_t ret = (s->count < 1) ? -1 : s->data[0];
@@ -546,7 +552,8 @@ static void create_default_builtin_functions() {
 
     })), FragDef({Unicode}, Int, void_fn_ptr([](UnicodeObject* s, ExceptionBlock* exc_block) -> int64_t {
       if (s->count != 1) {
-        raise_python_exception(exc_block, create_instance(TypeError_class_id));
+        raise_python_exception_with_message(exc_block, ValueError_class_id,
+            "string contains more than one character");
       }
 
       int64_t ret = (s->count < 1) ? -1 : s->data[0];
@@ -664,57 +671,57 @@ void create_default_builtin_classes() {
     declare_message_exception("NemesysCompilerError"),
 
     // TODO: probably all of these should have some attributes
-    declare_trivial_exception("ArithmeticError"),
+    declare_message_exception("ArithmeticError"),
     declare_message_exception("AssertionError"),
-    declare_trivial_exception("AttributeError"),
-    declare_trivial_exception("BaseException"),
-    declare_trivial_exception("BlockingIOError"),
-    declare_trivial_exception("BrokenPipeError"),
-    declare_trivial_exception("BufferError"),
-    declare_trivial_exception("ChildProcessError"),
-    declare_trivial_exception("ConnectionAbortedError"),
-    declare_trivial_exception("ConnectionError"),
-    declare_trivial_exception("ConnectionRefusedError"),
-    declare_trivial_exception("ConnectionResetError"),
-    declare_trivial_exception("EnvironmentError"),
-    declare_trivial_exception("EOFError"),
-    declare_trivial_exception("Exception"),
-    declare_trivial_exception("FileExistsError"),
-    declare_trivial_exception("FileNotFoundError"),
-    declare_trivial_exception("FloatingPointError"),
-    declare_trivial_exception("GeneratorExit"),
-    declare_trivial_exception("IndexError"),
-    declare_trivial_exception("InterruptedError"),
-    declare_trivial_exception("IOError"),
-    declare_trivial_exception("IsADirectoryError"),
-    declare_trivial_exception("KeyboardInterrupt"),
-    declare_trivial_exception("KeyError"),
-    declare_trivial_exception("LookupError"),
+    declare_message_exception("AttributeError"),
+    declare_message_exception("BaseException"),
+    declare_message_exception("BlockingIOError"),
+    declare_message_exception("BrokenPipeError"),
+    declare_message_exception("BufferError"),
+    declare_message_exception("ChildProcessError"),
+    declare_message_exception("ConnectionAbortedError"),
+    declare_message_exception("ConnectionError"),
+    declare_message_exception("ConnectionRefusedError"),
+    declare_message_exception("ConnectionResetError"),
+    declare_message_exception("EnvironmentError"),
+    declare_message_exception("EOFError"),
+    declare_message_exception("Exception"),
+    declare_message_exception("FileExistsError"),
+    declare_message_exception("FileNotFoundError"),
+    declare_message_exception("FloatingPointError"),
+    declare_message_exception("GeneratorExit"),
+    declare_message_exception("IndexError"),
+    declare_message_exception("InterruptedError"),
+    declare_message_exception("IOError"),
+    declare_message_exception("IsADirectoryError"),
+    declare_message_exception("KeyboardInterrupt"),
+    declare_message_exception("KeyError"),
+    declare_message_exception("LookupError"),
     declare_trivial_exception("MemoryError"),
-    declare_trivial_exception("ModuleNotFoundError"),
-    declare_trivial_exception("NotADirectoryError"),
-    declare_trivial_exception("NotImplementedError"),
-    declare_trivial_exception("OverflowError"),
-    declare_trivial_exception("PermissionError"),
-    declare_trivial_exception("ProcessLookupError"),
-    declare_trivial_exception("RecursionError"),
-    declare_trivial_exception("ReferenceError"),
-    declare_trivial_exception("ResourceWarning"),
-    declare_trivial_exception("RuntimeError"),
-    declare_trivial_exception("StopAsyncIteration"),
-    declare_trivial_exception("StopIteration"),
-    declare_trivial_exception("SystemError"),
-    declare_trivial_exception("SystemExit"),
-    declare_trivial_exception("TimeoutError"),
-    declare_trivial_exception("TypeError"),
-    declare_trivial_exception("TypeError"),
-    declare_trivial_exception("UnicodeDecodeError"),
-    declare_trivial_exception("UnicodeEncodeError"),
-    declare_trivial_exception("UnicodeError"),
-    declare_trivial_exception("UnicodeTranslateError"),
-    declare_trivial_exception("ValueError"),
-    declare_trivial_exception("ValueError"),
-    declare_trivial_exception("ZeroDivisionError"),
+    declare_message_exception("ModuleNotFoundError"),
+    declare_message_exception("NotADirectoryError"),
+    declare_message_exception("NotImplementedError"),
+    declare_message_exception("OverflowError"),
+    declare_message_exception("PermissionError"),
+    declare_message_exception("ProcessLookupError"),
+    declare_message_exception("RecursionError"),
+    declare_message_exception("ReferenceError"),
+    declare_message_exception("ResourceWarning"),
+    declare_message_exception("RuntimeError"),
+    declare_message_exception("StopAsyncIteration"),
+    declare_message_exception("StopIteration"),
+    declare_message_exception("SystemError"),
+    declare_message_exception("SystemExit"),
+    declare_message_exception("TimeoutError"),
+    declare_message_exception("TypeError"),
+    declare_message_exception("TypeError"),
+    declare_message_exception("UnicodeDecodeError"),
+    declare_message_exception("UnicodeEncodeError"),
+    declare_message_exception("UnicodeError"),
+    declare_message_exception("UnicodeTranslateError"),
+    declare_message_exception("ValueError"),
+    declare_message_exception("ValueError"),
+    declare_message_exception("ZeroDivisionError"),
     {"OSError", {{"errno", Int}}, {
         {"__init__", {Self, Int}, Self, one_field_constructor, false, false},
       }, trivial_destructor, true},

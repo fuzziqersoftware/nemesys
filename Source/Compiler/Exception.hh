@@ -35,6 +35,12 @@ struct ExceptionBlock {
 extern const size_t return_exception_block_size;
 
 
+void raise_python_exception_with_message(ExceptionBlock* exc_block,
+    int64_t class_id, const char* message);
+
+void raise_python_exception_with_format(ExceptionBlock* exc_block,
+    int64_t class_id, const char* fmt, ...);
+
 extern "C" {
 
 // everything in here is implemented in Exception-Assembly.s

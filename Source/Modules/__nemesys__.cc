@@ -59,10 +59,26 @@ void __nemesys___initialize() {
   Value Unicode(ValueType::Unicode);
 
   vector<BuiltinFunctionDefinition> module_function_defs({
-    {"module_phase", {Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
+    {"module_phase", {Unicode}, Unicode, void_fn_ptr([](UnicodeObject* module_name) -> const UnicodeObject* {
       auto module = get_module(module_name);
       delete_reference(module_name);
-      return module.get() ? static_cast<int64_t>(module->phase) : -1;
+      if (!module.get()) {
+        return global->get_or_create_constant(L"Missing");
+      }
+      switch (module->phase) {
+        case ModuleContext::Phase::Initial:
+          return global->get_or_create_constant(L"Initial");
+        case ModuleContext::Phase::Parsed:
+          return global->get_or_create_constant(L"Parsed");
+        case ModuleContext::Phase::Annotated:
+          return global->get_or_create_constant(L"Annotated");
+        case ModuleContext::Phase::Analyzed:
+          return global->get_or_create_constant(L"Analyzed");
+        case ModuleContext::Phase::Imported:
+          return global->get_or_create_constant(L"Imported");
+        default:
+          return global->get_or_create_constant(L"Unknown");
+      }
     }), false, false},
 
     {"module_compiled_size", {Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {

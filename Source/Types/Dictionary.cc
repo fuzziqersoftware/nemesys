@@ -221,14 +221,16 @@ void* dictionary_at(const DictionaryObject* d, void* k,
   // find the value slot for this key
   auto t = d->traverse(k, false);
   if (!t.node) {
-    raise_python_exception(exc_block, create_instance(KeyError_class_id));
+    raise_python_exception_with_message(exc_block, KeyError_class_id,
+        "key not present");
     throw out_of_range("key does not exist in dictionary");
   }
 
   // get the contents and convert them into something we can return
   auto slot_contents = t.node->get_slot(t.ch);
   if (!slot_contents.occupied || slot_contents.is_subnode) {
-    raise_python_exception(exc_block, create_instance(KeyError_class_id));
+    raise_python_exception_with_message(exc_block, KeyError_class_id,
+        "key not present");
     throw out_of_range("key does not exist in dictionary");
   }
   return slot_contents.value;

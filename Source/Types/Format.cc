@@ -253,7 +253,7 @@ void typecheck_format(const vector<FormatSpecifier>& specs, const vector<Value>&
     ValueType input_type = types[input_index].type;
 
     // s accepts Unicode only
-    // TODO: in python, s accepts
+    // TODO: in python, s accepts any type that can be __str__()'d
     switch (spec.format_code) {
       case 's':
         if (input_type != ValueType::Unicode) {
@@ -318,9 +318,6 @@ void execute_format_spec(string& output, struct FormatSpecifier spec,
     output += '%';
     return;
   }
-  if (spec.format_code == 's') {
-    throw runtime_error("%s is not yet implemented");
-  }
 
   if (spec.variable_width) {
     spec.width = reinterpret_cast<int64_t>(tuple_get_item(args, input_index));
@@ -335,7 +332,12 @@ void execute_format_spec(string& output, struct FormatSpecifier spec,
   int64_t x = reinterpret_cast<int64_t>(tuple_get_item(args, input_index));
   input_index++;
 
-  if ((spec.format_code == 'd') || (spec.format_code == 'i') ||
+  if (spec.format_code == 's') {
+    const BytesObject* s = reinterpret_cast<const BytesObject*>(x);
+    // TODO: implement width and precision here
+    output.append(s->data, s->count);
+
+  } else if ((spec.format_code == 'd') || (spec.format_code == 'i') ||
       (spec.format_code == 'u') || (spec.format_code == 'o') ||
       (spec.format_code == 'X') || (spec.format_code == 'x') ||
       (spec.format_code == 'c')) {
@@ -358,9 +360,6 @@ void execute_format_spec(wstring& output, struct FormatSpecifier spec,
     output += L'%';
     return;
   }
-  if (spec.format_code == 's') {
-    throw runtime_error("%s is not yet implemented");
-  }
 
   if (spec.variable_width) {
     spec.width = reinterpret_cast<int64_t>(tuple_get_item(args, input_index));
@@ -375,7 +374,12 @@ void execute_format_spec(wstring& output, struct FormatSpecifier spec,
   int64_t x = reinterpret_cast<int64_t>(tuple_get_item(args, input_index));
   input_index++;
 
-  if ((spec.format_code == 'd') || (spec.format_code == 'i') ||
+  if (spec.format_code == 's') {
+    const UnicodeObject* s = reinterpret_cast<const UnicodeObject*>(x);
+    // TODO: implement width and precision here
+    output.append(s->data, s->count);
+
+  } else if ((spec.format_code == 'd') || (spec.format_code == 'i') ||
       (spec.format_code == 'u') || (spec.format_code == 'o') ||
       (spec.format_code == 'X') || (spec.format_code == 'x') ||
       (spec.format_code == 'c')) {
@@ -440,7 +444,7 @@ ObjectType* string_format(ObjectType* format, TupleObject* args,
     if (delete_tuple_reference) {
       delete_reference(args);
     }
-    raise_python_exception(exc_block, create_instance(TypeError_class_id));
+    raise_python_exception_with_message(exc_block, TypeError_class_id, e.what());
     throw;
   }
 
