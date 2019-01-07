@@ -38,6 +38,9 @@ DebugFlag debug_flag_for_name(const char* name) {
   if (!strcasecmp(name, "NoInlineRefcounting")) {
     return DebugFlag::NoInlineRefcounting;
   }
+  if (!strcasecmp(name, "NoEagerCompilation")) {
+    return DebugFlag::NoEagerCompilation;
+  }
   if (!strcasecmp(name, "Code")) {
     return DebugFlag::Code;
   }

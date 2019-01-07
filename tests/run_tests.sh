@@ -16,7 +16,7 @@ for FILE in *.py; do
   fi
 done
 
-for OPTIONS in "" "-XNoInlineRefcounting"; do
+for OPTIONS in "" "-XNoInlineRefcounting" "-XNoEagerCompilation" "-XNoInlineRefcounting -XNoEagerCompilation"; do
   for FILE in *.py; do
     if [ -e $FILE.input.1 ]; then
       for INPUT_FILE in $FILE.input.*; do

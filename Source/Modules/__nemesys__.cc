@@ -54,6 +54,7 @@ static std::shared_ptr<ModuleContext> get_module(UnicodeObject* module_name) {
 
 void __nemesys___initialize() {
   Value None(ValueType::None);
+  Value Bool(ValueType::Bool);
   Value Int(ValueType::Int);
   Value Bytes(ValueType::Bytes);
   Value Unicode(ValueType::Unicode);
@@ -134,6 +135,14 @@ void __nemesys___initialize() {
 
     {"debug_flags", {}, Int, void_fn_ptr([]() -> int64_t {
       return debug_flags;
+    }), false, false},
+
+    {"test_debug_flag", {Unicode}, Bool, void_fn_ptr([](UnicodeObject* flag_name) -> bool {
+      BytesObject* flag_name_bytes = unicode_encode_ascii(flag_name);
+      delete_reference(flag_name);
+      int64_t flag = static_cast<int64_t>(debug_flag_for_name(flag_name_bytes->data));
+      delete_reference(flag_name_bytes);
+      return debug_flags & flag;
     }), false, false},
 
     {"set_debug_flags", {Int}, None, void_fn_ptr([](int64_t new_debug_flags) {

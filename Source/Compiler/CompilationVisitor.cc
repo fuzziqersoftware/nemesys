@@ -1741,6 +1741,22 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
     string returned_label = string_printf("__FunctionCall_%p_returned", a);
 
+    // if there's no existing fragment, the function isn't builtin, and eager
+    // compilation is enabled, try to compile a new fragment now
+    if ((callee_fragment_index < 0) && (!fn->is_builtin()) &&
+        !(debug_flags & DebugFlag::NoEagerCompilation)) {
+      fn->fragments.emplace_back(fn, fn->fragments.size(), arg_types);
+      try {
+        compile_fragment(this->global, fn->module, &fn->fragments.back());
+        callee_fragment_index = fn->fragments.size() - 1;
+      } catch (const compile_error& e) {
+        if (debug_flags & DebugFlag::ShowCompileErrors) {
+          this->global->print_compile_error(stderr, this->module, e);
+        }
+        fn->fragments.pop_back();
+      }
+    }
+
     // if there's no existing fragment with the right types and this isn't a
     // built-in function, write a call to the compiler instead. if this is a
     // built-in function, fail (there's nothing to recompile)
