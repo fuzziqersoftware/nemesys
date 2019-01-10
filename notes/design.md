@@ -75,7 +75,7 @@ Integer arguments beyond the 6th and floating-point arguments beyond the 8th are
 
 The special registers (r12-r15) are used as follows:
 - Common objects are stored in a statically-allocated array pointed to by r12. this array contains handy stuff like pointers to malloc() and free(), the preallocated MemoryError singleton instance, etc.
-- Global variables are referenced by offsets from r13. Each module has a statically-assigned space above r13, and should read/write globals with e.g. `mov [r13 + X]` opcodes.
+- Global variables are referenced by offsets from r13 (e.g. with `mov [r13 + X]` opcodes). Each module has a statically-allocated memory space for its globals. When calling a function in a different module, r13 is saved and updated by the caller to point to the new module's global space.
 - The active exception block pointer is stored in r14. Except at the very beginning and end of module root scope functions, r14 must never be zero when executing compiled Python code. The exception block defines where control should return to when an exception is raised. This includes all `except Something` blocks, but also all `finally` blocks and all function scopes (so destructors are properly called). See the definition of the ExceptionBlock structure in Exception.hh for more information.
 - The active exception object is stored in r15. Most of the time this should be zero; it's only nonzero when a raise statement is being executed and is in the process of transferring control to an except block, or when a finally block or function destructor call block is running and there is an active exception. In the future, this special register can probably be removed; currently it's zero most of the time.
 

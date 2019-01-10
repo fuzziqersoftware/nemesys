@@ -76,7 +76,7 @@ static map<string, Value> globals({
 std::shared_ptr<ModuleContext> sys_module(new ModuleContext("sys", globals));
 
 void sys_set_executable(const char* realpath) {
-  sys_module->globals.emplace("executable", Value(ValueType::Bytes, realpath));
+  sys_module->create_global_variable("executable", Value(ValueType::Bytes, realpath), false);
 }
 
 void sys_set_argv(const vector<const char*>& sys_argv) {
@@ -88,7 +88,7 @@ void sys_set_argv(const vector<const char*>& sys_argv) {
     }
     argv.emplace_back(new Value(ValueType::Unicode, move(warg)));
   }
-  sys_module->globals.emplace("argv", Value(ValueType::List, move(argv)));
+  sys_module->create_global_variable("argv", Value(ValueType::List, move(argv)), false);
 }
 
 void sys_initialize() {

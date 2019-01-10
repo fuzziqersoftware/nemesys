@@ -93,27 +93,38 @@ int64_t construct_value(GlobalContext* global, const Value& value,
 void initialize_global_space_for_module(GlobalContext* global,
     ModuleContext* module) {
 
-  // clear everything first
-  memset(&global->global_space[module->global_base_offset / 8], 0,
-      sizeof(int64_t) * module->globals.size());
+  // allocate global space
+  if (module->global_space) {
+    throw logic_error("attempted to initialize module global space when it already exists");
+  }
+  module->global_space = malloc(module->global_variables.size() * sizeof(int64_t));
+  int64_t* global_slots = reinterpret_cast<int64_t*>(module->global_space);
 
-  // for built-in modules, construct everything statically
-  size_t slot = module->global_base_offset / 8;
-  for (const auto& it : module->globals) {
-    // if the module is dynamic, only initialize a few globals (which the root
-    // scope doesn't initialize)
-    if (module->ast_root.get() &&
-        !static_initialize_module_attributes.count(it.first)) {
-      continue;
+  // initialize the global space, keeping track of what we wrote
+  vector<bool> initialized(module->global_variables.size(), false);
+  for (const auto& it : module->global_variables) {
+    if (it.second.flags & ModuleContext::GlobalVariable::Flag::StaticInitialize) {
+      if (!it.second.value.value_known) {
+        throw compile_error(string_printf("built-in global %s has unknown value but is statically initialized",
+            it.first.c_str()));
+      }
+
+      // note: only use shared constants if the value is immutable
+      global_slots[it.second.index] = construct_value(global, it.second.value,
+          !(it.second.flags & ModuleContext::GlobalVariable::Flag::Mutable));
+
+    } else {
+      global_slots[it.second.index] = 0;
     }
 
-    if (!it.second.value_known) {
-      throw compile_error(string_printf("built-in global %s has unknown value",
-          it.first.c_str()));
-    }
+    initialized[it.second.index] = true;
+  }
 
-    global->global_space[slot] = construct_value(global, it.second, true);
-    slot++;
+  // check that entire global space was initialized
+  for (bool x : initialized) {
+    if (!x) {
+      throw logic_error("some global slots were uninitialized");
+    }
   }
 }
 
@@ -176,10 +187,6 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
           }
         }
 
-        // reserve space for this module's globals
-        module->global_base_offset = global->reserve_global_space(
-            sizeof(int64_t) * module->globals.size());
-
         if (debug_flags & DebugFlag::ShowAnnotateDebug) {
           fprintf(stderr, "[%s] ======== module annotated\n", module->name.c_str());
           if (module->ast_root.get()) {
@@ -188,11 +195,14 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
             fprintf(stderr, "# split count: %" PRIu64 "\n", module->root_fragment_num_splits);
           }
 
-          for (const auto& it : module->globals) {
-            fprintf(stderr, "# global: %s\n", it.first.c_str());
+          for (const auto& it : module->global_variables) {
+            if (it.second.value.type != ValueType::Indeterminate) {
+              string value_str = it.second.value.str();
+              fprintf(stderr, "# global: %s = %s\n", it.first.c_str(), value_str.c_str());
+            } else {
+              fprintf(stderr, "# global: %s\n", it.first.c_str());
+            }
           }
-          fprintf(stderr, "# global space is now %p (%" PRId64 " bytes)\n",
-              global->global_space, global->global_space_used);
           fputc('\n', stderr);
         }
         module->phase = ModuleContext::Phase::Annotated;
@@ -218,12 +228,10 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
             module->ast_root->print(stderr);
           }
 
-          int64_t offset = module->global_base_offset;
-          for (const auto& it : module->globals) {
-            string value_str = it.second.str();
-            fprintf(stderr, "# global at r13+%" PRIX64 ": %s = %s\n",
-                offset, it.first.c_str(), value_str.c_str());
-            offset += 8;
+          for (const auto& it : module->global_variables) {
+            string value_str = it.second.value.str();
+            fprintf(stderr, "# global at r13+%zu: %s = %s\n",
+                it.second.index * sizeof(int64_t), it.first.c_str(), value_str.c_str());
           }
           fputc('\n', stderr);
         }
@@ -231,10 +239,10 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
         initialize_global_space_for_module(global, module);
 
         if (debug_flags & DebugFlag::ShowAnalyzeDebug) {
-          fprintf(stderr, "[%s] ======== global space updated\n",
+          fprintf(stderr, "[%s] ======== global space statically initialized\n",
               module->name.c_str());
-          print_data(stderr, global->global_space, global->global_space_used,
-              reinterpret_cast<uint64_t>(global->global_space));
+          print_data(stderr, module->global_space,
+              module->global_variables.size() * sizeof(int64_t));
           fputc('\n', stderr);
         }
 

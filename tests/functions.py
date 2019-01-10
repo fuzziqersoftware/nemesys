@@ -1,25 +1,31 @@
-from globals import y, z
+import test_globals
+from test_globals import y, z, get_z
 
 z = 10
 
-# this checks if argument passing and global references within functions work
+# check if basic argument passing and global references within functions work
 def g(v):
   print('in g(), z is ' + repr(z) + ' and y is ' + repr(y) + ' and v is ' + repr(v))
   return v
 
-# this checks if local names override global names in the function scope
+# check if local names override global names in the function scope
 def f():
   z = 7
   print('in f(), y is ' + repr(y) + ' and z is ' + repr(z))
   return z
 
-# this checks that types are correctly assigned to indeterminate variables
+# check that types are correctly assigned to indeterminate variables
 w = g(f())
 
-# this checks that the global z is not modified by f
+# check that get_z has the globals from test_globals, not from this module
+print('get_z returns %d' % get_z())
+test_globals.z = z
+print('get_z returns %d' % get_z())
+
+# check that the global z is not modified by f
 print('after all of that, w is ' + repr(w) + ' and z is ' + repr(z))
 
-# this checks if stack-based argument passing works properly
+# check if stack-based argument passing works properly
 def sum_all_arguments(a, b, c, d, e=0, f=0, g=0, h=0, i=0, j=0):
   print('a is ' + repr(a))
   print('b is ' + repr(b))
@@ -33,7 +39,7 @@ def sum_all_arguments(a, b, c, d, e=0, f=0, g=0, h=0, i=0, j=0):
   print('j is ' + repr(j))
   return a + b + c + d + e + f + g + h + i + j
 
-# # this function should work with integers, floats, and strings
+# this function should work with integers, floats, and strings
 int_sum = sum_all_arguments(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 print('the sum of 10 ints is ' + repr(int_sum))
 int_sum = sum_all_arguments(1, 2, 3, 4)

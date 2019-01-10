@@ -127,9 +127,15 @@ private:
 
   struct VariableLocation {
     std::string name;
-    bool is_global;
     Value type;
-    MemoryReference mem;
+
+    ModuleContext* global_module; // can be NULL for locals/attributes
+    int64_t global_index;
+
+    MemoryReference variable_mem;
+    bool variable_mem_valid;
+
+    VariableLocation();
 
     std::string str() const;
   };
@@ -170,8 +176,8 @@ private:
       const std::vector<MemoryReference>& float_args,
       ssize_t arg_stack_bytes = -1, Register return_register = Register::None,
       bool return_float = false);
-  void write_function_setup(const std::string& base_label);
-  void write_function_cleanup(const std::string& base_label);
+  void write_function_setup(const std::string& base_label, bool setup_special_regs);
+  void write_function_cleanup(const std::string& base_label, bool setup_special_regs);
 
   void write_add_reference(Register addr_reg);
   void write_delete_held_reference(const MemoryReference& mem);
@@ -192,6 +198,10 @@ private:
   void adjust_stack_to(ssize_t bytes, bool write_opcode = true);
 
   void write_load_double(Register reg, double value);
+  void write_read_variable(Register target_register,
+      Register float_target_register, const VariableLocation& loc);
+  void write_write_variable(Register value_register,
+      Register float_value_register, const VariableLocation& loc);
 
   VariableLocation location_for_global(ModuleContext* module,
       const std::string& name);

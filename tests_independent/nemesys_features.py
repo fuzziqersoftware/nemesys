@@ -1,27 +1,20 @@
 import __nemesys__
 
+import posix
+
 
 def check_counters():
   code_buffer_size = __nemesys__.code_buffer_size()
   code_buffer_used_size = __nemesys__.code_buffer_used_size()
 
-  global_space = __nemesys__.global_space()
-
   print('''nemesys counters:
-
 code_buffer_size == 0x%X
-code_buffer_used_size == 0x%X
-
-global_space == 0x%X''' % (
+code_buffer_used_size == 0x%X''' % (
       code_buffer_size,
-      code_buffer_used_size,
-      global_space))
+      code_buffer_used_size))
 
   assert code_buffer_size > 0
   assert code_buffer_used_size > 0
-
-  assert global_space > 0
-
 
 check_counters()
 
@@ -47,7 +40,6 @@ def check_eager_compilation():
   else:
     print('note: eager compilation is enabled')
     assert pre_call_size == post_call_size
-
 
 check_eager_compilation()
 
@@ -77,7 +69,6 @@ def check_function_inspection():
   assert not __nemesys__.function_pass_exception_block(check_eager_compilation), "check_eager_compilation did not take an exception block"
   assert not __nemesys__.function_pass_exception_block(check_function_inspection), "check_function_inspection did not take an exception block"
 
-
 check_function_inspection()
 
 
@@ -86,25 +77,27 @@ def check_module_inspection():
 
   phase = __nemesys__.module_phase(__name__)
   compiled_size = __nemesys__.module_compiled_size(__name__)
-  global_base_offset = __nemesys__.module_global_base_offset(__name__)
   global_count = __nemesys__.module_global_count(__name__)
   source = __nemesys__.module_source(__name__)
 
   # these functions should also work if passed the module object
   assert phase == __nemesys__.module_phase(this_module)
   assert compiled_size == __nemesys__.module_compiled_size(this_module)
-  assert global_base_offset == __nemesys__.module_global_base_offset(this_module)
   assert global_count == __nemesys__.module_global_count(this_module)
   assert source == __nemesys__.module_source(this_module)
 
   assert phase == "Analyzed"  # doesn't become Imported until the root scope returns
   assert compiled_size > 0
-  assert global_base_offset >= 0
-  assert global_count == 7
-  # note: the globals are __doc__, __name__, __nemesys__, and the functions
+  assert global_count == 8
+  # note: the globals are __doc__, __name__, __nemesys__, posix, and the functions
 
-  assert b'this string appears in the module source' in source
-  assert b'this string does not appear because it has an escaped\x20character' not in source
+  assert b'this string appears verbatim in the module source' in source
+  assert b'this string does not appear verbatim in the source because it has an escaped\x20character' not in source
 
+  # read the contents of this file and make sure it matches module_source
+  fd = posix.open(__file__, posix.O_RDONLY)
+  data = posix.read(fd, 2 * len(source))
+  posix.close(fd)
+  assert data == source, '%s != %s' % (repr(data), repr(source))
 
 check_module_inspection()

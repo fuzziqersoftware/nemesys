@@ -119,23 +119,13 @@ void __nemesys___initialize() {
 
     }))}, false, false},
 
-    {"module_global_base_offset", {FragDef({Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
-      auto module = get_module(module_name);
-      delete_reference(module_name);
-      return module.get() ? module->global_base_offset : -1;
-
-    })), FragDef({Module}, Int, void_fn_ptr([](ModuleContext* module) -> int64_t {
-      return module ? module->global_base_offset : -1;
-
-    }))}, false, false},
-
     {"module_global_count", {FragDef({Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
       auto module = get_module(module_name);
       delete_reference(module_name);
-      return module.get() ? module->globals.size() : -1;
+      return module.get() ? module->global_variables.size() : -1;
 
     })), FragDef({Module}, Int, void_fn_ptr([](ModuleContext* module) -> int64_t {
-      return module ? module->globals.size() : -1;
+      return module ? module->global_variables.size() : -1;
 
     }))}, false, false},
 
@@ -189,10 +179,6 @@ void __nemesys___initialize() {
       return global->code.total_used_bytes();
     }), false, false},
 
-    {"global_space", {}, Int, void_fn_ptr([]() -> int64_t {
-      return global->global_space_used;
-    }), false, false},
-
     {"bytes_constant_count", {}, Int, void_fn_ptr([]() -> int64_t {
       return global->bytes_constants.size();
     }), false, false},
@@ -224,7 +210,7 @@ void __nemesys___initialize() {
 
   // add debug flags as constants
   for (const auto& it : name_to_debug_flag) {
-    __nemesys___module->globals.emplace("DebugFlag_" + it.first,
-        Value(ValueType::Int, static_cast<int64_t>(it.second)));
+    __nemesys___module->create_global_variable("DebugFlag_" + it.first,
+        Value(ValueType::Int, static_cast<int64_t>(it.second)), false);
   }
 }

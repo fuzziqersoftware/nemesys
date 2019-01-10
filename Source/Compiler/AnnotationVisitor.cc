@@ -29,19 +29,24 @@ void AnnotationVisitor::visit(ImportStatement* a) {
   // having been analyzed yet
 
   auto* fn = this->current_function();
-  auto* scope = fn ? &fn->locals : &this->module->globals;
 
   // case 3
   if (a->import_star) {
-    const string& module_name = a->modules.begin()->first;
-    auto module = this->global->get_or_create_module(module_name);
-    advance_module_phase(this->global, module.get(), ModuleContext::Phase::Annotated);
+    const string& imported_module_name = a->modules.begin()->first;
+    auto imported_module = this->global->get_or_create_module(imported_module_name);
+    advance_module_phase(this->global, imported_module.get(), ModuleContext::Phase::Annotated);
 
     // copy the module's globals (names only) into the current scope
-    for (const auto& it : module->globals) {
-      if (!scope->emplace(piecewise_construct, forward_as_tuple(it.first),
-          forward_as_tuple(ValueType::Indeterminate)).second) {
-        throw compile_error("name overwritten by import", a->file_offset);
+    for (const auto& it : imported_module->global_variables) {
+      if (fn) {
+        if (!fn->locals.emplace(piecewise_construct, forward_as_tuple(it.first),
+            forward_as_tuple(ValueType::Indeterminate)).second) {
+          throw compile_error("name overwritten by import", a->file_offset);
+        }
+      } else {
+        if (!this->module->create_global_variable(it.first, Value(ValueType::Indeterminate), true, false)) {
+          throw compile_error("name overwritten by import", a->file_offset);
+        }
       }
     }
 
@@ -54,8 +59,14 @@ void AnnotationVisitor::visit(ImportStatement* a) {
       // we actually don't care if the module is even parseable or not; we
       // don't need anything from it yet other than its existence
       this->global->get_or_create_module(it.first);
-      if (!scope->emplace(it.second, Value(ValueType::Module, it.first)).second) {
-        throw compile_error("name overwritten by import", a->file_offset);
+      if (fn) {
+        if (!fn->locals.emplace(it.second, Value(ValueType::Module, it.first)).second) {
+          throw compile_error("name overwritten by import", a->file_offset);
+        }
+      } else {
+        if (!this->module->create_global_variable(it.second, Value(ValueType::Module, it.first), false, false)) {
+          throw compile_error("name overwritten by import", a->file_offset);
+        }
       }
     }
 
@@ -63,16 +74,22 @@ void AnnotationVisitor::visit(ImportStatement* a) {
   }
 
   // case 2: import some names from a module
-  const string& module_name = a->modules.begin()->first;
-  auto module = this->global->get_or_create_module(module_name);
-  advance_module_phase(this->global, module.get(), ModuleContext::Phase::Annotated);
+  const string& imported_module_name = a->modules.begin()->first;
+  auto imported_module = this->global->get_or_create_module(imported_module_name);
+  advance_module_phase(this->global, imported_module.get(), ModuleContext::Phase::Annotated);
   for (const auto& it : a->names) {
-    if (!module->globals.count(it.first)) {
+    if (!imported_module->global_variables.count(it.first)) {
       throw compile_error("imported name " + it.first + " not defined in source module", a->file_offset);
     }
-    if (!scope->emplace(piecewise_construct, forward_as_tuple(it.second),
-        forward_as_tuple(ValueType::Indeterminate)).second) {
-      throw compile_error("name overwritten by import", a->file_offset);
+    if (fn) {
+      if (!fn->locals.emplace(piecewise_construct, forward_as_tuple(it.second),
+          forward_as_tuple(ValueType::Indeterminate)).second) {
+        throw compile_error("name overwritten by import", a->file_offset);
+      }
+    } else {
+      if (!this->module->create_global_variable(it.second, Value(ValueType::Indeterminate), true, false)) {
+        throw compile_error("name overwritten by import", a->file_offset);
+      }
     }
   }
 
@@ -279,6 +296,5 @@ void AnnotationVisitor::record_write(const string& name, size_t file_offset) {
   }
 
   // we're writing a global
-  this->module->globals.emplace(piecewise_construct, forward_as_tuple(name),
-      forward_as_tuple(ValueType::Indeterminate));
+  this->module->create_global_variable(name, Value(ValueType::Indeterminate), true, false);
 }

@@ -394,26 +394,20 @@ void AnalysisVisitor::visit(VariableLookup* a) {
     return;
   } catch (const out_of_range& e) { }
 
-  try {
-    if (this->in_function_id) {
-      auto* fn = this->current_function();
-      try {
-        this->current_value = fn->locals.at(a->name);
-      } catch (const out_of_range& e) {
-        this->current_value = this->module->globals.at(a->name);
-      }
-    } else {
-      // all lookups outside of a function are globals
-      try {
-        this->current_value = this->module->globals.at(a->name);
-      } catch (const out_of_range& e) {
-        throw compile_error("global " + a->name + " does not exist", a->file_offset);
-      }
-    }
-
-  } catch (const out_of_range& e) {
-    throw compile_error("variable " + a->name + " does not exist", a->file_offset);
+  if (this->in_function_id) {
+    auto* fn = this->current_function();
+    try {
+      this->current_value = fn->locals.at(a->name);
+      return;
+    } catch (const out_of_range& e) { }
   }
+
+  try {
+    this->current_value = this->module->global_variables.at(a->name).value;
+    return;
+  } catch (const out_of_range& e) { }
+
+  throw compile_error("variable " + a->name + " does not exist", a->file_offset);
 }
 
 void AnalysisVisitor::visit(AttributeLookup* a) {
@@ -501,7 +495,7 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
 
       // just get the value out of the module's globals
       try {
-        this->current_value = module->globals.at(a->name);
+        this->current_value = module->global_variables.at(a->name).value;
       } catch (const out_of_range&) {
         throw compile_error(string_printf("module %s has no attribute %s",
             module->name.c_str(), a->name.c_str()), a->file_offset);
@@ -554,24 +548,54 @@ void AnalysisVisitor::visit(AttributeLValueReference* a) {
   } else {
     Value value = move(this->current_value);
 
-    // evaluate the base. if it's not a class instance, fail - we don't support
-    // adding/overwriting arbitrary attributes on arbitrary objects
+    // evaluate the base
     a->base->accept(this);
-    if (this->current_value.type != ValueType::Instance) {
+
+    if (this->current_value.type == ValueType::Instance) {
+      // get the class definition and create/overwrite the attribute if possible
+      auto* target_cls = this->global->context_for_class(this->current_value.class_id);
+      if (!target_cls) {
+        throw compile_error(string_printf(
+            "class %" PRId64 " does not have a context", this->current_value.class_id),
+            a->file_offset);
+      }
+      auto* current_fn = this->current_function();
+      this->record_assignment_attribute(target_cls, a->name, value,
+          current_fn && current_fn->is_class_init(), a->file_offset);
+
+    } else if (this->current_value.type == ValueType::Module) {
+      // the module attribute has to be the same type as the value being
+      // written. in order to know this, the module has to be Analyzed
+      if (!this->current_value.value_known) {
+        throw compile_error("base is module, but value is unknown");
+      }
+      auto target_module = this->global->get_or_create_module(*this->current_value.bytes_value);
+
+      advance_module_phase(this->global, target_module.get(), ModuleContext::Phase::Analyzed);
+      if (!target_module) {
+        throw compile_error(string_printf(
+            "module %s does not have a context", this->current_value.bytes_value->c_str()),
+            a->file_offset);
+      }
+      try {
+        const auto& var = target_module->global_variables.at(a->name);
+        if (!var.value.types_equal(value)) {
+          string existing_type = var.value.str();
+          string new_type = value.str();
+          throw compile_error(string_printf("%s.%s changes type (from %s to %s)",
+              this->current_value.bytes_value->c_str(), a->name.c_str(),
+              existing_type.c_str(), new_type.c_str()), a->file_offset);
+        }
+      } catch (const out_of_range&) {
+        throw compile_error(string_printf(
+            "module %s does not have attribute %s", this->current_value.bytes_value->c_str(),
+              a->name.c_str()), a->file_offset);
+      }
+
+    } else {
       throw compile_error("cannot write attribute on " + this->current_value.str(),
           a->file_offset);
     }
-
-    // get the class definition and create/overwrite the attribute if possible
-    auto* target_cls = this->global->context_for_class(this->current_value.class_id);
-    if (!target_cls) {
-      throw compile_error(string_printf(
-          "class %" PRId64 " does not have a context", this->current_value.class_id),
-          a->file_offset);
-    }
-    auto* current_fn = this->current_function();
-    this->record_assignment_attribute(target_cls, a->name, value,
-        current_fn && current_fn->is_class_init(), a->file_offset);
   }
 }
 
@@ -622,7 +646,6 @@ void AnalysisVisitor::visit(ImportStatement* a) {
   // expect all the names to already exist in the target scope
 
   auto* fn = this->current_function();
-  auto* scope = fn ? &fn->locals : &this->module->globals;
 
   // case 3
   if (a->import_star) {
@@ -641,7 +664,12 @@ void AnalysisVisitor::visit(ImportStatement* a) {
   auto module = this->global->get_or_create_module(module_name);
   advance_module_phase(this->global, module.get(), ModuleContext::Phase::Analyzed);
   for (const auto& it : a->names) {
-    scope->at(it.second) = module->globals.at(it.first);
+    if (fn) {
+      fn->locals.at(it.second) = module->global_variables.at(it.first).value;
+    } else {
+      auto& target_var = this->module->global_variables.at(it.second);
+      target_var.value = module->global_variables.at(it.first).value;
+    }
   }
 }
 
@@ -1107,9 +1135,8 @@ ClassContext* AnalysisVisitor::current_class() {
 
 
 
-void AnalysisVisitor::record_assignment_generic(map<string, Value>& vars,
+void AnalysisVisitor::record_assignment_generic(Value& var,
     const string& name, const Value& value, size_t file_offset) {
-  auto& var = vars.at(name);
   if (var.type == ValueType::Indeterminate) {
     var = value; // this is the first write
   } else {
@@ -1127,13 +1154,14 @@ void AnalysisVisitor::record_assignment_generic(map<string, Value>& vars,
 
 void AnalysisVisitor::record_assignment_global(const string& name,
     const Value& value, size_t file_offset) {
-  this->record_assignment_generic(this->module->globals, name, value, file_offset);
+  this->record_assignment_generic(this->module->global_variables.at(name).value,
+      name, value, file_offset);
 }
 
 void AnalysisVisitor::record_assignment_local(FunctionContext* fn,
     const string& name, const Value& value, size_t file_offset) {
   try {
-    this->record_assignment_generic(fn->locals, name, value, file_offset);
+    this->record_assignment_generic(fn->locals.at(name), name, value, file_offset);
   } catch (const out_of_range& e) {
     throw compile_error(string_printf(
         "local variable %s not found in annotation phase",
@@ -1145,7 +1173,7 @@ void AnalysisVisitor::record_assignment_attribute(ClassContext* cls,
     const string& name, const Value& value, bool allow_create,
     size_t file_offset) {
   try {
-    this->record_assignment_generic(cls->attributes, name, value, file_offset);
+    this->record_assignment_generic(cls->attributes.at(name), name, value, file_offset);
   } catch (const out_of_range& e) {
     if (!allow_create) {
       throw compile_error("class does not have attribute " + name + "; it must be assigned in __init__",

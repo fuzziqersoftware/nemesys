@@ -101,12 +101,26 @@ size_t CompilationVisitor::get_file_offset() const {
 
 
 
+CompilationVisitor::VariableLocation::VariableLocation() :
+    type(ValueType::Indeterminate), global_module(NULL), global_index(-1),
+    variable_mem(), variable_mem_valid(false) { }
+
 string CompilationVisitor::VariableLocation::str() const {
   string type_str = this->type.str();
-  string mem_str = this->mem.str(OperandSize::QuadWord);
-  return string_printf("%s (%s) = %s @ %s", this->name.c_str(),
-      this->is_global ? "global" : "nonglobal", type_str.c_str(),
-      mem_str.c_str());
+  if (this->global_module) {
+    string ret = string_printf("%s.%s (global) = %s @ +%" PRIX64,
+        this->global_module->name.c_str(), this->name.c_str(), type_str.c_str(),
+        this->global_index);
+    if (this->variable_mem_valid) {
+      ret += " == ";
+      ret += this->variable_mem.str(OperandSize::QuadWord);
+    }
+    return ret;
+  } else {
+    string mem_str = this->variable_mem.str(OperandSize::QuadWord);
+    return string_printf("%s = %s @ %s", this->name.c_str(), type_str.c_str(),
+        mem_str.c_str());
+  }
 }
 
 
@@ -1212,8 +1226,11 @@ void CompilationVisitor::visit(TernaryOperation* a) {
   // if neither was terminated, check that right and left have the same types
   } else if (left_callsite_token < 0) {
     // TODO: support different value types (maybe by splitting the function)
-    if (left_type != this->current_type) {
-      throw compile_error("sides have different types", this->file_offset);
+    if (!left_type.types_equal(this->current_type)) {
+      string left_s = left_type.str();
+      string right_s = this->current_type.str();
+      throw compile_error(string_printf("sides have different types (left is %s, right is %s)",
+          left_s.c_str(), right_s.c_str()), this->file_offset);
     }
     if (left_holding_reference != this->holding_reference) {
       throw compile_error("sides have different reference semantics", this->file_offset);
@@ -1446,13 +1463,13 @@ void CompilationVisitor::visit(LambdaDefinition* a) {
   }
 
   string base_label = string_printf("LambdaDefinition_%p", a);
-  this->write_function_setup(base_label);
+  this->write_function_setup(base_label, false);
 
   this->target_register = rax;
   this->RecursiveASTVisitor::visit(a);
   this->function_return_types.emplace(this->current_type);
 
-  this->write_function_cleanup(base_label);
+  this->write_function_cleanup(base_label, false);
 }
 
 struct FunctionCallArgumentValue {
@@ -1475,12 +1492,6 @@ struct FunctionCallArgumentValue {
 void CompilationVisitor::visit(FunctionCall* a) {
   this->file_offset = a->file_offset;
 
-  // TODO: we should support dynamic function references (e.g. looking them up
-  // in dicts and whatnot)
-  if (a->callee_function_id == 0) {
-    throw compile_error("can\'t resolve function reference", this->file_offset);
-  }
-
   // if the target register is reserved, its value will be preserved instead of
   // being overwritten by the function's return value, which probably isn't what
   // we want
@@ -1489,12 +1500,23 @@ void CompilationVisitor::visit(FunctionCall* a) {
         this->file_offset);
   }
 
+  // TODO: if the callee function is unresolved, write a call through the
+  // compiler's resolver instead of directly calling it. it will be slow but
+  // it will work
+  if (a->callee_function_id == 0) {
+    throw compile_error("can\'t resolve function reference", this->file_offset);
+  }
+
   // get the function context
   auto* fn = this->global->context_for_function(a->callee_function_id);
-  if (a->callee_function_id == 0) {
+  if (!fn) {
     throw compile_error(string_printf("function %" PRId64 " has no context object", a->callee_function_id),
         this->file_offset);
   }
+
+  // if the function is in a different module, we'll need to push r13 and change
+  // it to that module's global space pointer before the call
+  bool update_global_space_pointer = !fn->is_builtin() && (fn->module != this->module);
 
   // order of arguments:
   // 1. positional arguments, in the order defined in the function
@@ -1593,8 +1615,11 @@ void CompilationVisitor::visit(FunctionCall* a) {
     arg_values.back().is_exception_block = true;
   }
 
-  // push all reserved registers
+  // push all reserved registers and r13 if necessary
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
+  if (update_global_space_pointer) {
+    this->write_push(r13);
+  }
 
   // reserve enough stack space for the worst case - all args are ints (since
   // there are fewer int registers available and floats are less common)
@@ -1822,6 +1847,9 @@ void CompilationVisitor::visit(FunctionCall* a) {
     this->fragment->call_split_labels.at(a->split_id) = call_split_label;
 
     // call the fragment. note that the stack is already properly aligned here
+    if (update_global_space_pointer) {
+      this->as.write_mov(r13, reinterpret_cast<int64_t>(fn->module->global_space));
+    }
     this->as.write_mov(rax, reinterpret_cast<int64_t>(callee_fragment.compiled));
     this->as.write_call(rax);
     this->as.write_label(returned_label);
@@ -1858,6 +1886,9 @@ void CompilationVisitor::visit(FunctionCall* a) {
   } catch (const terminated_by_split&) {
     this->as.write_label(string_printf("__FunctionCall_%p_restore_stack", a));
     this->adjust_stack(arg_stack_bytes);
+    if (update_global_space_pointer) {
+      this->write_pop(r13);
+    }
     this->write_pop_reserved_registers(previously_reserved_registers);
     throw;
   }
@@ -1865,6 +1896,9 @@ void CompilationVisitor::visit(FunctionCall* a) {
   // unreserve the argument stack space
   this->as.write_label(string_printf("__FunctionCall_%p_restore_stack", a));
   this->adjust_stack(arg_stack_bytes);
+  if (update_global_space_pointer) {
+    this->write_pop(r13);
+  }
   this->write_pop_reserved_registers(previously_reserved_registers);
 }
 
@@ -2084,23 +2118,13 @@ void CompilationVisitor::visit(VariableLookup* a) {
   this->assert_not_evaluating_instance_pointer();
 
   VariableLocation loc = this->location_for_variable(a->name);
-  bool has_refcount = type_has_refcount(loc.type.type);
-
-  // if this is an object, add a reference to it; otherwise just load it
-  if (loc.type.type == ValueType::Float) {
-    this->as.write_movq_to_xmm(this->float_target_register, loc.mem);
-  } else {
-    this->as.write_mov(MemoryReference(this->target_register), loc.mem);
-    if (has_refcount) {
-      this->write_add_reference(this->target_register);
-    }
-  }
+  this->write_read_variable(this->target_register, this->float_target_register, loc);
 
   this->current_type = loc.type;
+  this->holding_reference = type_has_refcount(loc.type.type);
   if (this->current_type.type == ValueType::Indeterminate) {
     throw compile_error("variable has Indeterminate type: " + loc.str(), this->file_offset);
   }
-  this->holding_reference = has_refcount;
 }
 
 void CompilationVisitor::visit(AttributeLookup* a) {
@@ -2114,26 +2138,17 @@ void CompilationVisitor::visit(AttributeLookup* a) {
     // have a way of specifying import dependencies and we need to make sure the
     // module's globals are written before the code we're generating executes,
     // so we require Imported phase here to enforce this ordering later.
-    auto module = this->global->get_or_create_module(a->base_module_name);
-    advance_module_phase(this->global, module.get(), ModuleContext::Phase::Imported);
-    VariableLocation loc = this->location_for_global(module.get(), a->name);
-    bool has_refcount = type_has_refcount(loc.type.type);
+    auto base_module = this->global->get_or_create_module(a->base_module_name);
+    advance_module_phase(this->global, base_module.get(), ModuleContext::Phase::Imported);
 
-    // if this is an object, add a reference to it; otherwise just load it
-    if (loc.type.type == ValueType::Float) {
-      this->as.write_movsd(MemoryReference(this->float_target_register), loc.mem);
-    } else {
-      this->as.write_mov(MemoryReference(this->target_register), loc.mem);
-      if (has_refcount) {
-        this->write_add_reference(this->target_register);
-      }
-    }
+    VariableLocation loc = this->location_for_global(base_module.get(), a->name);
+    this->write_read_variable(this->target_register, this->float_target_register, loc);
 
     this->current_type = loc.type;
+    this->holding_reference = type_has_refcount(loc.type.type);
     if (this->current_type.type == ValueType::Indeterminate) {
       throw compile_error("attribute has Indeterminate type", this->file_offset);
     }
-    this->holding_reference = has_refcount;
 
     return;
   }
@@ -2161,24 +2176,22 @@ void CompilationVisitor::visit(AttributeLookup* a) {
   this->target_register = base_register;
   this->as.write_label(string_printf("__AttributeLookup_%p_evaluate_base", a));
   a->base->accept(this);
+  bool base_holding_reference = this->holding_reference;
 
   // if the base object is a class, write code that gets the attribute
   if (this->current_type.type == ValueType::Instance) {
     auto* cls = this->global->context_for_class(this->current_type.class_id);
     VariableLocation loc = this->location_for_attribute(cls, a->name, this->target_register);
 
-    // get the attribute value
+    // get the attribute value. note that we reserve the base reg in case adding
+    // a reference to the attr causes a function call (we need the base later)
     this->as.write_label(string_printf("__AttributeLookup_%p_get_value", a));
-    this->as.write_mov(MemoryReference(attr_register), loc.mem);
-    bool attr_has_refcount = type_has_refcount(loc.type.type);
-    if (attr_has_refcount) {
-      this->reserve_register(base_register);
-      this->write_add_reference(attr_register);
-      this->release_register(base_register);
-    }
+    this->reserve_register(base_register);
+    this->write_read_variable(attr_register, this->float_target_register, loc);
+    this->release_register(base_register);
 
     // if we're holding a reference to the base, delete that reference now
-    if (this->holding_reference) {
+    if (base_holding_reference) {
       this->reserve_register(attr_register);
       this->write_delete_held_reference(MemoryReference(base_register));
       this->release_register(attr_register);
@@ -2186,7 +2199,7 @@ void CompilationVisitor::visit(AttributeLookup* a) {
 
     this->target_register = attr_register;
     this->current_type = loc.type;
-    this->holding_reference = attr_has_refcount;
+    this->holding_reference = type_has_refcount(this->current_type.type);
     return;
   }
 
@@ -2241,48 +2254,64 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     // evaluate the base object
     a->base->accept(this);
 
-    // typecheck the result: it should be an Instance object, the class should
-    // have the attribute that we're setting (location_for_attribute will check
-    // this) and the attr should be the same type as the value being written
-    if (this->current_type.type != ValueType::Instance) {
-      throw compile_error("cannot dynamically set attributes on non-instance objects",
-          this->file_offset);
-    }
-    auto* cls = this->global->context_for_class(this->current_type.class_id);
-    if (!cls) {
-      throw compile_error("object class does not exist", this->file_offset);
-    }
-    VariableLocation loc = this->location_for_attribute(cls, a->name,
-        this->target_register);
-    const auto& attr = cls->attributes.at(a->name);
-    if (!attr.types_equal(loc.type)) {
-      string attr_type = attr.str();
-      string new_type = value_type.str();
-      throw compile_error(string_printf("attribute %s changes type from %s to %s",
-          a->name.c_str(), attr_type.c_str(), new_type.c_str()),
-          this->file_offset);
-    }
+    if (this->current_type.type == ValueType::Instance) {
+      // the class should have the attribute that we're setting
+      // (location_for_attribute will check this) and the attr should be the
+      // same type as the value being written
+      auto* cls = this->global->context_for_class(this->current_type.class_id);
+      if (!cls) {
+        throw compile_error("object class does not exist", this->file_offset);
+      }
+      VariableLocation loc = this->location_for_attribute(cls, a->name,
+          this->target_register);
+      const auto& attr = cls->attributes.at(a->name);
+      if (!attr.types_equal(loc.type)) {
+        string attr_type = attr.str();
+        string new_type = value_type.str();
+        throw compile_error(string_printf("attribute %s changes type from %s to %s",
+            a->name.c_str(), attr_type.c_str(), new_type.c_str()),
+            this->file_offset);
+      }
 
-    // if the attribute type has a refcount, delete the old value
-    this->reserve_register(this->target_register);
-    if (type_has_refcount(loc.type.type)) {
-      this->write_delete_reference(loc.mem, loc.type.type);
-    }
-    this->release_register(this->target_register);
+      // reserve the base in case delete_reference needs to be called
+      this->reserve_register(this->target_register);
+      this->write_write_variable(value_register, this->float_target_register, loc);
+      this->release_register(this->target_register);
 
-    // write the value into the right attribute
-    if (value_type.type == ValueType::Float) {
-      this->as.write_movsd(loc.mem, MemoryReference(this->float_target_register));
+      // if we're holding a reference to the base, delete it
+      this->write_delete_held_reference(MemoryReference(this->target_register));
+
+      // clean up
+      this->target_register = value_register;
+      this->release_register(this->target_register);
+
+    } else if (this->current_type.type == ValueType::Module) {
+      // the class should have the attribute that we're setting
+      // (location_for_attribute will check this) and the attr should be the
+      // same type as the value being written
+      if (!this->current_type.value_known) {
+        throw compile_error("base is module, but value is unknown", this->file_offset);
+      }
+      auto base_module = this->global->get_or_create_module(*this->current_type.bytes_value);
+
+      // note: we use Imported here to make sure the target module's root scope
+      // runs before any external code that could modify it
+      advance_module_phase(this->global, base_module.get(), ModuleContext::Phase::Imported);
+
+      VariableLocation loc = this->location_for_global(base_module.get(), a->name);
+      if (loc.variable_mem_valid) {
+        throw compile_error("variable reference should not be valid", this->file_offset);
+      }
+
+      this->reserve_register(this->target_register);
+      this->write_write_variable(value_register, this->float_target_register, loc);
+      this->release_register(this->target_register);
+
     } else {
-      this->as.write_mov(loc.mem, MemoryReference(value_register));
+      string s = this->current_type.str();
+      throw compile_error(string_printf("cannot dynamically set attribute on %s", s.c_str()),
+          this->file_offset);
     }
-
-    // if we're holding a reference to the base, delete it
-    this->write_delete_held_reference(MemoryReference(this->target_register));
-
-    // clean up
-    this->target_register = value_register;
-    this->release_register(this->target_register);
 
   // if a->base is missing, then it's a simple variable write
   } else {
@@ -2292,8 +2321,8 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
     // Indeterminate; otherwise it's an error
     // TODO: deduplicate some of this with location_for_variable
     Value* target_variable = NULL;
-    if (loc.is_global) {
-      target_variable = &this->module->globals.at(loc.name);
+    if (loc.global_module) {
+      target_variable = &loc.global_module->global_variables.at(loc.name).value;
     } else {
       target_variable = &this->local_variable_types.at(loc.name);
     }
@@ -2301,7 +2330,7 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
       throw compile_error("target variable not found");
     }
     if (target_variable->type == ValueType::Indeterminate) {
-      *target_variable = current_type;
+      *target_variable = this->current_type;
     } else if (!target_variable->types_equal(loc.type)) {
       string target_type_str = target_variable->str();
       string value_type_str = current_type.str();
@@ -2310,19 +2339,15 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
           value_type_str.c_str()), this->file_offset);
     }
 
-    // if the variable has a refcount, delete the old value
-    this->reserve_register(this->target_register);
-    if (type_has_refcount(loc.type.type)) {
-      this->write_delete_reference(loc.mem, loc.type.type);
-    }
-    this->release_register(this->target_register);
+    // loc may be Indeterminate; for example, if the only assignment to a
+    // variable is the result of a function call. it always makes sense to use
+    // the target variable type here, and we checked that they match above if
+    // we have enough information to do so
+    loc.type = *target_variable;
 
-    // save the value to the appropriate slot
-    if (target_variable->type == ValueType::Float) {
-      this->as.write_movsd(loc.mem, MemoryReference(this->float_target_register));
-    } else {
-      this->as.write_mov(loc.mem, MemoryReference(this->target_register));
-    }
+    this->reserve_register(this->target_register);
+    this->write_write_variable(this->target_register, this->float_target_register, loc);
+    this->release_register(this->target_register);
   }
 }
 
@@ -2345,7 +2370,7 @@ void CompilationVisitor::visit(ModuleStatement* a) {
   this->write_push(r12);
   this->as.write_mov(r12, reinterpret_cast<int64_t>(common_object_base()));
   this->write_push(r13);
-  this->as.write_mov(r13, reinterpret_cast<int64_t>(this->global->global_space));
+  this->as.write_mov(r13, reinterpret_cast<int64_t>(this->module->global_space));
   this->write_push(r14);
   this->as.write_xor(r14, r14);
   this->write_push(r15);
@@ -2453,27 +2478,32 @@ void CompilationVisitor::visit(ImportStatement* a) {
   }
 
   // case 2: import some names from a module (from x import y)
-  const string& module_name = a->modules.begin()->first;
-  auto module = this->global->get_or_create_module(module_name);
-  advance_module_phase(this->global, module.get(), ModuleContext::Phase::Imported);
+  const string& base_module_name = a->modules.begin()->first;
+  auto base_module = this->global->get_or_create_module(base_module_name);
+  advance_module_phase(this->global, base_module.get(), ModuleContext::Phase::Imported);
   MemoryReference target_mem(this->target_register);
   for (const auto& it : a->names) {
-    VariableLocation src_loc = this->location_for_global(module.get(), it.first);
+    VariableLocation src_loc = this->location_for_global(base_module.get(), it.first);
     VariableLocation dest_loc = this->location_for_variable(it.second);
 
     this->as.write_label(string_printf("__ImportStatement_%p_copy_%s_%s",
         a, it.first.c_str(), it.second.c_str()));
 
     // get the value from the other module
-    this->as.write_mov(target_mem, src_loc.mem);
+    this->as.write_mov(target_mem, reinterpret_cast<int64_t>(src_loc.global_module->global_space));
+    this->as.write_mov(target_mem, MemoryReference(this->target_register, sizeof(int64_t) * src_loc.global_index));
 
     // if it's an object, add a reference to it
-    if (type_has_refcount(module->globals.at(it.first).type)) {
+    if (type_has_refcount(src_loc.type.type)) {
       this->write_add_reference(this->target_register);
     }
 
-    // store the value in this module
-    this->as.write_mov(dest_loc.mem, target_mem);
+    // store the value in this module. variable_mem is valid if global_module is
+    // this module or NULL
+    if (!dest_loc.variable_mem_valid) {
+      throw compile_error("variable reference not valid", a->file_offset);
+    }
+    this->as.write_mov(dest_loc.variable_mem, target_mem);
   }
 }
 
@@ -3161,8 +3191,11 @@ void CompilationVisitor::visit(TryStatement* a) {
       // typecheck the result
       // TODO: deduplicate some of this with AttributeLValueReference
       Value* target_variable = NULL;
-      if (loc.is_global) {
-        target_variable = &this->module->globals.at(loc.name);
+      if (loc.global_module) {
+        if (!loc.variable_mem_valid) {
+          throw compile_error("exception reference not valid", a->file_offset);
+        }
+        target_variable = &loc.global_module->global_variables.at(loc.name).value;
       } else {
         target_variable = &this->local_variable_types.at(loc.name);
       }
@@ -3178,8 +3211,8 @@ void CompilationVisitor::visit(TryStatement* a) {
 
       // delete the old value if present, save the new value, and clear the active
       // exception pointer
-      this->write_delete_reference(loc.mem, loc.type.type);
-      this->as.write_mov(loc.mem, r15);
+      this->write_delete_reference(loc.variable_mem, loc.type.type);
+      this->as.write_mov(loc.variable_mem, r15);
     }
 
     // clear the active exception
@@ -3225,6 +3258,8 @@ void CompilationVisitor::visit(WithStatement* a) {
 void CompilationVisitor::visit(FunctionDefinition* a) {
   this->file_offset = a->file_offset;
 
+  string base_label = string_printf("FunctionDefinition_%p_%s", a, a->name.c_str());
+
   // if this definition is not the function being compiled, don't recur; instead
   // treat it as an assignment (of the function context to the local/global var)
   if (!this->fragment->function ||
@@ -3238,13 +3273,22 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
     // figure out the right fragment at call time
     auto* declared_function_context = this->global->context_for_function(a->function_id);
     auto loc = this->location_for_variable(a->name);
+    if (!loc.variable_mem_valid) {
+      throw compile_error("function definition reference not valid", a->file_offset);
+    }
+    this->as.write_label("__" + base_label);
     this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(declared_function_context));
-    this->as.write_mov(loc.mem, MemoryReference(this->target_register));
+    this->as.write_mov(loc.variable_mem, MemoryReference(this->target_register));
     return;
   }
 
-  string base_label = string_printf("FunctionDefinition_%p_%s", a, a->name.c_str());
-  this->write_function_setup(base_label);
+  // if the function being compiled is __del__ on a class, we need to set up the
+  // special registers within the function, since it can be called from anywhere
+  // (even non-nemesys code)
+  bool setup_special_regs = (this->fragment->function->class_id) &&
+      (this->fragment->function->name == "__del__");
+
+  this->write_function_setup(base_label, setup_special_regs);
   this->target_register = rax;
   try {
     this->visit_list(a->decorators);
@@ -3256,7 +3300,7 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
     this->visit_list(a->items);
 
   } catch (const terminated_by_split&) {
-    this->write_function_cleanup(base_label);
+    this->write_function_cleanup(base_label, setup_special_regs);
     throw;
   }
 
@@ -3267,28 +3311,36 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
     this->as.write_label(string_printf("__FunctionDefinition_%p_return_self_from_init", a));
 
     VariableLocation loc = this->location_for_variable("self");
-
-    // add a reference to self and load it into rax for returning
-    this->target_register = rax;
-    this->as.write_mov(MemoryReference(this->target_register), loc.mem);
+    if (!loc.variable_mem_valid) {
+      throw compile_error("self reference not valid", a->file_offset);
+    }
     if (!type_has_refcount(loc.type.type)) {
       throw compile_error("self is not an object", this->file_offset);
     }
+
+    // add a reference to self and load it into rax for returning
+    // TODO: should we set holding_reference to true here?
+    this->target_register = rax;
+    this->as.write_mov(MemoryReference(this->target_register), loc.variable_mem);
     this->write_add_reference(this->target_register);
   }
 
-  this->write_function_cleanup(base_label);
+  this->write_function_cleanup(base_label, setup_special_regs);
 }
 
 void CompilationVisitor::visit(ClassDefinition* a) {
   this->file_offset = a->file_offset;
 
   // write the class' context to the variable
-  auto* cls = this->global->context_for_class(a->class_id);
   auto loc = this->location_for_variable(a->name);
+  if (!loc.variable_mem_valid) {
+    throw compile_error("self reference not valid", a->file_offset);
+  }
+
   this->as.write_label(string_printf("__ClassDefinition_%p_assign", a));
+  auto* cls = this->global->context_for_class(a->class_id);
   this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(cls));
-  this->as.write_mov(loc.mem, MemoryReference(this->target_register));
+  this->as.write_mov(loc.variable_mem, MemoryReference(this->target_register));
 
   // create the class destructor function
   if (!cls->destructor) {
@@ -3327,7 +3379,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       dtor_as.write_push(rbx);
       dtor_as.write_mov(rbx, rdi);
 
-      // make sure the stack is aligned at call time for any subfunctions
+      // align the stack
       dtor_as.write_sub(rsp, 8);
 
       // we have to add a fake reference to the object while destroying it;
@@ -3346,7 +3398,6 @@ void CompilationVisitor::visit(ClassDefinition* a) {
           throw compile_error("__del__ exists but is an unknown value", this->file_offset);
         }
 
-        // the arg signature is blank since __del__ can't take any arguments
         auto* fn = this->global->context_for_function(del_attr.function_id);
 
         // get or generate the Fragment object. this function should have at
@@ -3374,7 +3425,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
 
         // __del__ can add new references to the object; if this happens, don't
         // proceed with the destruction
-        // TODO: if the refcpount is zero, something has gone seriously wrong.
+        // TODO: if the refcount is zero, something has gone seriously wrong.
         // what should we do in that case?
         // TODO: do we need the lock prefix to do this compare?
         dtor_as.write_cmp(MemoryReference(rbx, 0), 1);
@@ -3444,9 +3495,8 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       dtor_as.write_mov(rdi, rbx);
       dtor_as.write_add(rsp, 8);
       dtor_as.write_pop(rbx);
-      dtor_as.write_mov(rbp, common_object_reference(void_fn_ptr(&free)));
-      dtor_as.write_xchg(rbp, MemoryReference(rsp, 0));
-      dtor_as.write_ret();
+      dtor_as.write_pop(rbp);
+      dtor_as.write_jmp(common_object_reference(void_fn_ptr(&free)));
 
       // assemble it
       multimap<size_t, string> compiled_labels;
@@ -3680,7 +3730,8 @@ void CompilationVisitor::write_function_call(
   this->write_pop_reserved_registers(previously_reserved_registers);
 }
 
-void CompilationVisitor::write_function_setup(const string& base_label) {
+void CompilationVisitor::write_function_setup(const string& base_label,
+    bool setup_special_regs) {
   // get ready to rumble
   this->as.write_label("__" + base_label);
   this->stack_bytes_used = 8;
@@ -3689,11 +3740,11 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
   this->write_push(rbp);
   this->as.write_mov(rbp, rsp);
 
-  // reserve space for locals and write args into the right places
+  // figure out how much stack space is needed
   unordered_map<string, Register> int_arg_to_register;
   unordered_map<string, int64_t> int_arg_to_stack_offset;
   unordered_map<string, Register> float_arg_to_register;
-  size_t arg_stack_offset = sizeof(int64_t) * 2; // after return addr and rbp
+  size_t arg_stack_offset = sizeof(int64_t) * (setup_special_regs ? 6 : 2); // account for ret addr, rbp, and maybe special regs
   for (size_t arg_index = 0; arg_index < this->fragment->function->args.size(); arg_index++) {
     const auto& arg = this->fragment->function->args[arg_index];
 
@@ -3717,39 +3768,59 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
           int_argument_register_order[int_arg_to_register.size()]);
 
     } else {
-      // add 2, since at this point we've called the function and pushed RBP
       int_arg_to_stack_offset.emplace(arg.name, arg_stack_offset);
       arg_stack_offset += sizeof(int64_t);
     }
   }
 
-  // set up the local space
-  for (const auto& local : this->fragment->function->locals) {
+  // reserve space for locals and special regs
+  size_t num_stack_slots = this->fragment->function->locals.size() + (setup_special_regs ? 4 : 0);
+  this->adjust_stack(num_stack_slots * -sizeof(int64_t));
 
-    // if it's a float arg, reserve stack space and write it from the xmm reg
+  // save special regs if needed
+  if (setup_special_regs) {
+    this->as.write_mov(MemoryReference(rsp, 0), r12);
+    this->as.write_mov(MemoryReference(rsp, 8), r13);
+    this->as.write_mov(MemoryReference(rsp, 16), r14);
+    this->as.write_mov(MemoryReference(rsp, 24), r15);
+    this->as.write_mov(r12, reinterpret_cast<int64_t>(common_object_base()));
+    this->as.write_mov(r13, reinterpret_cast<int64_t>(this->module->global_space));
+    this->as.write_xor(r14, r14);
+    this->as.write_xor(r15, r15);
+  }
+
+  // set up the local space. note that local_index starts at 0 (hence 1 during
+  // the first loop) on purpose - this is the negative offset from rbp for the
+  // current local
+  ssize_t local_index = 0;
+  for (const auto& local : this->fragment->function->locals) {
+    local_index++;
+    MemoryReference dest(rbp, local_index * -8);
+
+    // if it's a float arg, write it from the xmm reg
     try {
       Register xmm_reg = float_arg_to_register.at(local.first);
       MemoryReference xmm_mem(xmm_reg);
-      this->adjust_stack(-8);
-      this->as.write_movsd(MemoryReference(rsp, 0), xmm_mem);
+      this->as.write_movsd(dest, xmm_mem);
       continue;
     } catch (const out_of_range&) { }
 
-    // if it's a register arg, push it directly
+    // if it's an int arg, write it from the reg
     try {
-      this->write_push(int_arg_to_register.at(local.first));
+      this->as.write_mov(dest, MemoryReference(int_arg_to_register.at(local.first)));
       continue;
     } catch (const out_of_range&) { }
 
-    // if it's a stack arg, push it via r/m push
+    // if it's a stack arg, load it into a temp register, then save it again
     try {
-      this->write_push(MemoryReference(rbp,
+      this->as.write_mov(rax, MemoryReference(rbp,
           int_arg_to_stack_offset.at(local.first)));
+      this->as.write_mov(dest, rax);
       continue;
     } catch (const out_of_range&) { }
 
     // else, initialize it to zero
-    this->write_push(0);
+    this->as.write_mov(dest, 0);
   }
 
   // set up the exception block
@@ -3761,7 +3832,8 @@ void CompilationVisitor::write_function_setup(const string& base_label) {
   this->write_create_exception_block({}, this->exception_return_label);
 }
 
-void CompilationVisitor::write_function_cleanup(const string& base_label) {
+void CompilationVisitor::write_function_cleanup(const string& base_label,
+    bool setup_special_regs) {
   this->as.write_label(this->return_label);
 
   // clean up the exception block. note that this is after the return label but
@@ -3771,6 +3843,16 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
   this->write_pop(r14);
   this->adjust_stack(return_exception_block_size - sizeof(int64_t));
 
+  // restore special regs if needed. note that it's ok to do this before
+  // destroying locals because destruction cannot depend on the global space. if
+  // a local has a __del__ function, it will set up its own global space pointer
+  if (setup_special_regs) {
+    this->write_pop(r12);
+    this->write_pop(r13);
+    this->write_pop(r14);
+    this->write_pop(r15);
+  }
+
   // call destructors for all the local variables that have refcounts
   this->as.write_label(this->exception_return_label);
   this->return_label.clear();
@@ -3779,7 +3861,7 @@ void CompilationVisitor::write_function_cleanup(const string& base_label) {
        it != this->fragment->function->locals.crend(); it++) {
     if (type_has_refcount(it->second.type)) {
       // we have to preserve the value in rax since it's the function's return
-      // value, so store it on the stack (in the location we're about to pop)
+      // value, so store it on the stack (in the location we're destroying)
       // while we destroy the object
       this->as.write_xchg(rax, MemoryReference(rsp, 0));
       this->write_delete_reference(rax, it->second.type);
@@ -3834,38 +3916,40 @@ void CompilationVisitor::write_delete_reference(const MemoryReference& mem,
     throw compile_error("can\'t call destructor for Indeterminate value", this->file_offset);
   }
 
-  if (type_has_refcount(type)) {
-    if (debug_flags & DebugFlag::NoInlineRefcounting) {
-      this->write_function_call(common_object_reference(void_fn_ptr(&delete_reference)),
-          {mem, r14}, {});
+  if (!type_has_refcount(type)) {
+    return;
+  }
 
-    } else {
-      static uint64_t skip_label_id = 0;
-      string skip_label = string_printf("__delete_reference_skip_%" PRIu64,
-          skip_label_id++);
-      Register r = this->available_register();
-      MemoryReference r_mem(r);
+  if (debug_flags & DebugFlag::NoInlineRefcounting) {
+    this->write_function_call(common_object_reference(void_fn_ptr(&delete_reference)),
+        {mem, r14}, {});
 
-      // get the object pointer
-      if (mem.field_size || (r != mem.base_register)) {
-        this->as.write_mov(r_mem, mem);
-      }
+  } else {
+    static uint64_t skip_label_id = 0;
+    string skip_label = string_printf("__delete_reference_skip_%" PRIu64,
+        skip_label_id++);
+    Register r = this->available_register();
+    MemoryReference r_mem(r);
 
-      // if the pointer is NULL, do nothing
-      this->as.write_test(r_mem, r_mem);
-      this->as.write_je(skip_label);
-
-      // decrement the refcount; if it's not zero, skip the destructor call
-      this->as.write_lock();
-      this->as.write_dec(MemoryReference(r, 0));
-      this->as.write_jnz(skip_label);
-
-      // call the destructor
-      MemoryReference function_loc(r, 8);
-      this->write_function_call(function_loc, {r_mem}, {});
-
-      this->as.write_label(skip_label);
+    // get the object pointer
+    if (mem.field_size || (r != mem.base_register)) {
+      this->as.write_mov(r_mem, mem);
     }
+
+    // if the pointer is NULL, do nothing
+    this->as.write_test(r_mem, r_mem);
+    this->as.write_je(skip_label);
+
+    // decrement the refcount; if it's not zero, skip the destructor call
+    this->as.write_lock();
+    this->as.write_dec(MemoryReference(r, 0));
+    this->as.write_jnz(skip_label);
+
+    // call the destructor
+    MemoryReference function_loc(r, 8);
+    this->write_function_call(function_loc, {r_mem}, {});
+
+    this->as.write_label(skip_label);
   }
 }
 
@@ -4036,23 +4120,74 @@ void CompilationVisitor::write_load_double(Register reg, double value) {
   this->as.write_movq_to_xmm(this->float_target_register, MemoryReference(tmp));
 }
 
+void CompilationVisitor::write_read_variable(Register target_register,
+    Register float_target_register, const VariableLocation& loc) {
+  MemoryReference variable_mem = loc.variable_mem;
+
+  // if variable_mem isn't valid, we're reading an attribute from a different
+  // module; we need to get the module's global space pointer and then look up
+  // the attribute
+  if (!loc.variable_mem_valid) {
+    this->as.write_mov(target_register, reinterpret_cast<int64_t>(loc.global_module->global_space));
+    variable_mem = MemoryReference(target_register, loc.global_index * sizeof(int64_t));
+  }
+
+  if (loc.type.type == ValueType::Float) {
+    this->as.write_movq_to_xmm(float_target_register, variable_mem);
+  } else {
+    this->as.write_mov(MemoryReference(target_register), variable_mem);
+    if (type_has_refcount(loc.type.type)) {
+      this->write_add_reference(target_register);
+    }
+  }
+}
+
+void CompilationVisitor::write_write_variable(Register value_register,
+    Register float_value_register, const VariableLocation& loc) {
+  MemoryReference variable_mem = loc.variable_mem;
+
+  // if variable_mem isn't valid, we're writing an attribute on a different
+  // module; we need to get the module's global space pointer and then look up
+  // the attribute
+  Register target_module_global_space_reg;
+  if (!loc.variable_mem_valid) {
+    target_module_global_space_reg = this->available_register_except({value_register});
+    this->as.write_mov(target_module_global_space_reg, reinterpret_cast<int64_t>(loc.global_module->global_space));
+    variable_mem = MemoryReference(target_module_global_space_reg, loc.global_index * sizeof(int64_t));
+  }
+
+  // if the type has a refcount, delete the old value
+  if (type_has_refcount(loc.type.type)) {
+    this->write_delete_reference(variable_mem, loc.type.type);
+  }
+
+  // write the value into the right attribute
+  if (loc.type.type == ValueType::Float) {
+    this->as.write_movsd(variable_mem, MemoryReference(float_value_register));
+  } else {
+    this->as.write_mov(variable_mem, MemoryReference(value_register));
+  }
+}
+
 CompilationVisitor::VariableLocation CompilationVisitor::location_for_global(
     ModuleContext* module, const string& name) {
-  VariableLocation loc;
-  loc.name = name;
+  try {
+    const auto& var = module->global_variables.at(name);
 
-  // if we're writing a global, use its global slot offset (from R13)
-  auto it = module->globals.find(name);
-  if (it == module->globals.end()) {
+    VariableLocation loc;
+    loc.name = name;
+    loc.type = var.value;
+    loc.global_module = module;
+    loc.global_index = var.index;
+    if (loc.global_module == this->module) {
+      loc.variable_mem = MemoryReference(r13, loc.global_index * sizeof(int64_t));
+      loc.variable_mem_valid = true;
+    }
+    return loc;
+
+  } catch (const out_of_range&) {
     throw compile_error("nonexistent global: " + name, this->file_offset);
   }
-  ssize_t offset = distance(module->globals.begin(), it);
-  loc.is_global = true;
-  loc.type = it->second;
-  loc.mem = MemoryReference(r13,
-      offset * sizeof(int64_t) + module->global_base_offset);
-
-  return loc;
 }
 
 CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
@@ -4076,8 +4211,8 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_variable(
 
   VariableLocation loc;
   loc.name = name;
-  loc.is_global = false;
-  loc.mem = MemoryReference(rbp, sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->fragment->function->locals.begin(), it))));
+  loc.variable_mem = MemoryReference(rbp, sizeof(int64_t) * (-static_cast<ssize_t>(1 + distance(this->fragment->function->locals.begin(), it))));
+  loc.variable_mem_valid = true;
 
   // use the argument type if given
   try {
@@ -4094,9 +4229,9 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_attribute(
 
   VariableLocation loc;
   loc.name = name;
-  loc.is_global = false;
   try {
-    loc.mem = MemoryReference(instance_reg, cls->offset_for_attribute(name.c_str()));
+    loc.variable_mem = MemoryReference(instance_reg, cls->offset_for_attribute(name.c_str()));
+    loc.variable_mem_valid = true;
   } catch (const out_of_range& e) {
     throw compile_error("cannot generate lookup for non-dynamic attribute: " + name,
         this->file_offset);

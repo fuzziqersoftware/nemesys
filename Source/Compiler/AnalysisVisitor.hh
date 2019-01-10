@@ -91,8 +91,8 @@ private:
   FunctionContext* current_function();
   ClassContext* current_class();
 
-  void record_assignment_generic(std::map<std::string, Value>& vars,
-      const std::string& name, const Value& value, size_t file_offset);
+  void record_assignment_generic(Value& var, const std::string& name,
+      const Value& value, size_t file_offset);
   void record_assignment_global(const std::string& name, const Value& value,
       size_t file_offset);
   void record_assignment_local(FunctionContext* fn, const std::string& name,

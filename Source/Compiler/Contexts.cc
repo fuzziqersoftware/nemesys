@@ -238,57 +238,73 @@ int64_t FunctionContext::fragment_index_for_call_args(
 
 
 
-// these module attributes are statically populated even for dynamic modules.
-// this should match the attributes that are created automatically in the
-// ModuleContext constructor
-const unordered_set<string> static_initialize_module_attributes({
-  "__name__", "__file__"});
-
 ModuleContext::ModuleContext(const string& name, const string& filename,
     bool is_code) : phase(Phase::Initial), name(name),
-    source(new SourceFile(filename, is_code)), global_base_offset(-1),
+    source(new SourceFile(filename, is_code)), global_space(NULL),
     root_fragment_num_splits(0), root_fragment(NULL, -1, {}), compiled_size(0) {
   // TODO: using unescape_unicode is a stupid hack, but these strings can't
   // contain backslashes anyway (right? ...right?)
-  this->globals.emplace(piecewise_construct, forward_as_tuple("__name__"),
-      forward_as_tuple(ValueType::Unicode, unescape_unicode(name)));
+  this->create_global_variable("__name__", Value(ValueType::Unicode, unescape_unicode(name)), false);
   if (is_code) {
-    this->globals.emplace(piecewise_construct, forward_as_tuple("__file__"),
-        forward_as_tuple(ValueType::Unicode, L"__main__"));
+    this->create_global_variable("__file__", Value(ValueType::Unicode, L"__main__"), false);
   } else {
-    this->globals.emplace(piecewise_construct, forward_as_tuple("__file__"),
-        forward_as_tuple(ValueType::Unicode, unescape_unicode(filename)));
+    this->create_global_variable("__file__", Value(ValueType::Unicode, unescape_unicode(filename)), false);
   }
 }
 
 ModuleContext::ModuleContext(const string& name,
     const map<string, Value>& globals) : phase(Phase::Initial),
-    name(name), source(NULL), ast_root(NULL), globals(globals),
-    global_base_offset(-1), root_fragment_num_splits(0),
-    root_fragment(NULL, -1, {}), compiled_size(0) { }
+    name(name), source(NULL), ast_root(NULL), global_space(NULL),
+    root_fragment_num_splits(0), root_fragment(NULL, -1, {}), compiled_size(0) {
+  this->create_global_variable("__name__", Value(ValueType::Unicode, unescape_unicode(name)), false);
+  this->create_global_variable("__file__", Value(ValueType::Unicode, L"__main__"), false);
+
+  for (const auto& it : globals) {
+    this->create_global_variable(it.first, it.second, false);
+  }
+}
+
+ModuleContext::~ModuleContext() {
+  if (this->global_space) {
+    free(this->global_space);
+  }
+}
+
+bool ModuleContext::create_global_variable(const string& name, const Value& v,
+    bool is_mutable, bool static_initialize) {
+  int64_t flags = (is_mutable ? GlobalVariable::Flag::Mutable : 0) |
+                  (static_initialize ? GlobalVariable::Flag::StaticInitialize : 0);
+  return this->global_variables.emplace(piecewise_construct, forward_as_tuple(name),
+      forward_as_tuple(v, this->global_variables.size(), flags)).second;
+}
 
 int64_t ModuleContext::create_builtin_function(BuiltinFunctionDefinition& def) {
   int64_t function_id = ::create_builtin_function(def);
-  this->globals.emplace(def.name, Value(ValueType::Function, function_id));
+  this->create_global_variable(def.name, Value(ValueType::Function, function_id), false);
   return function_id;
 }
 
 int64_t ModuleContext::create_builtin_class(BuiltinClassDefinition& def) {
   int64_t class_id = ::create_builtin_class(def);
-  this->globals.emplace(def.name, Value(ValueType::Class, class_id));
+  this->create_global_variable(def.name, Value(ValueType::Class, class_id), false);
   return class_id;
+}
+
+bool ModuleContext::is_builtin() const {
+  return !this->ast_root.get();
 }
 
 
 
+ModuleContext::GlobalVariable::GlobalVariable(const Value& value, size_t index,
+    int64_t flags) : value(value), index(index), flags(flags) { }
+
+
+
 GlobalContext::GlobalContext(const vector<string>& import_paths) :
-    import_paths(import_paths), global_space(NULL), global_space_used(0),
-    next_callsite_token(1) { }
+    import_paths(import_paths), next_callsite_token(1) { }
 
 GlobalContext::~GlobalContext() {
-  if (this->global_space) {
-    free(this->global_space);
-  }
   for (const auto& it : this->bytes_constants) {
     if (debug_flags & DebugFlag::ShowRefcountChanges) {
       fprintf(stderr, "[refcount:constants] deleting Bytes constant %s\n",
@@ -500,23 +516,4 @@ const UnicodeObject* GlobalContext::get_or_create_constant(const wstring& s,
     this->unicode_constants.emplace(s, o);
   }
   return o;
-}
-
-size_t GlobalContext::reserve_global_space(size_t extra_space) {
-  size_t ret = this->global_space_used;
-  this->global_space_used += extra_space;
-  this->global_space = reinterpret_cast<int64_t*>(realloc(this->global_space,
-      this->global_space_used));
-
-  // clear the new space
-  for (size_t x = ret / sizeof(int64_t); x < this->global_space_used / sizeof(int64_t); x++) {
-    this->global_space[x] = 0;
-  }
-
-  // TODO: if global_space moves, we'll need to update r13 everywhere, sigh...
-  // in a way-distant-future multithreaded world, this probably will mean
-  // blocking all threads somehow, and updating r13 in their contexts if they're
-  // running nemesys code, which is an awful hack. can we do something better?
-
-  return ret;
 }

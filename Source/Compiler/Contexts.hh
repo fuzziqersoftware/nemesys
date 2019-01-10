@@ -177,8 +177,6 @@ struct FunctionContext {
 
 
 
-extern const std::unordered_set<std::string> static_initialize_module_attributes;
-
 struct ModuleContext {
   enum class Phase {
     Initial = 0, // nothing done yet; only source file loaded
@@ -197,10 +195,20 @@ struct ModuleContext {
   std::shared_ptr<ModuleStatement> ast_root; // NULL for built-in modules
 
   // the following are valid in the Annotated phase and later
-  // TODO: de-derpify this by merging these two maps into one
-  std::unordered_set<std::string> globals_mutable;
-  std::map<std::string, Value> globals; // values invalid until Analyzed
-  int64_t global_base_offset;
+  struct GlobalVariable {
+    Value value;
+    size_t index;
+    int64_t flags;
+
+    enum Flag {
+      Mutable          = 0x01,
+      StaticInitialize = 0x02,
+    };
+
+    GlobalVariable(const Value& value, size_t index, int64_t flags);
+  };
+  std::map<std::string, GlobalVariable> global_variables; // values invalid until Analyzed
+  void* global_space;
 
   int64_t root_fragment_num_splits;
   Fragment root_fragment;
@@ -215,10 +223,14 @@ struct ModuleContext {
   ModuleContext(const std::string& name,
       const std::map<std::string, Value>& globals);
 
-  ~ModuleContext() = default;
+  ~ModuleContext();
 
+  bool create_global_variable(const std::string& name, const Value& v,
+      bool is_mutable, bool static_initialize = true);
   int64_t create_builtin_function(BuiltinFunctionDefinition& def);
   int64_t create_builtin_class(BuiltinClassDefinition& def);
+
+  bool is_builtin() const;
 };
 
 
@@ -228,9 +240,6 @@ struct GlobalContext {
 
   std::unordered_map<std::string, std::shared_ptr<ModuleContext>> modules;
   std::vector<std::string> import_paths;
-
-  int64_t* global_space;
-  int64_t global_space_used;
 
   std::unordered_map<std::string, BytesObject*> bytes_constants;
   std::unordered_map<std::wstring, UnicodeObject*> unicode_constants;
@@ -283,6 +292,4 @@ struct GlobalContext {
       bool use_shared_constants = true);
   const UnicodeObject* get_or_create_constant(const std::wstring& s,
       bool use_shared_constants = true);
-
-  size_t reserve_global_space(size_t extra_space);
 };

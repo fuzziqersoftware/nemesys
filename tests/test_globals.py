@@ -16,3 +16,6 @@ square = lambda x: x ** 2
 inverse = lambda x: 1 / x
 shift_left = lambda x: 1 << x
 is_greater_than_five = lambda x: x > 5
+
+def get_z():
+    return z
