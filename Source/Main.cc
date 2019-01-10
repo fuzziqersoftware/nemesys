@@ -43,19 +43,24 @@ Options:\n\
         ShowAnalyzeDebug - show actions in static analysis phase\n\
         ShowCompileDebug - show actions in compilation phase\n\
         ShowAssembly - show actions and code in assembly phase\n\
+        ShowCodeSoFar - on compile failures, show incomplete generated code\n\
         ShowRefcountChanges - show refcount change messages\n\
-        Code - combination of annotation, analysis, and compilation flags\n\
-        Verbose - all debug info, no behavior changes\n\
+        ShowJITEvents - show JIT compilation calls\n\
+        ShowCompileErrors - show compile errors (even when recoverable)\n\
+        Code - show most debug info (analysis, compilation, assembly)\n\
+        Verbose - show all debug info\n\
       Flags which modify behavior:\n\
         NoInlineRefcounting - disable inline refcounting\n\
+        NoEagerCompilation - disable compiling callees even when all argument\n\
+          types are available\n\
         All - enable all behavior flags and debug info\n\
       -X may be used multiple times to enable multiple flags.\n\
 \n\
 All arguments after a filename, -c option, or -m option are not parsed;\n\
 instead, they are available to the program in sys.argv.\n\
 \n\
-The interactive shell is not yet implemented. Either a filename or the -c\n\
-option must be given.\n\
+The interactive shell is not yet implemented. Either a filename or the -c or\n\
+-m options must be given.\n\
 ", argv0, argv0, argv0);
 }
 
@@ -78,7 +83,13 @@ int main(int argc, char* argv[]) {
     if (!strncmp(argv[x], "-X", 2)) {
       vector<string> debug_flag_strs = split(&argv[x][2], ',');
       for (const auto& debug_flag_str : debug_flag_strs) {
-        debug_flags |= debug_flag_for_name(debug_flag_str.c_str());
+        int64_t flag = debug_flag_for_name(debug_flag_str.c_str());
+        if (flag == 0) {
+          fprintf(stderr, "warning: debug flag %s does not exist (ignored)\n",
+              debug_flag_str.c_str());
+        } else {
+          debug_flags |= flag;
+        }
       }
 
     } else if (!strncmp(argv[x], "-A", 2)) {
