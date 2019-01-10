@@ -2339,7 +2339,7 @@ string AMD64Assembler::disassemble(const void* vdata, size_t size,
       opcode_text = "nop";
 
     } else if ((opcode & 0xF8) == 0xB8) {
-      Register reg = make_reg(reg_ext, opcode & 7);
+      Register reg = make_reg(base_ext, opcode & 7);
       string reg_name = name_for_register(reg, operand_size);
       opcode_text = string_printf("movabs   %s, ", reg_name.c_str());
       opcode_text += AMD64Assembler::disassemble_imm(data, size, offset, operand_size, true);
