@@ -33,8 +33,6 @@ static map<string, Value> globals({
   {"__name__", Value(ValueType::Unicode, L"__nemesys__")},
 });
 
-std::shared_ptr<ModuleContext> __nemesys___module(new ModuleContext("__nemesys__", globals));
-
 
 
 static std::shared_ptr<ModuleContext> get_module(UnicodeObject* module_name) {
@@ -84,7 +82,7 @@ static BytesObject* module_source(ModuleContext* module) {
 }
 
 
-void __nemesys___initialize() {
+shared_ptr<ModuleContext> __nemesys___initialize(GlobalContext* global_context) {
   Value None(ValueType::None);
   Value Bool(ValueType::Bool);
   Value Int(ValueType::Int);
@@ -97,17 +95,14 @@ void __nemesys___initialize() {
 
     {"get_module", {Unicode}, Module, void_fn_ptr([](UnicodeObject* module_name) -> ModuleContext* {
       return get_module(module_name).get();
-    }), false, false},
-
-
-
+    }), false},
 
     {"module_phase", {FragDef({Unicode}, Unicode, void_fn_ptr([](UnicodeObject* module_name) {
       auto module = get_module(module_name);
       delete_reference(module_name);
       return module_phase(module.get());
 
-    })), FragDef({Module}, Unicode, void_fn_ptr(module_phase))}, false, false},
+    })), FragDef({Module}, Unicode, void_fn_ptr(module_phase))}, false},
 
     {"module_compiled_size", {FragDef({Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
       auto module = get_module(module_name);
@@ -117,7 +112,7 @@ void __nemesys___initialize() {
     })), FragDef({Module}, Int, void_fn_ptr([](ModuleContext* module) -> int64_t {
       return module ? module->compiled_size : -1;
 
-    }))}, false, false},
+    }))}, false},
 
     {"module_global_count", {FragDef({Unicode}, Int, void_fn_ptr([](UnicodeObject* module_name) -> int64_t {
       auto module = get_module(module_name);
@@ -127,90 +122,94 @@ void __nemesys___initialize() {
     })), FragDef({Module}, Int, void_fn_ptr([](ModuleContext* module) -> int64_t {
       return module ? module->global_variables.size() : -1;
 
-    }))}, false, false},
+    }))}, false},
 
     {"module_source", {FragDef({Unicode}, Bytes, void_fn_ptr([](UnicodeObject* module_name) {
       auto module = get_module(module_name);
       delete_reference(module_name);
       return module_source(module.get());
 
-    })), FragDef({Module}, Bytes, void_fn_ptr(module_source))}, false, false},
+    })), FragDef({Module}, Bytes, void_fn_ptr(module_source))}, false},
 
     {"function_id", {Function}, Int, void_fn_ptr([](FunctionContext* fn) -> int64_t {
       if (!fn) {
         return 0;
       }
       return fn->id;
-    }), false, false},
+    }), false},
 
     {"function_class_id", {Function}, Int, void_fn_ptr([](FunctionContext* fn) -> int64_t {
       if (!fn) {
         return 0;
       }
       return fn->class_id;
-    }), false, false},
+    }), false},
 
     {"function_fragment_count", {Function}, Int, void_fn_ptr([](FunctionContext* fn) -> int64_t {
       if (!fn) {
         return -1;
       }
       return fn->fragments.size();
-    }), false, false},
+    }), false},
 
     {"function_split_count", {Function}, Int, void_fn_ptr([](FunctionContext* fn) -> int64_t {
       if (!fn) {
         return -1;
       }
       return fn->num_splits;
-    }), false, false},
+    }), false},
 
     {"function_pass_exception_block", {Function}, Bool, void_fn_ptr([](FunctionContext* fn) -> bool {
       if (!fn) {
         return false;
       }
       return fn->pass_exception_block;
-    }), false, false},
+    }), false},
 
     {"code_buffer_size", {}, Int, void_fn_ptr([]() -> int64_t {
       return global->code.total_size();
-    }), false, false},
+    }), false},
 
     {"code_buffer_used_size", {}, Int, void_fn_ptr([]() -> int64_t {
       return global->code.total_used_bytes();
-    }), false, false},
+    }), false},
 
     {"bytes_constant_count", {}, Int, void_fn_ptr([]() -> int64_t {
       return global->bytes_constants.size();
-    }), false, false},
+    }), false},
 
     {"unicode_constant_count", {}, Int, void_fn_ptr([]() -> int64_t {
       return global->unicode_constants.size();
-    }), false, false},
+    }), false},
 
     {"debug_flags", {}, Int, void_fn_ptr([]() -> int64_t {
       return debug_flags;
-    }), false, false},
+    }), false},
 
     {"set_debug_flags", {Int}, None, void_fn_ptr([](int64_t new_debug_flags) {
       debug_flags = new_debug_flags;
-    }), false, false},
+    }), false},
 
     {"common_object_count", {}, Int, void_fn_ptr([]() -> int64_t {
       return common_object_count();
-    }), false, false},
+    }), false},
 
     {"errno", {}, Int, void_fn_ptr([]() -> int64_t {
       return errno;
-    }), false, false},
+    }), false},
   });
 
+  std::shared_ptr<ModuleContext> module(new ModuleContext(
+      global_context, "__nemesys__", globals));
+
   for (auto& def : module_function_defs) {
-    __nemesys___module->create_builtin_function(def);
+    module->create_builtin_function(def);
   }
 
   // add debug flags as constants
   for (const auto& it : name_to_debug_flag) {
-    __nemesys___module->create_global_variable("DebugFlag_" + it.first,
+    module->create_global_variable("DebugFlag_" + it.first,
         Value(ValueType::Int, static_cast<int64_t>(it.second)), false);
   }
+  return module;
 }

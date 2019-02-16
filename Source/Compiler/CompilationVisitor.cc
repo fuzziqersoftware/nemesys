@@ -1074,7 +1074,8 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_label(string_printf("__BinaryOperation_%p_pow_check_neg", a));
         this->as.write_cmp(right_mem, 0);
         this->as.write_jge(positive_label);
-        this->write_raise_exception(ValueError_class_id, L"exponent must be nonnegative");
+        this->write_raise_exception(this->global->ValueError_class_id,
+            L"exponent must be nonnegative");
         this->as.write_label(positive_label);
 
         // implementation mirrors notes/pow.s except that we load the base value
@@ -1515,7 +1516,8 @@ void CompilationVisitor::visit(FunctionCall* a) {
   }
 
   // if the function is in a different module, we'll need to push r13 and change
-  // it to that module's global space pointer before the call
+  // it to that module's global space pointer before the call. but builtins
+  // don't need this because they don't use r13 as the global space pointer
   bool update_global_space_pointer = !fn->is_builtin() && (fn->module != this->module);
 
   // order of arguments:
@@ -1540,15 +1542,22 @@ void CompilationVisitor::visit(FunctionCall* a) {
   vector<FunctionCallArgumentValue> arg_values;
 
   // for class member functions, the first argument is automatically populated
-  // and is the instance object
-  if (fn->class_id) {
+  // and is the instance object, but only if it was called on an instance
+  // object. if it was called on a class object, pass all args directly,
+  // including self
+  bool add_implicit_self_arg = (fn->class_id && !a->is_class_method_call);
+  if (add_implicit_self_arg) {
     arg_values.emplace_back(fn->args[0].name);
     auto& arg = arg_values.back();
+
+    if (fn->is_class_init() != a->is_class_construction) {
+      throw compile_error("__init__ may not be called manually");
+    }
 
     // if the function being called is __init__, allocate a class object first
     // and push it as the first argument (passing an Instance with a NULL
     // pointer instructs the later code to allocate an instance)
-    if (fn->is_class_init()) {
+    if (a->is_class_construction) {
       arg.default_value = Value(ValueType::Instance, fn->id, nullptr);
 
     // if it's not __init__, we'll have to know what the instance is; instruct
@@ -1561,9 +1570,11 @@ void CompilationVisitor::visit(FunctionCall* a) {
     arg.type = Value(ValueType::Instance, fn->class_id, nullptr);
   }
 
-  // push positional args first
+  // push positional args first. if the callee is a method, skip the first
+  // positional argument (which will implicitly be self), but only if the
+  // function was called as instance.method(...)
   size_t call_arg_index = 0;
-  size_t callee_arg_index = (fn->class_id != 0);
+  size_t callee_arg_index = add_implicit_self_arg;
   for (; call_arg_index < positional_call_args.size();
        call_arg_index++, callee_arg_index++) {
     if (callee_arg_index >= fn->args.size()) {
@@ -2264,9 +2275,10 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
       }
       VariableLocation loc = this->location_for_attribute(cls, a->name,
           this->target_register);
-      const auto& attr = cls->attributes.at(a->name);
-      if (!attr.types_equal(loc.type)) {
-        string attr_type = attr.str();
+      size_t attr_index = cls->attribute_indexes.at(a->name);
+      const auto& attr = cls->attributes.at(attr_index);
+      if (!attr.value.types_equal(loc.type)) {
+        string attr_type = attr.value.str();
         string new_type = value_type.str();
         throw compile_error(string_printf("attribute %s changes type from %s to %s",
             a->name.c_str(), attr_type.c_str(), new_type.c_str()),
@@ -2556,7 +2568,9 @@ void CompilationVisitor::visit(AssertStatement* a) {
   this->write_push(this->target_register);
 
   // create an AssertionError object. note that we bypass __init__ here
-  auto* cls = this->global->context_for_class(AssertionError_class_id);
+  // TODO: deduplicate most of the rest of this function (below here) with
+  // write_raise_exception
+  auto* cls = this->global->context_for_class(this->global->AssertionError_class_id);
   if (!cls) {
     throw compile_error("AssertionError class does not exist",
         this->file_offset);
@@ -2564,14 +2578,24 @@ void CompilationVisitor::visit(AssertStatement* a) {
 
   // allocate the AssertionError instance and put the message in it
   this->as.write_label(string_printf("__AssertStatement_%p_allocate_instance", a));
-  this->write_alloc_class_instance(AssertionError_class_id, false);
+  this->write_alloc_class_instance(this->global->AssertionError_class_id, false);
   Register tmp = this->available_register_except({this->target_register});
   this->write_pop(tmp);
-  this->as.write_mov(MemoryReference(this->target_register, 24),
+
+  // fill in the attributes as needed
+  const auto* cls_init = this->global->context_for_function(this->global->AssertionError_class_id);
+  size_t message_index = cls->attribute_indexes.at("message");
+  size_t init_index = cls->attribute_indexes.at("__init__");
+  size_t message_offset = cls->offset_for_attribute(message_index);
+  size_t init_offset = cls->offset_for_attribute(init_index);
+  this->as.write_mov(MemoryReference(this->target_register, message_offset),
+      MemoryReference(tmp));
+  this->as.write_mov(tmp, reinterpret_cast<int64_t>(cls_init));
+  this->as.write_mov(MemoryReference(this->target_register, init_offset),
       MemoryReference(tmp));
 
   // we should have filled everything in
-  if (cls->instance_size() != 32) {
+  if (cls->instance_size() != 40) {
     throw compile_error("did not fill in entire AssertionError structure",
         this->file_offset);
   }
@@ -3346,11 +3370,14 @@ void CompilationVisitor::visit(ClassDefinition* a) {
   if (!cls->destructor) {
     // if none of the class attributes have destructors and it doesn't have a
     // __del__ method, then the overall class destructor trivializes to free()
-    bool has_del = cls->attributes.count("__del__");
-    bool has_subdestructors = has_del;
+    ssize_t del_index = -1;
+    try {
+      del_index = cls->attribute_indexes.at("__del__");
+    } catch (const out_of_range&) { }
+    bool has_subdestructors = (del_index >= 0);
     if (!has_subdestructors) {
       for (const auto& it : cls->attributes) {
-        if (type_has_refcount(it.second.type)) {
+        if (type_has_refcount(it.value.type)) {
           has_subdestructors = true;
           break;
         }
@@ -3388,17 +3415,17 @@ void CompilationVisitor::visit(ClassDefinition* a) {
       dtor_as.write_inc(MemoryReference(rbx, 0));
 
       // call __del__ before deleting attribute references
-      if (has_del) {
-        // figure out what __del__ is
-        auto& del_attr = cls->attributes.at("__del__");
-        if (del_attr.type != ValueType::Function) {
-          throw compile_error("__del__ exists but is not a function; instead it\'s " + del_attr.str(), this->file_offset);
+      if (del_index >= 0) {
+        // figure out what __del__ actually is
+        auto& del_attr = cls->attributes.at(del_index);
+        if (del_attr.value.type != ValueType::Function) {
+          throw compile_error("__del__ exists but is not a function; instead it\'s " + del_attr.value.str(), this->file_offset);
         }
-        if (!del_attr.value_known) {
+        if (!del_attr.value.value_known) {
           throw compile_error("__del__ exists but is an unknown value", this->file_offset);
         }
 
-        auto* fn = this->global->context_for_function(del_attr.function_id);
+        auto* fn = this->global->context_for_function(del_attr.value.function_id);
 
         // get or generate the Fragment object. this function should have at
         // most one fragment because __del__ cannot take arguments
@@ -3438,17 +3465,16 @@ void CompilationVisitor::visit(ClassDefinition* a) {
         dtor_as.write_label(base_label + "_proceed");
       }
 
-      // the first 2 fields are the refcount and destructor pointer
-      // the rest are the attributes, in the same order as in the attributes map
-      for (const auto& it : cls->dynamic_attribute_indexes) {
-        const string& attr_name = it.first;
-        size_t offset = cls->offset_for_attribute(it.second);
+      // the first 2 fields are the refcount and destructor pointer; the rest
+      // are the attributes
+      for (size_t index = 0; index < cls->attributes.size(); index++) {
+        const auto& attr = cls->attributes[index];
+        size_t offset = cls->offset_for_attribute(index);
 
-        auto& attr = cls->attributes.at(attr_name);
-        if (type_has_refcount(attr.type)) {
+        if (type_has_refcount(attr.value.type)) {
           // write a destructor call
           dtor_as.write_label(string_printf("%s_delete_reference_%s", base_label.c_str(),
-              attr_name.c_str()));
+              attr.name.c_str()));
 
           // if inline refcounting is disabled, call delete_reference manually
           if (debug_flags & DebugFlag::NoInlineRefcounting) {
@@ -4003,27 +4029,36 @@ void CompilationVisitor::write_alloc_class_instance(int64_t class_id,
 
 void CompilationVisitor::write_raise_exception(int64_t class_id,
     const wchar_t* message) {
-  auto* cls = this->global->context_for_class(class_id);
+  const auto* cls = this->global->context_for_class(class_id);
 
   this->write_alloc_class_instance(class_id, false);
 
   if (message) {
     // this form can only be used for exceptions that take exactly one argument
-    if (cls->instance_size() != sizeof(InstanceObject) + sizeof(void*)) {
+    if (cls->instance_size() != sizeof(InstanceObject) + 2 * sizeof(void*)) {
       throw compile_error("incorrect exception raise form generated");
     }
 
-    // set the attribute appropriately
+    // set message
+    size_t message_index = cls->attribute_indexes.at("message");
+    size_t message_offset = cls->offset_for_attribute(message_index);
     const UnicodeObject* constant = this->global->get_or_create_constant(message);
     this->as.write_mov(r15, reinterpret_cast<int64_t>(constant));
-    this->as.write_mov(MemoryReference(this->target_register, sizeof(InstanceObject)), r15);
+    this->as.write_mov(MemoryReference(this->target_register, message_offset), r15);
 
   } else {
     // this form can only be used for exceptions that don't take an argument
-    if (cls->instance_size() != sizeof(InstanceObject)) {
+    if (cls->instance_size() != sizeof(InstanceObject) + sizeof(void*)) {
       throw compile_error("incorrect exception raise form generated");
     }
   }
+
+  // set __init__
+  size_t init_index = cls->attribute_indexes.at("__init__");
+  size_t init_offset = cls->offset_for_attribute(init_index);
+  const auto* cls_init = this->global->context_for_function(class_id);
+  this->as.write_mov(r15, reinterpret_cast<int64_t>(cls_init));
+  this->as.write_mov(MemoryReference(this->target_register, init_offset), r15);
 
   this->as.write_mov(r15, MemoryReference(this->target_register));
 
@@ -4230,12 +4265,13 @@ CompilationVisitor::VariableLocation CompilationVisitor::location_for_attribute(
   VariableLocation loc;
   loc.name = name;
   try {
-    loc.variable_mem = MemoryReference(instance_reg, cls->offset_for_attribute(name.c_str()));
+    size_t index = cls->attribute_indexes.at(name);
+    loc.variable_mem = MemoryReference(instance_reg, cls->offset_for_attribute(index));
     loc.variable_mem_valid = true;
+    loc.type = cls->attributes.at(index).value;
   } catch (const out_of_range& e) {
-    throw compile_error("cannot generate lookup for non-dynamic attribute: " + name,
+    throw compile_error("cannot generate lookup for missing attribute " + name,
         this->file_offset);
   }
-  loc.type = cls->attributes.at(name);
   return loc;
 }

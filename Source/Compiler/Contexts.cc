@@ -32,23 +32,20 @@ BuiltinFragmentDefinition::BuiltinFragmentDefinition(
 
 BuiltinFunctionDefinition::BuiltinFunctionDefinition(const char* name,
     const std::vector<Value>& arg_types, Value return_type,
-    const void* compiled, bool pass_exception_block, bool register_globally) :
+    const void* compiled, bool pass_exception_block) :
     name(name), fragments({{arg_types, return_type, compiled}}),
-    pass_exception_block(pass_exception_block),
-    register_globally(register_globally) { }
+    pass_exception_block(pass_exception_block) { }
 
 BuiltinFunctionDefinition::BuiltinFunctionDefinition(const char* name,
     const std::vector<BuiltinFragmentDefinition>& fragments,
-    bool pass_exception_block, bool register_globally) : name(name),
-    fragments(fragments), pass_exception_block(pass_exception_block),
-    register_globally(register_globally) { }
+    bool pass_exception_block) : name(name),
+    fragments(fragments), pass_exception_block(pass_exception_block) { }
 
 BuiltinClassDefinition::BuiltinClassDefinition(const char* name,
     const std::map<std::string, Value>& attributes,
     const std::vector<BuiltinFunctionDefinition>& methods,
-    const void* destructor, bool register_globally) : name(name),
-    attributes(attributes), methods(methods), destructor(destructor),
-    register_globally(register_globally) { }
+    const void* destructor) : name(name), attributes(attributes),
+    methods(methods), destructor(destructor) { }
 
 
 
@@ -86,30 +83,16 @@ void Fragment::resolve_call_split_labels() {
 
 
 
+ClassContext::ClassAttribute::ClassAttribute(const std::string& name,
+    Value value) : name(name), value(value) { }
+
+
+
 ClassContext::ClassContext(ModuleContext* module, int64_t id) : module(module),
     id(id), ast_root(NULL), destructor(NULL) { }
 
-void ClassContext::populate_dynamic_attributes() {
-  for (const auto& it : this->attributes) {
-    if ((it.second.type != ValueType::Function) &&
-        (it.second.type != ValueType::Class)) {
-      if (debug_flags & DebugFlag::ShowAnalyzeDebug) {
-        string type_str = it.second.str();
-        fprintf(stderr, "[finalize_class] %s<%" PRId64 ">.%s = %s (dynamic)\n",
-            this->name.c_str(), this->id, it.first.c_str(), type_str.c_str());
-      }
-      this->dynamic_attribute_indexes.emplace(
-          it.first, this->dynamic_attribute_indexes.size());
-    } else if (debug_flags & DebugFlag::ShowAnalyzeDebug) {
-      string type_str = it.second.str();
-      fprintf(stderr, "[finalize_class] %s<%" PRId64 ">.%s = %s (static)\n",
-          this->name.c_str(), this->id, it.first.c_str(), type_str.c_str());
-    }
-  }
-}
-
 int64_t ClassContext::attribute_count() const {
-  return this->dynamic_attribute_indexes.size();
+  return this->attributes.size();
 }
 
 int64_t ClassContext::instance_size() const {
@@ -117,7 +100,7 @@ int64_t ClassContext::instance_size() const {
 }
 
 int64_t ClassContext::offset_for_attribute(const char* attribute) const {
-  return this->offset_for_attribute(this->dynamic_attribute_indexes.at(attribute));
+  return this->offset_for_attribute(this->attribute_indexes.at(attribute));
 }
 
 int64_t ClassContext::offset_for_attribute(size_t index) const {
@@ -180,37 +163,6 @@ bool FunctionContext::is_builtin() const {
   return !this->ast_root;
 }
 
-static int64_t match_function_call_arg_types(const vector<Value>& fn_arg_types,
-    const vector<Value>& arg_types) {
-  if (fn_arg_types.size() != arg_types.size()) {
-    return -1;
-  }
-
-  int64_t promotion_count = 0;
-  for (size_t x = 0; x < arg_types.size(); x++) {
-    if (arg_types[x].type == ValueType::Indeterminate) {
-      throw compile_error("call argument is Indeterminate");
-    }
-
-    if (fn_arg_types[x].type == ValueType::Indeterminate) {
-      promotion_count++;
-      continue; // don't check extension types
-
-    } else if (fn_arg_types[x].type != arg_types[x].type) {
-      return -1; // no match
-    }
-
-    int64_t extension_match_ret = match_function_call_arg_types(
-        fn_arg_types[x].extension_types, arg_types[x].extension_types);
-    if (extension_match_ret < 0) {
-      return extension_match_ret;
-    }
-    promotion_count += extension_match_ret;
-  }
-
-  return promotion_count;
-}
-
 int64_t FunctionContext::fragment_index_for_call_args(
     const vector<Value>& arg_types) {
   // go through the existing fragments and see if there are any that can satisfy
@@ -222,7 +174,7 @@ int64_t FunctionContext::fragment_index_for_call_args(
   for (size_t x = 0; x < this->fragments.size(); x++) {
     auto& fragment = this->fragments[x];
 
-    int64_t score = match_function_call_arg_types(fragment.arg_types, arg_types);
+    int64_t score = this->module->global->match_function_call_arg_types(fragment.arg_types, arg_types);
     if (score < 0) {
       continue; // not a match
     }
@@ -238,8 +190,9 @@ int64_t FunctionContext::fragment_index_for_call_args(
 
 
 
-ModuleContext::ModuleContext(const string& name, const string& filename,
-    bool is_code) : phase(Phase::Initial), name(name),
+ModuleContext::ModuleContext(GlobalContext* global, const string& name,
+    const string& filename, bool is_code) : global(global),
+    phase(Phase::Initial), name(name),
     source(new SourceFile(filename, is_code)), global_space(NULL),
     root_fragment_num_splits(0), root_fragment(NULL, -1, {}), compiled_size(0) {
   // TODO: using unescape_unicode is a stupid hack, but these strings can't
@@ -252,8 +205,8 @@ ModuleContext::ModuleContext(const string& name, const string& filename,
   }
 }
 
-ModuleContext::ModuleContext(const string& name,
-    const map<string, Value>& globals) : phase(Phase::Initial),
+ModuleContext::ModuleContext(GlobalContext* global, const string& name,
+    const map<string, Value>& globals) : global(global), phase(Phase::Imported),
     name(name), source(NULL), ast_root(NULL), global_space(NULL),
     root_fragment_num_splits(0), root_fragment(NULL, -1, {}), compiled_size(0) {
   this->create_global_variable("__name__", Value(ValueType::Unicode, unescape_unicode(name)), false);
@@ -279,13 +232,121 @@ bool ModuleContext::create_global_variable(const string& name, const Value& v,
 }
 
 int64_t ModuleContext::create_builtin_function(BuiltinFunctionDefinition& def) {
-  int64_t function_id = ::create_builtin_function(def);
+  // the context already exists; all we have to do is assign a function id and
+  // make a name in the current module
+  int64_t function_id = this->global->next_builtin_function_id--;
+  this->global->function_id_to_context.emplace(piecewise_construct,
+      forward_as_tuple(function_id), forward_as_tuple(this, function_id,
+        def.name, def.fragments, def.pass_exception_block));
+
+  // register the function in the module's global namespace
   this->create_global_variable(def.name, Value(ValueType::Function, function_id), false);
   return function_id;
 }
 
 int64_t ModuleContext::create_builtin_class(BuiltinClassDefinition& def) {
-  int64_t class_id = ::create_builtin_class(def);
+  int64_t class_id = this->global->next_builtin_function_id--;
+
+  // create and register the class context
+  // TODO: define a ClassContext constructor that will do all this
+  ClassContext& cls = this->global->class_id_to_context.emplace(piecewise_construct,
+      forward_as_tuple(class_id), forward_as_tuple(nullptr, class_id)).first->second;
+  cls.destructor = def.destructor;
+  cls.name = def.name;
+  cls.ast_root = NULL;
+  for (const auto& it : def.attributes) {
+    cls.attribute_indexes.emplace(it.first, cls.attributes.size());
+    cls.attributes.emplace_back(it.first, it.second);
+  }
+
+  // built-in types like Bytes, Unicode, List, Tuple, Set, and Dict don't take
+  // Instance as the first argument (instead they take their corresponding
+  // built-in types), so allow those if the class being defined is one of those
+  // TODO: it's bad that we do this using the class name; find a better way
+  // TODO: also extension type refs don't work; this is why tuple is missing
+  static const Value Extension0(ValueType::ExtensionTypeReference, static_cast<int64_t>(0));
+  static const Value Extension1(ValueType::ExtensionTypeReference, static_cast<int64_t>(1));
+  static const Value List_Any(ValueType::List, vector<Value>({Value()}));
+  static const Value List_Same(ValueType::List, vector<Value>({Extension0}));
+  static const Value Set_Any(ValueType::Set, vector<Value>({Value()}));
+  static const Value Set_Same(ValueType::Set, vector<Value>({Extension0}));
+  static const Value Dict_Any(ValueType::Dict, vector<Value>({Value(), Value()}));
+  static const Value Dict_Same(ValueType::Dict, vector<Value>({Extension0, Extension1}));
+  static const unordered_map<string, unordered_set<Value>> name_to_self_types({
+    {"bytes", {Value(ValueType::Bytes)}},
+    {"unicode", {Value(ValueType::Unicode)}},
+    {"list", {List_Any, List_Same}},
+    {"set", {Set_Any, Set_Same}},
+    {"dict", {Dict_Any, Dict_Same}},
+  });
+  unordered_set<Value> self_types({{ValueType::Instance, static_cast<int64_t>(0), NULL}});
+  try {
+    self_types = name_to_self_types.at(def.name);
+  } catch (const out_of_range&) { }
+
+  // register the methods
+  for (auto& method_def : def.methods) {
+    // __del__ must not be given in the methods; it must already be compiled
+    if (!strcmp(method_def.name, "__del__")) {
+      throw logic_error(string_printf("%s defines __del__ in methods, not precompiled",
+          def.name));
+    }
+
+    // patch all of the fragment definitions to include the correct class
+    // instance type as the first argument. they should already have an Instance
+    // argument first, but with a missing class_id - the caller doesn't know the
+    // class id when they call create_builtin_class
+    for (auto& frag_def : method_def.fragments) {
+      if (frag_def.arg_types.empty()) {
+        throw logic_error(string_printf("%s.%s must take the class instance as an argument",
+            def.name, method_def.name));
+      }
+
+      if (!self_types.count(frag_def.arg_types[0])) {
+        string type_str = frag_def.arg_types[0].str();
+        throw logic_error(string_printf("%s.%s cannot take %s as the first argument",
+            def.name, method_def.name, type_str.c_str()));
+      }
+      if (frag_def.arg_types[0].type == ValueType::Instance) {
+        frag_def.arg_types[0].class_id = class_id;
+      }
+    }
+
+    // __init__ has some special behaviors
+    int64_t function_id;
+    if (!strcmp(method_def.name, "__init__")) {
+      // if it's __init__, the return type must be the class instance, not None
+      for (auto& frag_def : method_def.fragments) {
+        if (frag_def.return_type != Value(ValueType::Instance, static_cast<int64_t>(0), NULL)) {
+          throw logic_error(string_printf("%s.__init__ must return the class instance",
+              def.name));
+        }
+        frag_def.return_type.class_id = class_id;
+      }
+
+      // __init__'s function id is the same as the class id
+      function_id = class_id;
+
+    } else {
+      // all other functions have unique function_ids
+      function_id = this->global->next_builtin_function_id--;
+    }
+
+    // register the function
+    FunctionContext& fn = this->global->function_id_to_context.emplace(
+        piecewise_construct, forward_as_tuple(function_id),
+        forward_as_tuple(this, function_id, method_def.name, method_def.fragments, method_def.pass_exception_block)).first->second;
+    fn.class_id = class_id;
+
+    // link the function as a class attribute
+    if (!cls.attribute_indexes.emplace(method_def.name, cls.attributes.size()).second) {
+      throw logic_error(string_printf("%s.%s overrides a non-method attribute",
+          def.name, method_def.name));
+    }
+    cls.attributes.emplace_back(method_def.name, Value(ValueType::Function, function_id));
+  }
+
+  // register the class in the module's global namespace
   this->create_global_variable(def.name, Value(ValueType::Class, class_id), false);
   return class_id;
 }
@@ -302,7 +363,13 @@ ModuleContext::GlobalVariable::GlobalVariable(const Value& value, size_t index,
 
 
 GlobalContext::GlobalContext(const vector<string>& import_paths) :
-    import_paths(import_paths), next_callsite_token(1) { }
+    import_paths(import_paths), next_user_function_id(1),
+    next_builtin_function_id(-1), next_callsite_token(1) {
+  this->builtins_module = create_builtin_module(this, "builtins");
+  if (!this->builtins_module) {
+    throw logic_error("builtins module does not exist");
+  }
+}
 
 GlobalContext::~GlobalContext() {
   for (const auto& it : this->bytes_constants) {
@@ -380,7 +447,7 @@ shared_ptr<ModuleContext> GlobalContext::get_or_create_module(
 
   // if it doesn't exist but is a built-in module, return that
   {
-    auto module = get_builtin_module(module_name);
+    auto module = create_builtin_module(this, module_name);
     if (module.get()) {
       this->modules.emplace(module_name, module);
       return module;
@@ -391,7 +458,7 @@ shared_ptr<ModuleContext> GlobalContext::get_or_create_module(
   if (filename_is_code) {
     auto module = this->modules.emplace(piecewise_construct,
         forward_as_tuple(module_name),
-        forward_as_tuple(new ModuleContext(module_name, filename, true))).first->second;
+        forward_as_tuple(new ModuleContext(this, module_name, filename, true))).first->second;
     if (debug_flags & DebugFlag::ShowSourceDebug) {
       fprintf(stderr, "[%s] added code from memory (%zu lines, %zu bytes)\n\n",
           module_name.c_str(), module->source->line_count(),
@@ -409,7 +476,7 @@ shared_ptr<ModuleContext> GlobalContext::get_or_create_module(
   }
   auto module = this->modules.emplace(piecewise_construct,
       forward_as_tuple(module_name),
-      forward_as_tuple(new ModuleContext(module_name, found_filename, false))).first->second;
+      forward_as_tuple(new ModuleContext(this, module_name, found_filename, false))).first->second;
   if (debug_flags & DebugFlag::ShowSourceDebug) {
     fprintf(stderr, "[%s] loaded %s (%zu lines, %zu bytes)\n\n",
         module_name.c_str(), found_filename.c_str(), module->source->line_count(),
@@ -441,13 +508,6 @@ FunctionContext* GlobalContext::context_for_function(int64_t function_id,
   if (function_id == 0) {
     return NULL;
   }
-  if (function_id < 0) {
-    try {
-      return &builtin_function_definitions.at(function_id);
-    } catch (const out_of_range& e) {
-      return NULL;
-    }
-  }
   if (module_for_create) {
     return &(*this->function_id_to_context.emplace(piecewise_construct,
         forward_as_tuple(function_id),
@@ -466,13 +526,6 @@ ClassContext* GlobalContext::context_for_class(int64_t class_id,
   if (class_id == 0) {
     return NULL;
   }
-  if (class_id < 0) {
-    try {
-      return &builtin_class_definitions.at(class_id);
-    } catch (const out_of_range& e) {
-      return NULL;
-    }
-  }
   if (module_for_create) {
     return &(*this->class_id_to_context.emplace(piecewise_construct,
         forward_as_tuple(class_id),
@@ -484,6 +537,53 @@ ClassContext* GlobalContext::context_for_class(int64_t class_id,
       return NULL;
     }
   }
+}
+
+int64_t GlobalContext::match_function_call_arg_types(
+    const vector<Value>& fn_arg_types, const vector<Value>& arg_types) {
+  if (fn_arg_types.size() != arg_types.size()) {
+    return -1;
+  }
+
+  int64_t promotion_count = 0;
+  for (size_t x = 0; x < arg_types.size(); x++) {
+    if (arg_types[x].type == ValueType::Indeterminate) {
+      throw compile_error("call argument is Indeterminate");
+    }
+
+    if (fn_arg_types[x].type == ValueType::Indeterminate) {
+      promotion_count++;
+      continue; // don't check extension types
+
+    } else if (fn_arg_types[x].type != arg_types[x].type) {
+      return -1; // no match
+    }
+
+    // allow subclasses to match with their parent classes
+    if (fn_arg_types[x].type == ValueType::Instance) {
+      const auto* cls = this->context_for_class(fn_arg_types[x].class_id);
+      while (cls) {
+        if (cls->id == arg_types[x].class_id) {
+          break;
+        }
+        cls = this->context_for_class(cls->parent_class_id);
+      }
+      if (!cls) {
+        return -1; // no superclass matched this arg, so fail overall
+      }
+
+    // if it's not Indeterminate and not a class, check the extension types
+    } else {
+      int64_t extension_match_ret = this->match_function_call_arg_types(
+          fn_arg_types[x].extension_types, arg_types[x].extension_types);
+      if (extension_match_ret < 0) {
+        return extension_match_ret;
+      }
+      promotion_count += extension_match_ret;
+    }
+  }
+
+  return promotion_count;
 }
 
 const BytesObject* GlobalContext::get_or_create_constant(const string& s,

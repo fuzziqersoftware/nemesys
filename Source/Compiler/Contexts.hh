@@ -29,6 +29,7 @@ public:
 
 struct ModuleContext;
 struct FunctionContext;
+struct GlobalContext;
 
 struct BuiltinFragmentDefinition {
   std::vector<Value> arg_types;
@@ -43,14 +44,13 @@ struct BuiltinFunctionDefinition {
   const char* name;
   std::vector<BuiltinFragmentDefinition> fragments;
   bool pass_exception_block;
-  bool register_globally;
 
   BuiltinFunctionDefinition(const char* name,
       const std::vector<Value>& arg_types, Value return_type,
-      const void* compiled, bool pass_exception_block, bool register_globally);
+      const void* compiled, bool pass_exception_blocky);
   BuiltinFunctionDefinition(const char* name,
       const std::vector<BuiltinFragmentDefinition>& fragments,
-      bool pass_exception_block, bool register_globally);
+      bool pass_exception_block);
 };
 
 struct BuiltinClassDefinition {
@@ -58,12 +58,11 @@ struct BuiltinClassDefinition {
   std::map<std::string, Value> attributes;
   std::vector<BuiltinFunctionDefinition> methods;
   const void* destructor;
-  bool register_globally;
 
   BuiltinClassDefinition(const char* name,
       const std::map<std::string, Value>& attributes,
       const std::vector<BuiltinFunctionDefinition>& methods,
-      const void* destructor, bool register_globally);
+      const void* destructor);
 };
 
 struct Fragment {
@@ -94,6 +93,13 @@ struct Fragment {
 
 
 struct ClassContext {
+  struct ClassAttribute {
+    std::string name;
+    Value value;
+
+    ClassAttribute(const std::string& name, Value value);
+  };
+
   // ClassContext objects are created during the annotation phase of importing,
   // so nothing here is technically valid until the owning module is in the
   // Annotated phase or later
@@ -103,13 +109,13 @@ struct ClassContext {
   int64_t id; // note that __init__ has the same ID
   std::string name;
   ASTNode* ast_root;
+  int64_t parent_class_id; // can be zero
 
   // this field's keys are valid when the owning module is Annotated or later,
   // but the values aren't valid until Analyzed or later
-  std::map<std::string, Value> attributes;
+  std::vector<ClassAttribute> attributes;
 
-  // the following are valid when the owning module is Analyzed or later
-  std::unordered_map<std::string, int64_t> dynamic_attribute_indexes; // valid when Analyzed
+  std::unordered_map<std::string, size_t> attribute_indexes; // valid when Annotated
 
   // the following are valid when the owning module is Imported or later
   const void* destructor; // generated when class def is visited by CompilationVisitor
@@ -187,6 +193,7 @@ struct ModuleContext {
   };
 
   // the following are always valid
+  GlobalContext* global;
   Phase phase;
   std::string name;
   std::shared_ptr<SourceFile> source; // NULL for built-in modules
@@ -215,12 +222,12 @@ struct ModuleContext {
 
   int64_t compiled_size; // size of all compiled blocks (root scope, functions) in this module
 
-  // constructor for imported modules
-  ModuleContext(const std::string& name, const std::string& filename_or_code,
-      bool is_code = false);
+  // constructor for imported modules. starts at Initial phase
+  ModuleContext(GlobalContext* global, const std::string& name,
+      const std::string& filename_or_code, bool is_code = false);
 
-  // constructor for built-in modules
-  ModuleContext(const std::string& name,
+  // constructor for built-in modules. starts at Imported phase
+  ModuleContext(GlobalContext* global, const std::string& name,
       const std::map<std::string, Value>& globals);
 
   ~ModuleContext();
@@ -239,6 +246,7 @@ struct GlobalContext {
   CodeBuffer code;
 
   std::unordered_map<std::string, std::shared_ptr<ModuleContext>> modules;
+  std::shared_ptr<ModuleContext> builtins_module;
   std::vector<std::string> import_paths;
 
   std::unordered_map<std::string, BytesObject*> bytes_constants;
@@ -246,8 +254,26 @@ struct GlobalContext {
 
   std::unordered_set<std::string> scopes_in_progress;
 
+  std::atomic<int64_t> next_user_function_id; // starts at 1 and increases
+  std::atomic<int64_t> next_builtin_function_id; // starts at -1 and decreases
+
   std::unordered_map<int64_t, FunctionContext> function_id_to_context;
   std::unordered_map<int64_t, ClassContext> class_id_to_context;
+
+  int64_t AssertionError_class_id;
+  int64_t IndexError_class_id;
+  int64_t KeyError_class_id;
+  int64_t OSError_class_id;
+  int64_t NemesysCompilerError_class_id;
+  int64_t TypeError_class_id;
+  int64_t ValueError_class_id;
+
+  int64_t BytesObject_class_id;
+  int64_t UnicodeObject_class_id;
+  int64_t DictObject_class_id;
+  int64_t ListObject_class_id;
+  int64_t TupleObject_class_id;
+  int64_t SetObject_class_id;
 
   struct UnresolvedFunctionCall {
     int64_t callee_function_id;
@@ -292,4 +318,7 @@ struct GlobalContext {
       bool use_shared_constants = true);
   const UnicodeObject* get_or_create_constant(const std::wstring& s,
       bool use_shared_constants = true);
+
+  int64_t match_function_call_arg_types(const std::vector<Value>& fn_arg_types,
+      const std::vector<Value>& arg_types);
 };

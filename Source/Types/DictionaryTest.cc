@@ -13,14 +13,13 @@
 #include "Dictionary.hh"
 #include "Strings.hh"
 #include "Instance.hh"
+#include "../Compiler/Contexts.hh"
 
 using namespace std;
 
-// Dictionary.cc needs these to exist, but they don't need to be correct since
-// we never pass an exc_block in the unit tests
-InstanceObject MemoryError_instance;
-int64_t IndexError_class_id = 0;
-int64_t KeyError_class_id = 0;
+// Dictionary.cc needs this to exist, but it doesn't need to be initialized
+// because we never pass an exc_block in the unit tests
+shared_ptr<GlobalContext> global;
 
 
 void expect_key_missing(const DictionaryObject* d, void* k) {
@@ -447,6 +446,7 @@ void run_reorganization_test() {
 
 
 int main(int argc, char* argv[]) {
+  global.reset(new GlobalContext({}));
   run_basic_test();
   run_reorganization_test();
   printf("all tests passed\n");

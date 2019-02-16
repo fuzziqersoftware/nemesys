@@ -20,8 +20,6 @@ using namespace std;
 
 
 
-extern shared_ptr<GlobalContext> global;
-
 static wstring __doc__ = L"Standard error code symbols.";
 
 static map<string, Value> globals({
@@ -59,9 +57,7 @@ static map<string, Value> globals({
   // tzset
 });
 
-std::shared_ptr<ModuleContext> time_module(new ModuleContext("time", globals));
-
-void time_initialize() {
+shared_ptr<ModuleContext> time_initialize(GlobalContext* global) {
   Value None(ValueType::None);
   Value Int(ValueType::Int);
   Value Float(ValueType::Float);
@@ -69,16 +65,18 @@ void time_initialize() {
   vector<BuiltinFunctionDefinition> module_function_defs({
     {"time", {}, Float, void_fn_ptr([]() -> double {
       return static_cast<double>(now()) / 1000000.0;
-    }), false, false},
+    }), false},
 
-    {"utime", {}, Int, void_fn_ptr(&now), false, false},
+    {"utime", {}, Int, void_fn_ptr(&now), false},
 
     {"sleep", {Float}, None, void_fn_ptr([](double secs) {
       usleep(static_cast<int64_t>(secs * 1000000));
-    }), false, false},
+    }), false},
   });
 
+  shared_ptr<ModuleContext> module(new ModuleContext(global, "time", globals));
   for (auto& def : module_function_defs) {
-    time_module->create_builtin_function(def);
+    module->create_builtin_function(def);
   }
+  return module;
 }

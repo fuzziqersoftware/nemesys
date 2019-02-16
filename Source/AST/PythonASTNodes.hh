@@ -297,6 +297,8 @@ struct FunctionCall : Expression {
   // annotations
   int64_t function_id;
   int64_t split_id;
+  bool is_class_method_call; // if true, self is not passed implicitly
+  bool is_class_construction; // if true, self is allocated implicitly
 
   int64_t callee_function_id;
 

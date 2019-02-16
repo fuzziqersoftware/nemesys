@@ -130,7 +130,6 @@ int main(int argc, char* argv[]) {
 
   // set up the global environment
   global.reset(new GlobalContext(import_paths));
-  create_default_builtin_names();
 
   // populate the sys module appropriately
   const char* argv0_realpath = realpath(argv[0], NULL);

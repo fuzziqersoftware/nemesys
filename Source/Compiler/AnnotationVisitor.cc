@@ -114,10 +114,28 @@ void AnnotationVisitor::visit(GlobalStatement* a) {
   this->RecursiveASTVisitor::visit(a);
 }
 
+void AnnotationVisitor::visit(VariableLookup* a) {
+  // this is a bit of a hack to detect `self.x` references in the
+  // AttributeLValueReference handler below
+  this->last_variable_lookup_node = a;
+}
+
 void AnnotationVisitor::visit(AttributeLValueReference* a) {
+  // if it's a direct write, create the name if needed
   if (!a->base.get()) {
     this->record_write(a->name, a->file_offset);
+
+  // allow creation of class attributes only in __init__
+  } else if (this->in_class_init) {
+    a->base->accept(this);
+    if (this->last_variable_lookup_node == a->base.get()) {
+      const VariableLookup* vl = reinterpret_cast<const VariableLookup*>(a->base.get());
+      if (vl->name == "self") {
+        this->record_class_attribute_write(a->name, a->file_offset);
+      }
+    }
   }
+
   this->RecursiveASTVisitor::visit(a);
 }
 
@@ -133,11 +151,12 @@ void AnnotationVisitor::visit(FunctionDefinition* a) {
 
   // __init__ has the same function id as the class id - this makes it easy to
   // find the constructor function for a class
-  bool is_class_init = (this->in_class_id && !this->in_function_id && (a->name == "__init__"));
-  if (is_class_init) {
+  bool prev_in_class_init = this->in_class_init;
+  this->in_class_init = (this->in_class_id && !this->in_function_id && (a->name == "__init__"));
+  if (this->in_class_init) {
     a->function_id = this->in_class_id;
   } else {
-    a->function_id = this->next_function_id++;
+    a->function_id = this->global->next_user_function_id++;
   }
 
   int64_t prev_function_id = this->in_function_id;
@@ -147,6 +166,15 @@ void AnnotationVisitor::visit(FunctionDefinition* a) {
   fn->class_id = this->in_class_id;
   fn->name = a->name;
   fn->ast_root = a;
+
+  if (this->in_class_init) {
+    if (a->args.args.empty()) {
+      throw compile_error("__init__ must take at least one argument");
+    }
+    if (a->args.args[0].name != "self") {
+      throw compile_error("the first argument to __init__ must be named `self`");
+    }
+  }
 
   for (const auto& arg : a->args.args) {
     this->record_write(arg.name, a->file_offset);
@@ -160,12 +188,13 @@ void AnnotationVisitor::visit(FunctionDefinition* a) {
 
   this->visit_list(a->items);
   this->in_function_id = prev_function_id;
+  this->in_class_init = prev_in_class_init;
 
   this->record_write(a->name, a->file_offset);
 }
 
 void AnnotationVisitor::visit(LambdaDefinition* a) {
-  a->function_id = this->next_function_id++;
+  a->function_id = this->global->next_user_function_id++;
 
   int64_t prev_function_id = this->in_function_id;
   this->in_function_id = a->function_id;
@@ -192,7 +221,7 @@ void AnnotationVisitor::visit(LambdaDefinition* a) {
 }
 
 void AnnotationVisitor::visit(ClassDefinition* a) {
-  a->class_id = this->next_function_id++;
+  a->class_id = this->global->next_user_function_id++;
 
   // classes may not be declared within functions (for now)
   if (this->in_function_id) {
@@ -205,6 +234,10 @@ void AnnotationVisitor::visit(ClassDefinition* a) {
   auto* cls = this->current_class();
   cls->name = a->name;
   cls->ast_root = a;
+
+  // note: we don't create any default attributes on the class here because we
+  // don't yet know what its parent classes are. the class' finalization happens
+  // during analysis instead.
 
   this->RecursiveASTVisitor::visit(a);
   this->in_class_id = prev_class_id;
@@ -257,8 +290,6 @@ void AnnotationVisitor::visit(ModuleStatement* a) {
 
 
 
-atomic<int64_t> AnnotationVisitor::next_function_id(1);
-
 FunctionContext* AnnotationVisitor::current_function() {
   return this->global->context_for_function(this->in_function_id, this->module);
 }
@@ -273,7 +304,7 @@ void AnnotationVisitor::record_write(const string& name, size_t file_offset) {
   }
 
   // builtin names can't be written
-  if (builtin_names.count(name)) {
+  if (this->global->builtins_module->global_variables.count(name)) {
     throw compile_error("can\'t assign to builtin name", file_offset);
   }
 
@@ -290,11 +321,31 @@ void AnnotationVisitor::record_write(const string& name, size_t file_offset) {
   // if we're in a class definition, we're writing a class attribute
   auto* cls = this->current_class();
   if (cls) {
-    cls->attributes.emplace(piecewise_construct, forward_as_tuple(name),
-        forward_as_tuple());
+    if (!cls->attribute_indexes.emplace(name, cls->attributes.size()).second) {
+      throw compile_error("attribute " + name + " declared multiple times", file_offset);
+    }
+    cls->attributes.emplace_back(name, Value(ValueType::Indeterminate));
     return;
   }
 
   // we're writing a global
   this->module->create_global_variable(name, Value(ValueType::Indeterminate), true, false);
+}
+
+void AnnotationVisitor::record_class_attribute_write(const string& name,
+    size_t file_offset) {
+  if (name.empty()) {
+    throw compile_error("empty name in record_class_attribute_write", file_offset);
+  }
+
+  // unlike globals/locals, builtin names can be used as attributes, so don't
+  // check for that here
+  auto* cls = this->current_class();
+  if (!cls) {
+    throw compile_error("class attribute written outside of class definition");
+  }
+  if (!cls->attribute_indexes.emplace(name, cls->attributes.size()).second) {
+    return; // don't fail if attributes are overwritten in __init__
+  }
+  cls->attributes.emplace_back(name, Value(ValueType::Indeterminate));
 }

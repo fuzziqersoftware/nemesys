@@ -4,6 +4,4 @@
 
 #include "../Compiler/Contexts.hh"
 
-extern std::shared_ptr<ModuleContext> time_module;
-
-void time_initialize();
+std::shared_ptr<ModuleContext> time_initialize(GlobalContext* global);

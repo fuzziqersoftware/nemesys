@@ -39,7 +39,6 @@ int64_t construct_value(GlobalContext* global, const Value& value,
       return reinterpret_cast<int64_t>(global->get_or_create_constant(
           *value.unicode_value, use_shared_constants));
 
-    case ValueType::Function:
     case ValueType::Module:
       return 0;
 
@@ -77,10 +76,16 @@ int64_t construct_value(GlobalContext* global, const Value& value,
       }
       return reinterpret_cast<int64_t>(d);
     }
+    case ValueType::Function: {
+      return reinterpret_cast<int64_t>(global->context_for_function(value.function_id));
+    }
+
+    case ValueType::Class: {
+      return reinterpret_cast<int64_t>(global->context_for_class(value.class_id));
+    }
 
     case ValueType::Tuple:
     case ValueType::Set:
-    case ValueType::Class:
     default: {
       string value_str = value.str();
       throw compile_error("static construction unimplemented for " + value_str);
@@ -273,8 +278,8 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
                 i->class_id, class_name);
             if (cls) {
               try {
-                ValueType message_type = cls->attributes.at("message").type;
-                int64_t message_index = cls->dynamic_attribute_indexes.at("message");
+                size_t message_index = cls->attribute_indexes.at("message");
+                ValueType message_type = cls->attributes.at(message_index).value.type;
 
                 if (message_type == ValueType::Unicode) {
                   const UnicodeObject* message = reinterpret_cast<const UnicodeObject*>(i->attributes[message_index]);
@@ -459,7 +464,7 @@ const void* jit_compile_scope(GlobalContext* global, int64_t callsite_token,
     // appropriately here based on the contents of int_args and their types
 
     UnicodeObject* message = bytes_decode_ascii(what);
-    return create_single_attr_instance(NemesysCompilerError_class_id,
+    return create_single_attr_instance(global->NemesysCompilerError_class_id,
         reinterpret_cast<int64_t>(message));
   };
 

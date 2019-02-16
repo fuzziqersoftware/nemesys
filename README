@@ -13,7 +13,7 @@ Here's what nemesys does:
 - Fast integer math.
 - Floating-point math.
 - Strings, lists, and tuples.
-- Classes, but not inheritance yet.
+- Classes and basic inheritance (no virtual functions yet).
 - Refcounted garbage collection.
 - Custom class destructors (__del__).
 - Exceptions.
@@ -24,7 +24,7 @@ Here's what nemesys doesn't do yet, but will in the future:
 - Dicts and sets.
 - Variadic functions.
 - Recursion.
-- Class inheritance.
+- Multiple inheritance.
 - Decorators.
 - Most built-in functions.
 - Generators and coroutines.

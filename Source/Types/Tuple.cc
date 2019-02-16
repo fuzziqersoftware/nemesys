@@ -12,6 +12,8 @@ using namespace std;
 
 
 
+extern shared_ptr<GlobalContext> global;
+
 void** TupleObject::items() {
   return reinterpret_cast<void**>(&this->data[0]);
 }
@@ -68,7 +70,7 @@ void* tuple_get_item(const TupleObject* t, int64_t position,
     position += t->count;
   }
   if ((position < 0) || (position >= static_cast<ssize_t>(t->count))) {
-    raise_python_exception_with_message(exc_block, IndexError_class_id,
+    raise_python_exception_with_message(exc_block, global->IndexError_class_id,
         "tuple index out of range");
     throw out_of_range("index out of range for tuple object");
   }
@@ -87,7 +89,7 @@ void tuple_set_item(TupleObject* t, int64_t position, void* value,
     position += t->count;
   }
   if ((position < 0) || (position >= static_cast<ssize_t>(t->count))) {
-    raise_python_exception_with_message(exc_block, IndexError_class_id,
+    raise_python_exception_with_message(exc_block, global->IndexError_class_id,
         "tuple index out of range");
     throw out_of_range("index out of range for tuple object");
   }

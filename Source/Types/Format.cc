@@ -13,6 +13,8 @@ using namespace std;
 
 
 
+extern shared_ptr<GlobalContext> global;
+
 /* format opcodes look like this:
  *
  * %[[-]width][.max_chars]s - string
@@ -444,7 +446,7 @@ ObjectType* string_format(ObjectType* format, TupleObject* args,
     if (delete_tuple_reference) {
       delete_reference(args);
     }
-    raise_python_exception_with_message(exc_block, TypeError_class_id, e.what());
+    raise_python_exception_with_message(exc_block, global->TypeError_class_id, e.what());
     throw;
   }
 

@@ -16,8 +16,6 @@ using namespace std;
 
 
 
-extern shared_ptr<GlobalContext> global;
-
 static wstring __doc__ = L"Standard error code symbols.";
 
 #define INFIX_ERROR(e) {Value(ValueType::Int, static_cast<int64_t>(e)), \
@@ -352,8 +350,6 @@ static map<string, Value> globals({
 
 #undef INFIX_ERROR
 
-std::shared_ptr<ModuleContext> errno_module(new ModuleContext("posix", globals));
-
-void errno_initialize() {
-  // nothing to do
+shared_ptr<ModuleContext> errno_initialize(GlobalContext* global) {
+  return shared_ptr<ModuleContext>(new ModuleContext(global, "errno", globals));
 }

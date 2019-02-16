@@ -21,8 +21,6 @@ using namespace std;
 
 
 
-extern shared_ptr<GlobalContext> global;
-
 static wstring __doc__ = L"Common built-in objects and functions.\n\
 \n\
 Attributes that are present have the same meanings as in Python 3.";
@@ -73,25 +71,25 @@ static map<string, Value> globals({
   // {"version_info",         Value()},
 });
 
-std::shared_ptr<ModuleContext> sys_module(new ModuleContext("sys", globals));
+static string sys_realpath;
+static vector<shared_ptr<Value>> sys_argv;
 
 void sys_set_executable(const char* realpath) {
-  sys_module->create_global_variable("executable", Value(ValueType::Bytes, realpath), false);
+  sys_realpath = realpath;
 }
 
-void sys_set_argv(const vector<const char*>& sys_argv) {
-  vector<shared_ptr<Value>> argv;
-  for (const char* arg : sys_argv) {
+void sys_set_argv(const vector<const char*>& argv) {
+  sys_argv.clear();
+  for (const char* arg : argv) {
     wstring warg;
     for (; *arg; arg++) {
       warg += static_cast<wchar_t>(*arg);
     }
-    argv.emplace_back(new Value(ValueType::Unicode, move(warg)));
+    sys_argv.emplace_back(new Value(ValueType::Unicode, move(warg)));
   }
-  sys_module->create_global_variable("argv", Value(ValueType::List, move(argv)), false);
 }
 
-void sys_initialize() {
+shared_ptr<ModuleContext> sys_initialize(GlobalContext* global) {
   Value Indeterminate(ValueType::Indeterminate);
   Value Int(ValueType::Int);
   Value Bytes(ValueType::Bytes);
@@ -113,10 +111,16 @@ void sys_initialize() {
         {{List}, Int, void_fn_ptr(getrefcount)},
         {{Tuple}, Int, void_fn_ptr(getrefcount)},
         {{Set}, Int, void_fn_ptr(getrefcount)},
-        {{Dict}, Int, void_fn_ptr(getrefcount)}}, false, false},
+        {{Dict}, Int, void_fn_ptr(getrefcount)}}, false},
   });
 
+  shared_ptr<ModuleContext> module(new ModuleContext(global, "sys", globals));
+
   for (auto& def : module_function_defs) {
-    sys_module->create_builtin_function(def);
+    module->create_builtin_function(def);
   }
+  module->create_global_variable("argv", Value(ValueType::List, sys_argv), false);
+  module->create_global_variable("executable", Value(ValueType::Bytes, sys_realpath), false);
+
+  return module;
 }

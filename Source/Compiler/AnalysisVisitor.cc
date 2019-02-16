@@ -20,7 +20,8 @@ using namespace std;
 
 
 AnalysisVisitor::AnalysisVisitor(GlobalContext* global, ModuleContext* module)
-    : global(global), module(module), in_function_id(0), in_class_id(0) { }
+    : global(global), module(module), in_function_id(0), in_class_id(0),
+    last_attribute_lookup_had_class_base(false) { }
 
 void AnalysisVisitor::visit(UnaryOperation* a) {
   a->expr->accept(this);
@@ -166,13 +167,26 @@ void AnalysisVisitor::visit(LambdaDefinition* a) {
 }
 
 void AnalysisVisitor::visit(FunctionCall* a) {
-  // the function reference had better be a function
+  this->last_attribute_lookup_had_class_base = false;
+
+  // the function reference had better be a function or class
   a->function->accept(this);
   if ((this->current_value.type != ValueType::Function) &&
       (this->current_value.type != ValueType::Class)) {
     throw compile_error("cannot call a non-function/class object: " + this->current_value.str(), a->file_offset);
   }
   Value function = move(this->current_value);
+
+  // if the function a class, then it's actually an __init__ call
+  if (function.type == ValueType::Class) {
+    a->is_class_construction = true;
+
+  // if the function is a function, then it could have been a classmethod call
+  } else {
+    if (this->last_attribute_lookup_had_class_base) {
+      a->is_class_method_call = true;
+    }
+  }
 
   // now visit the arg values
   for (auto& arg : a->args) {
@@ -182,7 +196,7 @@ void AnalysisVisitor::visit(FunctionCall* a) {
     it.second->accept(this);
   }
 
-  // TODO: typecheck the arguments if the function's arguments have annotations
+  // TODO: typecheck the args if the function's arguments have type annotations
 
   // we probably can't know the function's return type/value yet, but we'll try
   // to figure it out
@@ -390,7 +404,7 @@ void AnalysisVisitor::visit(VariableLookup* a) {
   // if the name is built-in, use that instead - we already prevented assignment
   // to built-in names in AnnotationVisitor, so there's no risk of conflict here
   try {
-    this->current_value = builtin_names.at(a->name);
+    this->current_value = this->global->builtins_module->global_variables.at(a->name).value;
     return;
   } catch (const out_of_range& e) { }
 
@@ -412,6 +426,8 @@ void AnalysisVisitor::visit(VariableLookup* a) {
 
 void AnalysisVisitor::visit(AttributeLookup* a) {
   a->base->accept(this);
+
+  this->last_attribute_lookup_had_class_base = false;
 
   int64_t class_id;
   switch (this->current_value.type) {
@@ -435,24 +451,25 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
 
     // look up the class attribute
     case ValueType::Bytes:
-      class_id = BytesObject_class_id;
+      class_id = this->global->BytesObject_class_id;
       goto AttributeLookup_resume;
     case ValueType::Unicode:
-      class_id = UnicodeObject_class_id;
+      class_id = this->global->UnicodeObject_class_id;
       goto AttributeLookup_resume;
     case ValueType::List:
-      class_id = ListObject_class_id;
+      class_id = this->global->ListObject_class_id;
       goto AttributeLookup_resume;
     case ValueType::Tuple:
-      class_id = TupleObject_class_id;
+      class_id = this->global->TupleObject_class_id;
       goto AttributeLookup_resume;
     case ValueType::Set:
-      class_id = SetObject_class_id;
+      class_id = this->global->SetObject_class_id;
       goto AttributeLookup_resume;
     case ValueType::Dict:
-      class_id = DictObject_class_id;
+      class_id = this->global->DictObject_class_id;
       goto AttributeLookup_resume;
     case ValueType::Class:
+      this->last_attribute_lookup_had_class_base = true;
     case ValueType::Instance:
       class_id = this->current_value.class_id;
       goto AttributeLookup_resume;
@@ -466,7 +483,8 @@ void AnalysisVisitor::visit(AttributeLookup* a) {
       }
 
       try {
-        this->current_value = cls->attributes.at(a->name);
+        size_t index = cls->attribute_indexes.at(a->name);
+        this->current_value = cls->attributes.at(index).value;
       } catch (const out_of_range& e) {
         throw compile_error(string_printf(
               "class %" PRId64 " attribute lookup refers to missing attribute: %s",
@@ -534,7 +552,7 @@ void AnalysisVisitor::visit(ArraySliceLValueReference* a) {
 }
 
 void AnalysisVisitor::visit(AttributeLValueReference* a) {
-  if (!a->base.get() && builtin_names.count(a->name)) {
+  if (!a->base.get() && this->global->builtins_module->global_variables.count(a->name)) {
     throw compile_error("cannot reassign built-in name " + a->name, a->file_offset);
   }
 
@@ -559,9 +577,7 @@ void AnalysisVisitor::visit(AttributeLValueReference* a) {
             "class %" PRId64 " does not have a context", this->current_value.class_id),
             a->file_offset);
       }
-      auto* current_fn = this->current_function();
-      this->record_assignment_attribute(target_cls, a->name, value,
-          current_fn && current_fn->is_class_init(), a->file_offset);
+      this->record_assignment_attribute(target_cls, a->name, value, a->file_offset);
 
     } else if (this->current_value.type == ValueType::Module) {
       // the module attribute has to be the same type as the value being
@@ -718,7 +734,7 @@ void AnalysisVisitor::visit(ReturnStatement* a) {
 
   if (a->value.get()) {
     if (fn->is_class_init()) {
-      throw compile_error("class __init__ cannot return a value");
+      throw compile_error("__init__ cannot return a value");
     }
 
     a->value->accept(this);
@@ -1021,10 +1037,45 @@ void AnalysisVisitor::visit(WithStatement* a) {
 void AnalysisVisitor::visit(FunctionDefinition* a) {
   // TODO: reduce code duplication between here and LambdaDefinition
 
-  // record the assignment of the function object to the function's name first
-  // in order to handle recursion properly
-  this->record_assignment(a->name,
-      Value(ValueType::Function, a->function_id), a->file_offset);
+  auto* fn = this->global->context_for_function(a->function_id);
+
+  // if this is a class method, check if it's an override
+  if (this->in_class_id && !this->in_function_id) {
+    auto* cls = this->current_class();
+    try {
+      size_t index = cls->attribute_indexes.at(a->name);
+      auto& attr = cls->attributes.at(index);
+
+      // if it's Indeterminate, then it's not an override
+      if (attr.value.type == ValueType::Indeterminate) {
+        throw out_of_range("not an override");
+      }
+
+      if (attr.value.type != ValueType::Function) {
+        throw compile_error(string_printf("non-function attribute %s cannot be overridden by a function", attr.name.c_str()), a->file_offset);
+      }
+
+      // functions must be statically resolvable when overriding
+      if (!attr.value.value_known) {
+        throw compile_error("can\'t resolve overridden function id", a->file_offset);
+      }
+
+      // if it's not __init__, argument types must match the previous value
+      // (inherited from the parent)
+      attr.value.function_id = a->function_id;
+
+    } catch (const out_of_range&) {
+      // not an override
+      this->record_assignment(a->name,
+          Value(ValueType::Function, a->function_id), a->file_offset);
+    }
+
+  } else {
+    // record the assignment of the function object to the function's name first
+    // in order to handle recursion properly
+    this->record_assignment(a->name,
+        Value(ValueType::Function, a->function_id), a->file_offset);
+  }
 
   if (!a->decorators.empty()) {
     throw compile_error("decorators not yet supported", a->file_offset);
@@ -1032,7 +1083,6 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
 
   int64_t prev_function_id = this->in_function_id;
   this->in_function_id = a->function_id;
-  auto* fn = this->current_function();
 
   // assign all the arguments as Indeterminate for now; we'll come back and
   // fix them later
@@ -1101,6 +1151,9 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
     }
   }
 
+  // TODO: check that __init__ either calls super.__init__ or initializes all
+  // attributes
+
   this->in_function_id = prev_function_id;
 }
 
@@ -1108,8 +1161,44 @@ void AnalysisVisitor::visit(ClassDefinition* a) {
   if (!a->decorators.empty()) {
     throw compile_error("decorators not yet supported", a->file_offset);
   }
+  if (a->parent_types.size() > 1) {
+    throw compile_error("multiple inheritance is not yet supported", a->file_offset);
+  }
+
+  // if there's a parent class, bring in all of its attributes
   if (!a->parent_types.empty()) {
-    throw compile_error("class inheritance not yet supported", a->file_offset);
+    auto* cls = this->global->context_for_class(a->class_id);
+    if (!cls) {
+      throw compile_error("class does not exist at analysis time");
+    }
+
+    a->parent_types[0]->accept(this);
+    if (this->current_value.type != ValueType::Class) {
+      throw compile_error("base class is " + this->current_value.str() + " which is not a class type");
+    }
+
+    int64_t parent_class_id = this->current_value.class_id;
+    auto* parent_cls = this->global->context_for_class(parent_class_id);
+    if (!cls) {
+      throw compile_error("parent class does not exist at analysis time");
+    }
+
+    // this class' attributes were created during annotation, so we probably
+    // have to shift them down a bit to make room for the parent class'
+    // attributes, which should come first
+    vector<ClassContext::ClassAttribute> new_attributes = parent_cls->attributes;
+    unordered_map<string, size_t> new_attribute_indexes = parent_cls->attribute_indexes;
+
+    // add new attrs on the end
+    for (const auto& attr : cls->attributes) {
+      auto emplace_ret = new_attribute_indexes.emplace(attr.name, new_attributes.size());
+      if (emplace_ret.second) {
+        new_attributes.emplace_back(attr);
+      }
+    }
+
+    cls->attributes = new_attributes;
+    cls->attribute_indexes = new_attribute_indexes;
   }
 
   int64_t prev_class_id = this->in_class_id;
@@ -1117,7 +1206,19 @@ void AnalysisVisitor::visit(ClassDefinition* a) {
 
   this->visit_list(a->items);
 
-  this->current_class()->populate_dynamic_attributes();
+  // TODO: set these attributes on the class when it's finalized:
+  // __base__
+  // __bases__
+  // __basicsize__
+  // __class__
+  // __doc__
+  // __flags__
+  // __itemsize__
+  // __module__
+  // __name__
+  // __qualname__
+  // __sizeof__
+  // __weakref__
 
   this->in_class_id = prev_class_id;
 
@@ -1147,8 +1248,9 @@ void AnalysisVisitor::record_assignment_generic(Value& var,
           name.c_str(), existing_type.c_str(), new_type.c_str()), file_offset);
     }
 
-    // assume the value changed (this is not the first write)
-    var.clear_value();
+    if (var != value) {
+      var.clear_value();
+    }
   }
 }
 
@@ -1170,18 +1272,15 @@ void AnalysisVisitor::record_assignment_local(FunctionContext* fn,
 }
 
 void AnalysisVisitor::record_assignment_attribute(ClassContext* cls,
-    const string& name, const Value& value, bool allow_create,
-    size_t file_offset) {
+    const string& name, const Value& value, size_t file_offset) {
   try {
-    this->record_assignment_generic(cls->attributes.at(name), name, value, file_offset);
+    size_t index = cls->attribute_indexes.at(name);
+    this->record_assignment_generic(cls->attributes.at(index).value, name,
+        value, file_offset);
+
   } catch (const out_of_range& e) {
-    if (!allow_create) {
-      throw compile_error("class does not have attribute " + name + "; it must be assigned in __init__",
-          file_offset);
-    }
-    // unlike locals and globals, class attributes aren't found in annotation.
-    // just create it with the given value
-    cls->attributes.emplace(name, value);
+    throw compile_error("class does not have attribute " + name + "; it must be assigned in __init__",
+        file_offset);
   }
 }
 
@@ -1200,7 +1299,7 @@ void AnalysisVisitor::record_assignment(const string& name, const Value& var,
 
   auto* cls = this->current_class();
   if (cls) {
-    this->record_assignment_attribute(cls, name, var, false, file_offset);
+    this->record_assignment_attribute(cls, name, var, file_offset);
     return;
   }
 

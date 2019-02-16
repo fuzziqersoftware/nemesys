@@ -14,6 +14,9 @@ void advance_module_phase(GlobalContext* global, ModuleContext* module,
 
 void compile_fragment(GlobalContext* global, ModuleContext* module, Fragment* f);
 
+void initialize_global_space_for_module(GlobalContext* global,
+    ModuleContext* module);
+
 
 extern "C" {
 

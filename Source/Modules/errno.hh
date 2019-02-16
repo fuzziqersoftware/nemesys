@@ -4,6 +4,4 @@
 
 #include "../Compiler/Contexts.hh"
 
-extern std::shared_ptr<ModuleContext> errno_module;
-
-void errno_initialize();
+std::shared_ptr<ModuleContext> errno_initialize(GlobalContext* global);

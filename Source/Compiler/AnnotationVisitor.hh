@@ -25,6 +25,7 @@ public:
 
   virtual void visit(ImportStatement* a);
   virtual void visit(GlobalStatement* a);
+  virtual void visit(VariableLookup* a);
   virtual void visit(AttributeLValueReference* a);
   virtual void visit(ExceptStatement* a);
   virtual void visit(FunctionDefinition* a);
@@ -38,17 +39,18 @@ public:
   virtual void visit(ModuleStatement* a);
 
 private:
-  static std::atomic<int64_t> next_function_id;
-
   GlobalContext* global;
   ModuleContext* module;
 
   // temporary state
   int64_t in_function_id;
   int64_t in_class_id;
+  bool in_class_init;
+  const VariableLookup* last_variable_lookup_node;
 
   FunctionContext* current_function();
   ClassContext* current_class();
 
   void record_write(const std::string& name, size_t file_offset);
+  void record_class_attribute_write(const std::string& name, size_t file_offset);
 };

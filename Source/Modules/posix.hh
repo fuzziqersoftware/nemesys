@@ -5,6 +5,4 @@
 
 #include "../Compiler/Contexts.hh"
 
-extern std::shared_ptr<ModuleContext> posix_module;
-
-void posix_initialize();
+std::shared_ptr<ModuleContext> posix_initialize(GlobalContext* global);

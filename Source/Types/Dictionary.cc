@@ -5,11 +5,12 @@
 #include <phosg/Strings.hh>
 
 #include "Instance.hh"
+#include "../Compiler/Contexts.hh"
 
 using namespace std;
 
 extern InstanceObject MemoryError_instance;
-extern int64_t KeyError_class_id;
+extern shared_ptr<GlobalContext> global;
 
 
 static size_t dictionary_default_key_length(const void* k) {
@@ -221,7 +222,7 @@ void* dictionary_at(const DictionaryObject* d, void* k,
   // find the value slot for this key
   auto t = d->traverse(k, false);
   if (!t.node) {
-    raise_python_exception_with_message(exc_block, KeyError_class_id,
+    raise_python_exception_with_message(exc_block, global->KeyError_class_id,
         "key not present");
     throw out_of_range("key does not exist in dictionary");
   }
@@ -229,7 +230,7 @@ void* dictionary_at(const DictionaryObject* d, void* k,
   // get the contents and convert them into something we can return
   auto slot_contents = t.node->get_slot(t.ch);
   if (!slot_contents.occupied || slot_contents.is_subnode) {
-    raise_python_exception_with_message(exc_block, KeyError_class_id,
+    raise_python_exception_with_message(exc_block, global->KeyError_class_id,
         "key not present");
     throw out_of_range("key does not exist in dictionary");
   }

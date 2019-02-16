@@ -11,6 +11,9 @@
 using namespace std;
 
 
+
+extern shared_ptr<GlobalContext> global;
+
 ListObject* list_new(uint64_t count, bool items_are_objects,
     ExceptionBlock* exc_block) {
   ListObject* l = reinterpret_cast<ListObject*>(malloc(sizeof(ListObject)));
@@ -50,7 +53,7 @@ void* list_get_item(const ListObject* l, int64_t position,
     position += l->count;
   }
   if ((position < 0) || (position >= static_cast<ssize_t>(l->count))) {
-    raise_python_exception_with_message(exc_block, IndexError_class_id,
+    raise_python_exception_with_message(exc_block, global->IndexError_class_id,
         "list index out of range");
     throw out_of_range("index out of range for list object");
   }
@@ -67,7 +70,7 @@ void list_set_item(ListObject* l, int64_t position, void* value,
     position += l->count;
   }
   if ((position < 0) || (position >= static_cast<ssize_t>(l->count))) {
-    raise_python_exception_with_message(exc_block, IndexError_class_id,
+    raise_python_exception_with_message(exc_block, global->IndexError_class_id,
         "list index out of range");
     throw out_of_range("index out of range for list object");
   }
@@ -87,7 +90,7 @@ void list_insert(ListObject* l, int64_t position, void* value,
     position += l->count;
   }
   if (position < 0 || position > static_cast<ssize_t>(l->count)) {
-    raise_python_exception_with_message(exc_block, IndexError_class_id,
+    raise_python_exception_with_message(exc_block, global->IndexError_class_id,
         "list index out of range");
     throw out_of_range("index out of range for list insert");
   }
@@ -132,7 +135,7 @@ void* list_pop(ListObject* l, int64_t position, ExceptionBlock* exc_block) {
     position += l->count;
   }
   if (position < 0 || position >= static_cast<ssize_t>(l->count)) {
-    raise_python_exception_with_message(exc_block, IndexError_class_id,
+    raise_python_exception_with_message(exc_block, global->IndexError_class_id,
         "list index out of range");
     throw out_of_range("index out of range for list pop");
   }

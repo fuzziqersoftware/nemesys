@@ -1,11 +1,11 @@
 CXX=g++
 CXXLD=g++
 # TODO: this is bad. make real Makefiles in the subdirectories, you lazy bum
-OBJECTS=Source/Main.o Source/Debug.o \
+OBJECTS=Source/Debug.o \
 	Source/Assembler/CodeBuffer.o Source/Assembler/AMD64Assembler.o \
 	Source/AST/SourceFile.o Source/AST/PythonLexer.o Source/AST/PythonParser.o Source/AST/PythonASTNodes.o Source/AST/PythonASTVisitor.o \
 	Source/Types/Reference.o Source/Types/Strings.o Source/Types/Format.o Source/Types/Tuple.o Source/Types/List.o Source/Types/Dictionary.o Source/Types/Instance.o \
-	Source/Modules/__nemesys__.o Source/Modules/sys.o Source/Modules/math.o Source/Modules/posix.o Source/Modules/errno.o Source/Modules/time.o \
+	Source/Modules/builtins.o Source/Modules/__nemesys__.o Source/Modules/sys.o Source/Modules/math.o Source/Modules/posix.o Source/Modules/errno.o Source/Modules/time.o \
 	Source/Environment/Operators.o Source/Environment/Value.o \
 	Source/Compiler/Compile.o Source/Compiler/Compile-Assembly.o Source/Compiler/Contexts.o Source/Compiler/BuiltinFunctions.o Source/Compiler/CommonObjects.o Source/Compiler/Exception.o Source/Compiler/Exception-Assembly.o Source/Compiler/AnnotationVisitor.o Source/Compiler/AnalysisVisitor.o Source/Compiler/CompilationVisitor.o
 CXXFLAGS=-g -Wall -Werror -std=c++14 -I/opt/local/include
@@ -26,7 +26,7 @@ test: nemesys Source/Assembler/AMD64AssemblerTest Source/Types/DictionaryTest
 	(cd tests ; ./run_tests.sh)
 	(cd tests_independent ; ./run_tests.sh)
 
-nemesys: $(OBJECTS)
+nemesys: $(OBJECTS) Source/Main.o
 	$(CXXLD) $(LDFLAGS) -o nemesys $^ $(LIBS)
 
 Source/Assembler/AMD64AssemblerTest: Source/Assembler/CodeBuffer.o Source/Assembler/AMD64Assembler.o Source/Assembler/AMD64AssemblerTest.o
@@ -38,7 +38,7 @@ amd64dasm: Source/Assembler/AMD64Assembler.o Source/Assembler/amd64dasm.o
 amd64asm: Source/Assembler/AMD64Assembler.o Source/Assembler/FileAssembler.o Source/Assembler/amd64asm.o
 	$(CXXLD) $(LDFLAGS) -o amd64asm $^ $(LIBS)
 
-Source/Types/DictionaryTest: Source/Types/DictionaryTest.o Source/Debug.o Source/Types/Dictionary.o Source/Types/Strings.o Source/Types/Reference.o Source/Types/Instance.o Source/Compiler/Exception.o Source/Compiler/Exception-Assembly.o
+Source/Types/DictionaryTest: $(OBJECTS) Source/Types/DictionaryTest.o
 	$(CXXLD) $(LDFLAGS) -o Source/Types/DictionaryTest $^ $(LIBS)
 
 clean:

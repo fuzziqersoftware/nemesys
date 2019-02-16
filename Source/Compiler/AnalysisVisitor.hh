@@ -87,6 +87,7 @@ private:
   Value current_value;
   int64_t in_function_id;
   int64_t in_class_id;
+  bool last_attribute_lookup_had_class_base;
 
   FunctionContext* current_function();
   ClassContext* current_class();
@@ -98,7 +99,7 @@ private:
   void record_assignment_local(FunctionContext* fn, const std::string& name,
       const Value& value, size_t file_offset);
   void record_assignment_attribute(ClassContext* cls, const std::string& name,
-      const Value& value, bool allow_create, size_t file_offset);
+      const Value& value, size_t file_offset);
   void record_assignment(const std::string& name, const Value& var,
       size_t file_offset);
 };

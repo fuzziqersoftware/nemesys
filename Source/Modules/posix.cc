@@ -257,11 +257,9 @@ static map<string, Value> globals({
   // {"_have_functions", Value(ValueType::List, ['HAVE_FACCESSAT', 'HAVE_FCHDIR', 'HAVE_FCHMOD', 'HAVE_FCHMODAT', 'HAVE_FCHOWN', 'HAVE_FCHOWNAT', 'HAVE_FDOPENDIR', 'HAVE_FPATHCONF', 'HAVE_FSTATAT', 'HAVE_FSTATVFS', 'HAVE_FTRUNCATE', 'HAVE_FUTIMES', 'HAVE_LINKAT', 'HAVE_LCHFLAGS', 'HAVE_LCHMOD', 'HAVE_LCHOWN', 'HAVE_LSTAT', 'HAVE_LUTIMES', 'HAVE_MKDIRAT', 'HAVE_OPENAT', 'HAVE_READLINKAT', 'HAVE_RENAMEAT', 'HAVE_SYMLINKAT', 'HAVE_UNLINKAT'])},
 });
 
-std::shared_ptr<ModuleContext> posix_module(new ModuleContext("posix", globals));
-
 static void raise_OSError(ExceptionBlock* exc_block, int64_t error_code) {
   raise_python_exception(exc_block, create_single_attr_instance(
-      OSError_class_id, static_cast<int64_t>(error_code)));
+      global->OSError_class_id, static_cast<int64_t>(error_code)));
 }
 
 static void set_attribute_on_class_instance(const ClassContext* cls,
@@ -278,7 +276,7 @@ static void set_attribute_on_class_instance(const ClassContext* cls,
     return ret; \
   })
 
-void posix_initialize() {
+shared_ptr<ModuleContext> posix_initialize(GlobalContext* global_context) {
   Value Bool(ValueType::Bool);
   Value Bool_True(ValueType::Bool, true);
   Value Bool_False(ValueType::Bool, false);
@@ -289,6 +287,8 @@ void posix_initialize() {
   Value List_Unicode(ValueType::List, vector<Value>({Unicode}));
   Value Dict_Unicode_Unicode(ValueType::Dict, vector<Value>({Unicode, Unicode}));
   Value None(ValueType::None);
+
+  shared_ptr<ModuleContext> module(new ModuleContext(global_context, "posix", globals));
 
   BuiltinClassDefinition stat_result_def("stat_result", {
         {"st_mode", Int},
@@ -307,13 +307,13 @@ void posix_initialize() {
         {"st_blocks", Int},
         {"st_blksize", Int},
         {"st_rdev", Int}},
-      {}, void_fn_ptr(&free), false);
+      {}, void_fn_ptr(&free));
 
   // note: we don't create stat_result within posix_module because it doesn't
   // have an __init__ function, so it isn't constructible from python code
-  static int64_t stat_result_class_id = create_builtin_class(stat_result_def);
+  static int64_t stat_result_class_id = module->create_builtin_class(stat_result_def);
   Value StatResult(ValueType::Instance, stat_result_class_id, NULL);
-  static ClassContext* stat_result_class = global->context_for_class(stat_result_class_id);
+  static ClassContext* stat_result_class = global_context->context_for_class(stat_result_class_id);
 
   static auto convert_stat_result = +[](const struct stat* st) -> void* {
     // TODO: this can be optimized to avoid all the map lookups
@@ -353,36 +353,36 @@ void posix_initialize() {
   };
 
   vector<BuiltinFunctionDefinition> module_function_defs({
-    {"getpid", {}, Int, void_fn_ptr(&getpid), false, false},
-    {"getppid", {}, Int, void_fn_ptr(&getppid), false, false},
-    {"getpgid", {Int}, Int, void_fn_ptr(&getpgid), false, false},
-    {"getpgrp", {}, Int, void_fn_ptr(&getpgrp), false, false},
-    {"getsid", {Int}, Int, void_fn_ptr(&getsid), false, false},
+    {"getpid", {}, Int, void_fn_ptr(&getpid), false},
+    {"getppid", {}, Int, void_fn_ptr(&getppid), false},
+    {"getpgid", {Int}, Int, void_fn_ptr(&getpgid), false},
+    {"getpgrp", {}, Int, void_fn_ptr(&getpgrp), false},
+    {"getsid", {Int}, Int, void_fn_ptr(&getsid), false},
 
-    {"getuid", {}, Int, void_fn_ptr(&getuid), false, false},
-    {"getgid", {}, Int, void_fn_ptr(&getgid), false, false},
-    {"geteuid", {}, Int, void_fn_ptr(&geteuid), false, false},
-    {"getegid", {}, Int, void_fn_ptr(&getegid), false, false},
+    {"getuid", {}, Int, void_fn_ptr(&getuid), false},
+    {"getgid", {}, Int, void_fn_ptr(&getgid), false},
+    {"geteuid", {}, Int, void_fn_ptr(&geteuid), false},
+    {"getegid", {}, Int, void_fn_ptr(&getegid), false},
 
     // these functions never return, so return type is technically unused
-    {"_exit", {Int}, Int, void_fn_ptr(&_exit), false, false},
-    {"abort", {}, Int, void_fn_ptr(&abort), false, false},
+    {"_exit", {Int}, Int, void_fn_ptr(&_exit), false},
+    {"abort", {}, Int, void_fn_ptr(&abort), false},
 
-    {"close", {Int}, None, simple_wrapper(close(fd), int64_t fd, ExceptionBlock* exc_block), true, false},
+    {"close", {Int}, None, simple_wrapper(close(fd), int64_t fd, ExceptionBlock* exc_block), true},
 
     {"closerange", {Int, Int}, None, void_fn_ptr([](int64_t fd, int64_t end_fd) {
       for (; fd < end_fd; fd++) {
         close(fd);
       }
-    }), false, false},
+    }), false},
 
-    {"dup", {Int}, Int, simple_wrapper(dup(fd), int64_t fd, ExceptionBlock* exc_block), true, false},
-    {"dup2", {Int}, Int, simple_wrapper(dup2(fd, new_fd), int64_t fd, int64_t new_fd, ExceptionBlock* exc_block), true, false},
+    {"dup", {Int}, Int, simple_wrapper(dup(fd), int64_t fd, ExceptionBlock* exc_block), true},
+    {"dup2", {Int}, Int, simple_wrapper(dup2(fd, new_fd), int64_t fd, int64_t new_fd, ExceptionBlock* exc_block), true},
 
-    {"fork", {}, Int, simple_wrapper(fork(), ExceptionBlock* exc_block), true, false},
+    {"fork", {}, Int, simple_wrapper(fork(), ExceptionBlock* exc_block), true},
 
-    {"kill", {Int, Int}, Int, simple_wrapper(kill(pid, sig), int64_t pid, int64_t sig, ExceptionBlock* exc_block), true, false},
-    {"killpg", {Int, Int}, Int, simple_wrapper(killpg(pid, sig), int64_t pid, int64_t sig, ExceptionBlock* exc_block), true, false},
+    {"kill", {Int, Int}, Int, simple_wrapper(kill(pid, sig), int64_t pid, int64_t sig, ExceptionBlock* exc_block), true},
+    {"killpg", {Int, Int}, Int, simple_wrapper(killpg(pid, sig), int64_t pid, int64_t sig, ExceptionBlock* exc_block), true},
 
     {"open", {Unicode, Int, Value(ValueType::Int, static_cast<int64_t>(0777))}, Int,
         void_fn_ptr([](UnicodeObject* path, int64_t flags, int64_t mode, ExceptionBlock* exc_block) -> int64_t {
@@ -397,7 +397,7 @@ void posix_initialize() {
       }
 
       return ret;
-    }), true, false},
+    }), true},
 
     {"read", {Int, Int}, Bytes, void_fn_ptr([](int64_t fd, int64_t buffer_size, ExceptionBlock* exc_block) -> BytesObject* {
       BytesObject* ret = bytes_new(NULL, buffer_size);
@@ -409,7 +409,7 @@ void posix_initialize() {
         raise_OSError(exc_block, errno);
       }
       return ret;
-    }), true, false},
+    }), true},
 
     {"write", {Int, Bytes}, Int, void_fn_ptr([](int64_t fd, BytesObject* data, ExceptionBlock* exc_block) -> int64_t {
       ssize_t bytes_written = write(fd, data->data, data->count);
@@ -418,7 +418,7 @@ void posix_initialize() {
         raise_OSError(exc_block, errno);
       }
       return bytes_written;
-    }), true, false},
+    }), true},
 
     {"execv", {Unicode, List_Unicode}, None, void_fn_ptr([](UnicodeObject* path, ListObject* args, ExceptionBlock* exc_block) {
 
@@ -443,7 +443,7 @@ void posix_initialize() {
       }
 
       raise_OSError(exc_block, errno);
-    }), true, false},
+    }), true},
 
     {"execve", {Unicode, List_Unicode, Dict_Unicode_Unicode}, None,
         void_fn_ptr([](UnicodeObject* path, ListObject* args,
@@ -492,7 +492,7 @@ void posix_initialize() {
       }
 
       raise_OSError(exc_block, errno);
-    }), true, false},
+    }), true},
 
     {"strerror", {Int}, Unicode, void_fn_ptr([](int64_t code) -> UnicodeObject* {
       char buf[128];
@@ -509,7 +509,7 @@ void posix_initialize() {
       strerror_r(code, buf, sizeof(buf));
       return bytes_decode_ascii(buf);
 #endif
-    }), false, false},
+    }), false},
 
     // TODO: most functions below here should raise OSError on failure instead
     // of returning errno
@@ -521,7 +521,7 @@ void posix_initialize() {
       int64_t ret = access(path_bytes->data, mode);
       delete_reference(path_bytes);
       return ret;
-    }), false, false},
+    }), false},
 
     {"chdir", {Unicode}, Int, void_fn_ptr([](UnicodeObject* path) -> int64_t {
       BytesObject* path_bytes = unicode_encode_ascii(path);
@@ -530,9 +530,9 @@ void posix_initialize() {
       int64_t ret = chdir(path_bytes->data);
       delete_reference(path_bytes);
       return ret;
-    }), false, false},
+    }), false},
 
-    {"fchdir", {Int}, Int, void_fn_ptr(&fchdir), false, false},
+    {"fchdir", {Int}, Int, void_fn_ptr(&fchdir), false},
 
     {"chmod", {Unicode, Int}, Int, void_fn_ptr([](UnicodeObject* path, int64_t mode) -> int64_t {
       BytesObject* path_bytes = unicode_encode_ascii(path);
@@ -541,9 +541,9 @@ void posix_initialize() {
       int64_t ret = chmod(path_bytes->data, mode);
       delete_reference(path_bytes);
       return ret;
-    }), false, false},
+    }), false},
 
-    {"fchmod", {Int, Int}, Int, void_fn_ptr(&fchmod), false, false},
+    {"fchmod", {Int, Int}, Int, void_fn_ptr(&fchmod), false},
 
 #ifdef MACOSX
     {"chflags", {Unicode, Int}, Int,
@@ -554,9 +554,9 @@ void posix_initialize() {
       int64_t ret = chflags(path_bytes->data, flags);
       delete_reference(path_bytes);
       return ret;
-    }), false, false},
+    }), false},
 
-    {"fchflags", {Int, Int}, Int, void_fn_ptr(&fchflags), false, false},
+    {"fchflags", {Int, Int}, Int, void_fn_ptr(&fchflags), false},
 #endif
 
     {"chown", {Unicode, Int, Int}, Int, void_fn_ptr([](UnicodeObject* path, int64_t uid, int64_t gid) -> int64_t {
@@ -566,7 +566,7 @@ void posix_initialize() {
       int64_t ret = chown(path_bytes->data, uid, gid);
       delete_reference(path_bytes);
       return ret;
-    }), false, false},
+    }), false},
 
     {"lchown", {Unicode, Int, Int}, Int,
         void_fn_ptr([](UnicodeObject* path, int64_t uid, int64_t gid) -> int64_t {
@@ -576,9 +576,9 @@ void posix_initialize() {
       int64_t ret = lchown(path_bytes->data, uid, gid);
       delete_reference(path_bytes);
       return ret;
-    }), false, false},
+    }), false},
 
-    {"fchown", {Int, Int, Int}, Int, void_fn_ptr(&fchown), false, false},
+    {"fchown", {Int, Int, Int}, Int, void_fn_ptr(&fchown), false},
 
     {"chroot", {Unicode}, Int, void_fn_ptr([](UnicodeObject* path) -> int64_t {
       BytesObject* path_bytes = unicode_encode_ascii(path);
@@ -587,18 +587,18 @@ void posix_initialize() {
       int64_t ret = chroot(path_bytes->data);
       delete_reference(path_bytes);
       return ret;
-    }), false, false},
+    }), false},
 
     {"ctermid", {}, Unicode, void_fn_ptr([]() -> UnicodeObject* {
       char result[L_ctermid];
       ctermid(result);
       return bytes_decode_ascii(result);
-    }), false, false},
+    }), false},
 
     {"cpu_count", {}, Int, void_fn_ptr([]() -> int64_t {
       // TODO: should we use procfs here instead?
       return sysconf(_SC_NPROCESSORS_ONLN);
-    }), false, false},
+    }), false},
 
     // TODO: support dir_fd
     {"stat", {Unicode, Bool_True}, StatResult,
@@ -614,7 +614,7 @@ void posix_initialize() {
         raise_OSError(exc_block, errno);
       }
       return convert_stat_result(&st);
-    }), true, false},
+    }), true},
 
     {"fstat", {Int}, StatResult, void_fn_ptr([](int64_t fd, ExceptionBlock* exc_block) -> void* {
       struct stat st;
@@ -622,7 +622,7 @@ void posix_initialize() {
         raise_OSError(exc_block, errno);
       }
       return convert_stat_result(&st);
-    }), true, false},
+    }), true},
 
     {"truncate", {Unicode, Int}, Int, void_fn_ptr([](UnicodeObject* path, int64_t size) -> int64_t {
       BytesObject* path_bytes = unicode_encode_ascii(path);
@@ -631,9 +631,9 @@ void posix_initialize() {
       int64_t ret = truncate(path_bytes->data, size);
       delete_reference(path_bytes);
       return ret;
-    }), false, false},
+    }), false},
 
-    {"ftruncate", {Int, Int}, Int, void_fn_ptr(&ftruncate), false, false},
+    {"ftruncate", {Int, Int}, Int, void_fn_ptr(&ftruncate), false},
 
     {"getcwd", {}, Unicode,
         void_fn_ptr([](ExceptionBlock* exc_block) -> UnicodeObject* {
@@ -642,7 +642,7 @@ void posix_initialize() {
         raise_OSError(exc_block, errno);
       }
       return bytes_decode_ascii(path);
-    }), true, false},
+    }), true},
 
     {"getcwdb", {}, Bytes, void_fn_ptr([](ExceptionBlock* exc_block) -> BytesObject* {
       BytesObject* ret = bytes_new(NULL, MAXPATHLEN);
@@ -653,11 +653,11 @@ void posix_initialize() {
         ret->count = strlen(ret->data);
       }
       return ret;
-    }), true, false},
+    }), true},
 
-    {"lseek", {Int, Int, Int}, Int, void_fn_ptr(&lseek), false, false},
-    {"fsync", {Int}, Int, void_fn_ptr(&fsync), false, false},
-    {"isatty", {Int}, Bool, void_fn_ptr(&isatty), false, false},
+    {"lseek", {Int, Int, Int}, Int, void_fn_ptr(&lseek), false},
+    {"fsync", {Int}, Int, void_fn_ptr(&fsync), false},
+    {"isatty", {Int}, Bool, void_fn_ptr(&isatty), false},
 
     {"listdir", {Value(ValueType::Unicode, L".")}, List_Unicode,
         void_fn_ptr([](UnicodeObject* path) -> void* {
@@ -676,10 +676,10 @@ void posix_initialize() {
       }
 
       return l;
-    }), false, false},
+    }), false},
 
     // TODO: support passing names as strings
-    {"sysconf", {Int}, Int, void_fn_ptr(&sysconf), false, false},
+    {"sysconf", {Int}, Int, void_fn_ptr(&sysconf), false},
 
     // {"confstr", Value()},
     // {"confstr_names", Value()},
@@ -789,6 +789,7 @@ void posix_initialize() {
   });
 
   for (auto& def : module_function_defs) {
-    posix_module->create_builtin_function(def);
+    module->create_builtin_function(def);
   }
+  return module;
 }

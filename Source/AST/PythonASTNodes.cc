@@ -492,14 +492,18 @@ FunctionCall::FunctionCall(shared_ptr<Expression> function,
     shared_ptr<Expression> varargs, shared_ptr<Expression> varkwargs,
     size_t file_offset) : Expression(file_offset), function(function),
     args(move(args)), kwargs(move(kwargs)), varargs(varargs),
-    varkwargs(varkwargs), function_id(0), split_id(-1), callee_function_id(0) { }
+    varkwargs(varkwargs), function_id(0), split_id(-1),
+    is_class_method_call(false), is_class_construction(false),
+    callee_function_id(0) { }
 
 string FunctionCall::str() const {
   string split_id_str = (this->split_id >= 0) ?
       string_printf("/*split=%" PRId64 "*/", this->split_id) : "";
   string callee_id_str = this->callee_function_id ?
       string_printf("/*callee=%" PRId64 "*/", this->callee_function_id) : "";
-  return this->function->str() + split_id_str + callee_id_str + "(" + comma_str_list(this->args) + ")";
+  const char* method_str = this->is_class_method_call ? "/*classmethod*/": "";
+  const char* construction_str = this->is_class_construction ? "/*construction*/": "";
+  return this->function->str() + split_id_str + callee_id_str + method_str + construction_str + "(" + comma_str_list(this->args) + ")";
 }
 
 void FunctionCall::accept(ASTVisitor* v) {

@@ -14,10 +14,10 @@ using namespace std;
 
 
 
+extern shared_ptr<GlobalContext> global;
+
 const double E = 2.718281828459045235360287471352;
 const double PI = 3.141592653589793238462643383279;
-
-extern shared_ptr<GlobalContext> global;
 
 static wstring __doc__ = L"Standard mathematical functions.";
 
@@ -33,9 +33,7 @@ static map<string, Value> globals({
   {"nan",         Value(ValueType::Float, NAN)},
 });
 
-std::shared_ptr<ModuleContext> math_module(new ModuleContext("math", globals));
-
-void math_initialize() {
+shared_ptr<ModuleContext> math_initialize(GlobalContext* global_context) {
   Value None(ValueType::None);
   Value Bool(ValueType::Bool);
   Value Int(ValueType::Int);
@@ -64,21 +62,21 @@ void math_initialize() {
 
     {"isfinite", {Float}, Bool, void_fn_ptr([](double a) -> bool {
       return isfinite(a);
-    }), false, false},
+    }), false},
 
     {"isinf", {Float}, Bool, void_fn_ptr([](double a) -> bool {
       return isinf(a);
-    }), false, false},
+    }), false},
 
     {"isnan", {Float}, Bool, void_fn_ptr([](double a) -> bool {
       return isnan(a);
-    }), false, false},
+    }), false},
 
     // algorithms
 
     {"factorial", {Int}, Int, void_fn_ptr([](int64_t a, ExceptionBlock* exc_block) -> int64_t {
       if (a < 0) {
-        raise_python_exception_with_message(exc_block, ValueError_class_id,
+        raise_python_exception_with_message(exc_block, global->ValueError_class_id,
             "factorial input must be nonnegative");
       }
       int64_t ret = 1;
@@ -86,7 +84,7 @@ void math_initialize() {
         ret *= a;
       }
       return ret;
-    }), true, false},
+    }), true},
 
     {"gcd", {Int, Int}, Int, void_fn_ptr([](int64_t a, int64_t b) -> int64_t {
       if (a < 0) {
@@ -101,29 +99,29 @@ void math_initialize() {
         a = t;
       }
       return a;
-    }), false, false},
+    }), false},
 
     // basic numerics
 
     {"ceil", {Float}, Int, void_fn_ptr([](double x) -> int64_t {
       return static_cast<int64_t>(ceil(x));
-    }), false, false},
+    }), false},
 
     {"floor", {Float}, Int, void_fn_ptr([](double x) -> int64_t {
       return static_cast<int64_t>(floor(x));
-    }), false, false},
+    }), false},
 
     {"trunc", {Float}, Int, void_fn_ptr([](double x) -> int64_t {
       return static_cast<int64_t>(trunc(x));
-    }), false, false},
+    }), false},
 
     {"copysign", {Float, Float}, Bool, void_fn_ptr([](double a, double b) -> double {
       return copysign(a, b);
-    }), false, false},
+    }), false},
 
     {"fabs", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return fabs(a);
-    })}}, false, false},
+    })}}, false},
 
     {"fmod", {{{Float, Float}, Float, void_fn_ptr([](double a, double b) -> double {
       return fmod(a, b);
@@ -131,7 +129,7 @@ void math_initialize() {
       return fmod(a, b);
     })}, {{Int, Float}, Float, void_fn_ptr([](int64_t a, double b) -> double {
       return fmod(a, b);
-    })}}, false, false},
+    })}}, false},
 
     {"frexp", {Float}, Tuple_Float_Int, void_fn_ptr([](double a, ExceptionBlock* exc_block) -> void* {
       int e;
@@ -144,7 +142,7 @@ void math_initialize() {
       tuple_set_item(t, 0, reinterpret_cast<void*>(m64), false, exc_block);
       tuple_set_item(t, 1, reinterpret_cast<void*>(e64), false, exc_block);
       return t;
-    }), true, false},
+    }), true},
 
     {"modf", {Float}, Tuple_Float_Float, void_fn_ptr([](double a, ExceptionBlock* exc_block) -> void* {
       double integral;
@@ -157,7 +155,7 @@ void math_initialize() {
       tuple_set_item(t, 0, reinterpret_cast<void*>(fractional64), false, exc_block);
       tuple_set_item(t, 1, reinterpret_cast<void*>(integral64), false, exc_block);
       return t;
-    }), true, false},
+    }), true},
 
     // exponents
 
@@ -165,19 +163,19 @@ void math_initialize() {
       return exp(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return exp(a);
-    })}}, false, false},
+    })}}, false},
 
     {"expm1", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return expm1(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return expm1(a);
-    })}}, false, false},
+    })}}, false},
 
     {"ldexp", {{{Float, Int}, Float, void_fn_ptr([](double a, int64_t b) -> double {
       return ldexp(a, b);
     })}, {{Int, Int}, Float, void_fn_ptr([](int64_t a, int64_t b) -> double {
       return ldexp(a, b);
-    })}}, false, false},
+    })}}, false},
 
     {"pow", {{{Float, Float}, Float, void_fn_ptr([](double a, double b) -> double {
       return pow(a, b);
@@ -187,7 +185,7 @@ void math_initialize() {
       return pow(a, b);
     })}, {{Int, Int}, Float, void_fn_ptr([](int64_t a, int64_t b) -> double {
       return pow(a, b);
-    })}}, false, false},
+    })}}, false},
 
     {"hypot", {{{Float, Float}, Float, void_fn_ptr([](double a, double b) -> double {
       return hypot(a, b);
@@ -197,13 +195,13 @@ void math_initialize() {
       return hypot(a, b);
     })}, {{Int, Int}, Float, void_fn_ptr([](int64_t a, int64_t b) -> double {
       return hypot(a, b);
-    })}}, false, false},
+    })}}, false},
 
     {"sqrt", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return sqrt(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return sqrt(a);
-    })}}, false, false},
+    })}}, false},
 
     // logarithms
 
@@ -214,62 +212,62 @@ void math_initialize() {
       return log_float(a, b);
     })}, {{Int, Int}, Float, void_fn_ptr([](int64_t a, int64_t b) -> double {
       return log_float(a, b);
-    })}}, false, false},
+    })}}, false},
 
     {"log1p", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return log1p(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return log1p(a);
-    })}}, false, false},
+    })}}, false},
 
     {"log2", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return log2(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return log2(a);
-    })}}, false, false},
+    })}}, false},
 
     {"log10", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return log10(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return log10(a);
-    })}}, false, false},
+    })}}, false},
 
     // trigonometry
     {"sin", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return sin(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return sin(a);
-    })}}, false, false},
+    })}}, false},
 
     {"cos", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return cos(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return cos(a);
-    })}}, false, false},
+    })}}, false},
 
     {"tan", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return tan(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return tan(a);
-    })}}, false, false},
+    })}}, false},
 
     {"asin", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return asin(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return asin(a);
-    })}}, false, false},
+    })}}, false},
 
     {"acos", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return acos(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return acos(a);
-    })}}, false, false},
+    })}}, false},
 
     {"atan", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return atan(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return atan(a);
-    })}}, false, false},
+    })}}, false},
 
     {"atan2", {{{Float, Float}, Float, void_fn_ptr([](double a, double b) -> double {
       return atan2(a, b);
@@ -279,44 +277,44 @@ void math_initialize() {
       return atan2(a, b);
     })}, {{Int, Int}, Float, void_fn_ptr([](int64_t a, int64_t b) -> double {
       return atan2(a, b);
-    })}}, false, false},
+    })}}, false},
 
     // hyperbolic functions
     {"sinh", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return sinh(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return sinh(a);
-    })}}, false, false},
+    })}}, false},
 
     {"cosh", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return cosh(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return cosh(a);
-    })}}, false, false},
+    })}}, false},
 
     {"tanh", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return tanh(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return tanh(a);
-    })}}, false, false},
+    })}}, false},
 
     {"asinh", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return asinh(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return asinh(a);
-    })}}, false, false},
+    })}}, false},
 
     {"acosh", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return acosh(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return acosh(a);
-    })}}, false, false},
+    })}}, false},
 
     {"atanh", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return atanh(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return atanh(a);
-    })}}, false, false},
+    })}}, false},
 
     // angles
 
@@ -324,13 +322,13 @@ void math_initialize() {
       return a * (180.0 / PI);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return a * (180.0 / PI);
-    })}}, false, false},
+    })}}, false},
 
     {"radians", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return a * (PI / 180.0);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return a * (PI / 180.0);
-    })}}, false, false},
+    })}}, false},
 
     // statistics
 
@@ -338,13 +336,13 @@ void math_initialize() {
       return erf(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return erf(a);
-    })}}, false, false},
+    })}}, false},
 
     {"erfc", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return erfc(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return erfc(a);
-    })}}, false, false},
+    })}}, false},
 
     // gamma
 
@@ -352,16 +350,18 @@ void math_initialize() {
       return tgamma(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return tgamma(a);
-    })}}, false, false},
+    })}}, false},
 
     {"lgamma", {{{Float}, Float, void_fn_ptr([](double a) -> double {
       return lgamma(a);
     })}, {{Int}, Float, void_fn_ptr([](int64_t a) -> double {
       return lgamma(a);
-    })}}, false, false},
+    })}}, false},
   });
 
+  shared_ptr<ModuleContext> module(new ModuleContext(global_context, "math", globals));
   for (auto& def : module_function_defs) {
-    math_module->create_builtin_function(def);
+    module->create_builtin_function(def);
   }
+  return module;
 }
