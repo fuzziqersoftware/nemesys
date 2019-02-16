@@ -89,10 +89,10 @@ def check_module_inspection():
   assert phase == "Analyzed"  # doesn't become Imported until the root scope returns
   assert compiled_size > 0
   assert global_count == 8
-  # note: the globals are __doc__, __name__, __nemesys__, posix, and the functions
+  # note: the globals are __doc__, __name__, __nemesys__, posix, and the four functions
 
   assert b'this string appears verbatim in the module source' in source
-  assert b'this string does not appear verbatim in the source because it has an escaped\x20character' not in source
+  assert b'this string does not appear verbatim because it has an escaped\x20character' not in source
 
   # read the contents of this file and make sure it matches module_source
   fd = posix.open(__file__, posix.O_RDONLY)

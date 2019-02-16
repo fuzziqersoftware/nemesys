@@ -2,10 +2,9 @@ import __nemesys__
 import posix
 import sys
 
-print('this script is ' + repr(len(__nemesys__.module_source(__name__))) + ' bytes long, according to __nemesys__')
-
 st = posix.stat(__file__)
-print('this script is ' + repr(st.st_size) + ' bytes long, according to stat')
+assert st.st_size == len(__nemesys__.module_source(__name__))
+print('this script is ' + repr(st.st_size) + ' bytes long, according to both stat and __nemesys__')
 
 for k in posix.environ:
   print('environment variable: ' + repr(k))

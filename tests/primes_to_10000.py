@@ -20,7 +20,5 @@ def print_primes_until(limit):
       print('%d is not prime' % a)
     a = a + 1
 
-start = time.time()
-print_primes_until(int(sys.argv[1]))
-end = time.time()
-print('done; overall time: ' + repr(end - start) + ' seconds')
+print_primes_until(10000)
+print('done')
