@@ -2928,10 +2928,12 @@ void CompilationVisitor::visit(ForStatement* a) {
         this->as.write_mov(MemoryReference(rsp, 8), 0);
         this->as.write_mov(MemoryReference(rsp, 16), 0);
 
-        // get the dict object and SlotContents pointer
+        // get the dict object and SlotContents pointer. we +8 to the offset
+        // because we saved rbx between the SlotContents struct and the
+        // collection pointer
         this->as.write_label(next_label);
         this->as.write_mov(rdi, MemoryReference(rsp,
-            sizeof(DictionaryObject::SlotContents)));
+            sizeof(DictionaryObject::SlotContents) + 8));
         this->as.write_mov(rsi, rsp);
 
         // call dictionary_next_item
