@@ -8,11 +8,12 @@
 #include <unordered_set>
 #include <vector>
 
+#include <libamd64/AMD64Assembler.hh>
+
 #include "../AST/SourceFile.hh"
 #include "../AST/PythonASTNodes.hh"
 #include "../AST/PythonASTVisitor.hh"
 #include "../Environment/Value.hh"
-#include "../Assembler/AMD64Assembler.hh"
 #include "Contexts.hh"
 
 

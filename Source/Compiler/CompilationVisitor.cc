@@ -7,6 +7,7 @@
 
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
+#include <libamd64/AMD64Assembler.hh>
 
 #include "../Debug.hh"
 #include "../AST/PythonLexer.hh"
@@ -14,7 +15,6 @@
 #include "../AST/PythonASTNodes.hh"
 #include "../AST/PythonASTVisitor.hh"
 #include "../Environment/Value.hh"
-#include "../Assembler/AMD64Assembler.hh"
 #include "../Types/Reference.hh"
 #include "../Types/Strings.hh"
 #include "../Types/Format.hh"
@@ -31,13 +31,16 @@ using namespace std;
 
 
 static const vector<Register> int_argument_register_order = {
-    rdi, rsi, rdx, rcx, r8, r9};
+    Register::RDI, Register::RSI, Register::RDX, Register::RCX, Register::R8,
+    Register::R9};
 static const vector<Register> float_argument_register_order = {
-    xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7};
+    Register::XMM0, Register::XMM1, Register::XMM2, Register::XMM3,
+    Register::XMM4, Register::XMM5, Register::XMM6, Register::XMM7};
 
 static const int64_t default_available_int_registers =
-    (1 << rax) | (1 << rcx) | (1 << rdx) | (1 << rsi) | (1 << rdi) |
-    (1 << r8) | (1 << r9) | (1 << r10) | (1 << r11);
+    (1 << Register::RAX) | (1 << Register::RCX) | (1 << Register::RDX) |
+    (1 << Register::RSI) | (1 << Register::RDI) | (1 << Register::R8) |
+    (1 << Register::R9) | (1 << Register::R10) | (1 << Register::R11);
 static const int64_t default_available_float_registers = 0xFFFF; // all of them
 
 

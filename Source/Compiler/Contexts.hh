@@ -10,9 +10,10 @@
 #include <unordered_set>
 #include <vector>
 
+#include <libamd64/CodeBuffer.hh>
+
 #include "../AST/PythonASTNodes.hh"
 #include "../AST/SourceFile.hh"
-#include "../Assembler/CodeBuffer.hh"
 #include "../Types/Strings.hh"
 
 
