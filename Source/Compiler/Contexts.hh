@@ -146,6 +146,7 @@ struct FunctionContext {
   struct Argument {
     std::string name;
     Value default_value;
+    std::shared_ptr<TypeAnnotation> type_annotation;
   };
   std::vector<Argument> args; // note: default values not valid until Analyzed
   std::string varargs_name;
@@ -162,6 +163,7 @@ struct FunctionContext {
 
   // the following are valid when the owning module is Analyzed or later
   std::unordered_set<Value> return_types;
+  Value annotated_return_type;
 
   // the following are valid when the owning module is Imported or later
   std::vector<Fragment> fragments;
@@ -179,7 +181,10 @@ struct FunctionContext {
 
   // gets the index of the fragment that satisfies the given call args, or -1 if
   // no appropriate fragment exists
-  int64_t fragment_index_for_call_args(const std::vector<Value>& arg_types);
+  int64_t fragment_index_for_call_args(const std::vector<Value>& arg_types) const;
+
+  // gets the appropriate type for the given annotation
+  Value type_for_annotation(std::shared_ptr<const TypeAnnotation> type_annotation) const;
 };
 
 
@@ -320,6 +325,11 @@ struct GlobalContext {
   const UnicodeObject* get_or_create_constant(const std::wstring& s,
       bool use_shared_constants = true);
 
-  int64_t match_function_call_arg_types(const std::vector<Value>& fn_arg_types,
+  int64_t match_value_to_type(const Value& expected_type, const Value& value);
+  int64_t match_values_to_types(const std::vector<Value>& fn_arg_types,
       const std::vector<Value>& arg_types);
+
+  Value static_attribute_lookup(ModuleContext* module, const std::string& name);
+  Value type_for_annotation(ModuleContext* module,
+      std::shared_ptr<TypeAnnotation> type_annotation);
 };

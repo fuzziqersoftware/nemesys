@@ -1780,19 +1780,35 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
     string returned_label = string_printf("__FunctionCall_%p_returned", a);
 
-    // if there's no existing fragment, the function isn't builtin, and eager
-    // compilation is enabled, try to compile a new fragment now
-    if ((callee_fragment_index < 0) && (!fn->is_builtin()) &&
-        !(debug_flags & DebugFlag::NoEagerCompilation)) {
-      fn->fragments.emplace_back(fn, fn->fragments.size(), arg_types);
-      try {
-        compile_fragment(this->global, fn->module, &fn->fragments.back());
-        callee_fragment_index = fn->fragments.size() - 1;
-      } catch (const compile_error& e) {
-        if (debug_flags & DebugFlag::ShowCompileErrors) {
-          this->global->print_compile_error(stderr, this->module, e);
+    // if there's no existing fragment and the function isn't builtin, check
+    // that the passed argument types match the type annotations
+    if ((callee_fragment_index < 0) && !fn->is_builtin()) {
+      vector<Value> types_from_annotation;
+      for (const auto& arg : fn->args) {
+        if (arg.type_annotation.get()) {
+          types_from_annotation.emplace_back(this->global->type_for_annotation(
+              this->module, arg.type_annotation));
+        } else {
+          types_from_annotation.emplace_back(ValueType::Indeterminate);
         }
-        fn->fragments.pop_back();
+      }
+      if (this->global->match_values_to_types(types_from_annotation, arg_types) < 0) {
+        throw compile_error("call argument does not match type annotation", this->file_offset);
+      }
+
+      // if there's no existing fragment, the function isn't builtin, and eager
+      // compilation is enabled, try to compile a new fragment now
+      if (!(debug_flags & DebugFlag::NoEagerCompilation)) {
+        fn->fragments.emplace_back(fn, fn->fragments.size(), arg_types);
+        try {
+          compile_fragment(this->global, fn->module, &fn->fragments.back());
+          callee_fragment_index = fn->fragments.size() - 1;
+        } catch (const compile_error& e) {
+          if (debug_flags & DebugFlag::ShowCompileErrors) {
+            this->global->print_compile_error(stderr, this->module, e);
+          }
+          fn->fragments.pop_back();
+        }
       }
     }
 
@@ -2640,18 +2656,30 @@ void CompilationVisitor::visit(ReturnStatement* a) {
   this->file_offset = a->file_offset;
 
   if (!this->fragment->function) {
-    throw compile_error("return statement outside function definition", a->file_offset);
+    throw compile_error("return statement outside function definition", this->file_offset);
   }
 
   // the value should be returned in rax
   this->as.write_label(string_printf("__ReturnStatement_%p_evaluate_expression", a));
   this->target_register = rax;
-  a->value->accept(this);
+  try {
+    a->value->accept(this);
+  } catch (const terminated_by_split&) {
+    this->function_return_types.emplace(ValueType::Indeterminate);
+    throw;
+  }
 
   // it had better be a new reference if the type is nontrivial
   if (type_has_refcount(this->current_type.type) && !this->holding_reference) {
     throw compile_error("can\'t return reference to " + this->current_type.str(),
         this->file_offset);
+  }
+
+  // if the function has a type annotation, enforce that the return type matches
+  const Value& annotated_return_type = this->fragment->function->annotated_return_type;
+  if ((annotated_return_type.type != ValueType::Indeterminate) &&
+      (this->global->match_value_to_type(annotated_return_type, this->current_type) < 0)) {
+    throw compile_error("returned value does not match type annotation", this->file_offset);
   }
 
   // record this return type

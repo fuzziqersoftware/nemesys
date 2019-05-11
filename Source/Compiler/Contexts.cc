@@ -164,7 +164,7 @@ bool FunctionContext::is_builtin() const {
 }
 
 int64_t FunctionContext::fragment_index_for_call_args(
-    const vector<Value>& arg_types) {
+    const vector<Value>& arg_types) const {
   // go through the existing fragments and see if there are any that can satisfy
   // this call. if there are multiple matches, choose the most specific one (
   // the one that has the fewest Indeterminate substitutions)
@@ -174,7 +174,8 @@ int64_t FunctionContext::fragment_index_for_call_args(
   for (size_t x = 0; x < this->fragments.size(); x++) {
     auto& fragment = this->fragments[x];
 
-    int64_t score = this->module->global->match_function_call_arg_types(fragment.arg_types, arg_types);
+    int64_t score = this->module->global->match_values_to_types(
+        fragment.arg_types, arg_types);
     if (score < 0) {
       continue; // not a match
     }
@@ -539,48 +540,52 @@ ClassContext* GlobalContext::context_for_class(int64_t class_id,
   }
 }
 
-int64_t GlobalContext::match_function_call_arg_types(
-    const vector<Value>& fn_arg_types, const vector<Value>& arg_types) {
-  if (fn_arg_types.size() != arg_types.size()) {
+int64_t GlobalContext::match_value_to_type(const Value& expected_type,
+    const Value& value) {
+  if (value.type == ValueType::Indeterminate) {
+    throw compile_error("matched value is Indeterminate");
+  }
+
+  if (expected_type.type == ValueType::Indeterminate) {
+    return 1;
+
+  } else if (expected_type.type != value.type) {
+    return -1; // no match
+  }
+
+  // allow subclasses to match with their parent classes
+  if (expected_type.type == ValueType::Instance) {
+    const auto* cls = this->context_for_class(expected_type.class_id);
+    while (cls) {
+      if (cls->id == value.class_id) {
+        break;
+      }
+      cls = this->context_for_class(cls->parent_class_id);
+    }
+
+    // cls is non-NULL if and only if we found a matching (super)class
+    return cls ? 0 : -1;
+  }
+
+  // if it's not Indeterminate and not a class, check the extension types
+  return this->match_values_to_types(
+      expected_type.extension_types, value.extension_types);
+}
+
+int64_t GlobalContext::match_values_to_types(
+    const vector<Value>& expected_types, const vector<Value>& values) {
+  if (expected_types.size() != values.size()) {
     return -1;
   }
 
   int64_t promotion_count = 0;
-  for (size_t x = 0; x < arg_types.size(); x++) {
-    if (arg_types[x].type == ValueType::Indeterminate) {
-      throw compile_error("call argument is Indeterminate");
+  for (size_t x = 0; x < expected_types.size(); x++) {
+    int64_t this_value_promotion_count = this->match_value_to_type(
+        expected_types[x], values[x]);
+    if (this_value_promotion_count < 0) {
+      return this_value_promotion_count;
     }
-
-    if (fn_arg_types[x].type == ValueType::Indeterminate) {
-      promotion_count++;
-      continue; // don't check extension types
-
-    } else if (fn_arg_types[x].type != arg_types[x].type) {
-      return -1; // no match
-    }
-
-    // allow subclasses to match with their parent classes
-    if (fn_arg_types[x].type == ValueType::Instance) {
-      const auto* cls = this->context_for_class(fn_arg_types[x].class_id);
-      while (cls) {
-        if (cls->id == arg_types[x].class_id) {
-          break;
-        }
-        cls = this->context_for_class(cls->parent_class_id);
-      }
-      if (!cls) {
-        return -1; // no superclass matched this arg, so fail overall
-      }
-
-    // if it's not Indeterminate and not a class, check the extension types
-    } else {
-      int64_t extension_match_ret = this->match_function_call_arg_types(
-          fn_arg_types[x].extension_types, arg_types[x].extension_types);
-      if (extension_match_ret < 0) {
-        return extension_match_ret;
-      }
-      promotion_count += extension_match_ret;
-    }
+    promotion_count += this_value_promotion_count;
   }
 
   return promotion_count;
@@ -616,4 +621,71 @@ const UnicodeObject* GlobalContext::get_or_create_constant(const wstring& s,
     this->unicode_constants.emplace(s, o);
   }
   return o;
+}
+
+Value GlobalContext::static_attribute_lookup(ModuleContext* module,
+    const string& name) {
+  if (name.empty()) {
+    throw out_of_range("name is empty");
+  }
+
+  vector<string> tokens = split(name, '.');
+
+  for (size_t token_index = 0; token_index < tokens.size() - 1; token_index++) {
+    auto result = this->static_attribute_lookup(module, tokens[token_index]);
+    if (result.type != ValueType::Module) {
+      throw runtime_error("static attribute lookup passes through non-module");
+    }
+    auto module_shared = this->get_or_create_module(*result.bytes_value);
+    if (module_shared->phase < ModuleContext::Phase::Annotated) {
+      throw runtime_error("static attribute lookup passes through early-phase module");
+    }
+    module = module_shared.get();
+  }
+
+  const auto& global = module->global_variables.at(tokens.back());
+  return global.value;
+}
+
+static const unordered_map<string, Value> builtin_type_for_annotation({
+  {"None", Value(ValueType::None)},
+  {"bool", Value(ValueType::Bool)},
+  {"int", Value(ValueType::Int)},
+  {"float", Value(ValueType::Float)},
+  {"bytes", Value(ValueType::Bytes)},
+  {"str", Value(ValueType::Unicode)},
+  {"list", Value(ValueType::List)},
+  {"List", Value(ValueType::List)},
+  {"tuple", Value(ValueType::Tuple)},
+  {"Tuple", Value(ValueType::Tuple)},
+  {"set", Value(ValueType::Set)},
+  {"Set", Value(ValueType::Set)},
+  {"dict", Value(ValueType::Dict)},
+  {"Dict", Value(ValueType::Dict)},
+});
+
+Value GlobalContext::type_for_annotation(ModuleContext* module,
+    shared_ptr<TypeAnnotation> type_annotation) {
+  try {
+    Value value = this->static_attribute_lookup(module, type_annotation->type_name);
+    if (value.type != ValueType::Class) {
+      throw compile_error("type annotation " + type_annotation->type_name + " does not refer to class type");
+    }
+    if (!value.value_known) {
+      throw compile_error("type annotation " + type_annotation->type_name + " refers to unknown-value type");
+    }
+    return Value(ValueType::Instance, value.class_id, NULL);
+
+  } catch (const out_of_range&) { }
+
+  try {
+    auto type = builtin_type_for_annotation.at(type_annotation->type_name);
+    for (const auto& extension_type_annotation : type_annotation->generic_arguments) {
+      type.extension_types.emplace_back(this->type_for_annotation(module, extension_type_annotation));
+    }
+    return type;
+
+  } catch (const out_of_range&) {
+    throw compile_error("type annotation " + type_annotation->type_name + " refers to unknown type");
+  }
 }

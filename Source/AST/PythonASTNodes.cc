@@ -65,6 +65,15 @@ const char* augment_operator_names[] = {
 
 
 
+string TypeAnnotation::str() const {
+  if (this->generic_arguments.empty()) {
+    return this->type_name;
+  }
+  return this->type_name + "[" + comma_str_list(this->generic_arguments) + "]";
+}
+
+
+
 ASTNode::ASTNode(size_t file_offset) : file_offset(file_offset) { }
 
 
@@ -435,8 +444,11 @@ FunctionArguments::Argument::Argument(const string& name,
     type_annotation(type_annotation), default_value(default_value) { }
 
 string FunctionArguments::Argument::str() const {
-  // TODO: add type annotations here
-  if (this->default_value.get()) {
+  if (this->type_annotation.get() && this->default_value.get()) {
+    return this->name + ": " + this->type_annotation->str() + " = " + this->default_value->str();
+  } else if (this->type_annotation.get()) {
+    return this->name + ": " + this->type_annotation->str();
+  } else if (this->default_value.get()) {
     return this->name + "=" + this->default_value->str();
   }
   return this->name;
@@ -1198,14 +1210,16 @@ FunctionDefinition::FunctionDefinition(
     return_type_annotation(return_type_annotation) { }
 
 string FunctionDefinition::str() const {
-  // TODO: add return type annotation here
   string prefix;
   for (const auto& decorator : this->decorators) {
     prefix += "@" + decorator->str() + "\n";
   }
   string args_str = this->args.str();
-  return prefix + string_printf("def %s(%s) /*id=%" PRIu64 "*/:",
-      this->name.c_str(), args_str.c_str(), this->function_id);
+  string return_type_str = this->return_type_annotation.get() ?
+      (" -> " + this->return_type_annotation->str()) : "";
+  return prefix + string_printf("def %s(%s) =%" PRIu64 "%s:",
+      this->name.c_str(), args_str.c_str(), this->function_id,
+      return_type_str.c_str());
 }
 
 void FunctionDefinition::accept(ASTVisitor* v) {

@@ -37,6 +37,8 @@ struct Expression : ASTNode {
 struct TypeAnnotation {
   std::string type_name;
   std::vector<std::shared_ptr<TypeAnnotation>> generic_arguments;
+
+  std::string str() const;
 };
 
 

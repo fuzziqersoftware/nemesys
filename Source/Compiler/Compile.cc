@@ -352,6 +352,9 @@ void compile_fragment(GlobalContext* global, ModuleContext* module,
     }
     scope_name += ')';
 
+    // the fragment has the same return type as the function, if annotated
+    f->return_type = f->function->annotated_return_type;
+
   } else {
     scope_name = module->name + "+ROOT";
   }
@@ -372,8 +375,8 @@ void compile_fragment(GlobalContext* global, ModuleContext* module,
     }
 
   } catch (const CompilationVisitor::terminated_by_split&) {
-    // ignore this; the fragment was compiled but is incomplete (contains calls
-    // to the JIT compiler)
+    // if the fragment is incomplete, return types may include Indeterminate,
+    // which we check for separately below
 
   } catch (compile_error& e) {
     if (e.where < 0) {
@@ -406,17 +409,38 @@ void compile_fragment(GlobalContext* global, ModuleContext* module,
 
   // modules cannot return values
   if (!f->function && !v.return_types().empty()) {
-    throw compile_error("module root scope provided a return type");
+    throw compile_error("module root scope returned a value");
   }
 
-  if (v.return_types().size() > 1) {
-    throw compile_error("scope has multiple return types");
-  }
-  if (!v.return_types().empty()) {
-    // there's exactly one return type
-    f->return_type = *v.return_types().begin();
-  } else {
-    f->return_type = Value(ValueType::None);
+  // if the fragment's return type is missing (i.e. the function has no type
+  // annotation) then infer it from the return types found during compilation
+  if (f->return_type.type == ValueType::Indeterminate) {
+    if (v.return_types().size() > 1) {
+      throw compile_error("scope has multiple return types");
+    }
+
+    Value new_return_type;
+    if (!v.return_types().empty()) {
+      // there's exactly one return type
+      new_return_type = *v.return_types().begin();
+    } else {
+      new_return_type = Value(ValueType::None);
+    }
+
+    // fail if the new return type is Indeterminate
+    if (new_return_type.type == ValueType::Indeterminate) {
+      throw compile_error("cannot infer scope return type");
+    }
+
+    // if the function has a type annotation, the fragment must return that type
+    // (this should never trigger because we set the return type before
+    // compiling if there's a type annotation)
+    if (f->function && (f->function->annotated_return_type.type != ValueType::Indeterminate) &&
+        global->match_value_to_type(f->function->annotated_return_type, new_return_type) < 0) {
+      throw compile_error("scope return type does not match type annotation");
+    }
+
+    f->return_type = move(new_return_type);
   }
 
   unordered_set<size_t> patch_offsets;
@@ -549,8 +573,9 @@ const void* jit_compile_scope(GlobalContext* global, int64_t callsite_token,
             callsite_token);
       }
 
-      int64_t callee_fragment_index = callee_fn->fragments.size();
+      callee_fragment_index = callee_fn->fragments.size();
       callee_fn->fragments.emplace_back(callee_fn, callee_fragment_index, callsite->arg_types);
+      auto& new_fragment = callee_fn->fragments.back();
 
       if (debug_flags & DebugFlag::ShowJITEvents) {
         fprintf(stderr, "[jit_callsite:%" PRId64 "] compiling fragment\n",
@@ -559,7 +584,7 @@ const void* jit_compile_scope(GlobalContext* global, int64_t callsite_token,
 
       // compile the thing
       try {
-        compile_fragment(global, callee_fn->module, &callee_fn->fragments.back());
+        compile_fragment(global, callee_fn->module, &new_fragment);
       } catch (const exception& e) {
         *raise_exception = create_compiler_error_exception(e.what());
         return NULL;
@@ -567,8 +592,9 @@ const void* jit_compile_scope(GlobalContext* global, int64_t callsite_token,
     }
 
     if (debug_flags & DebugFlag::ShowJITEvents) {
-      fprintf(stderr, "[jit_callsite:%" PRId64 "] using callee fragment %" PRId64 "\n",
-          callsite_token, callee_fragment_index);
+      string s = callee_fn->fragments.back().return_type.str();
+      fprintf(stderr, "[jit_callsite:%" PRId64 "] using callee fragment %" PRId64 " with return type %s\n",
+          callsite_token, callee_fragment_index, s.c_str());
       fprintf(stderr, "[jit_callsite:%" PRId64 "] recompiling caller fragment\n",
           callsite_token);
     }

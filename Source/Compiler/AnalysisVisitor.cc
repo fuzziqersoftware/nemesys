@@ -154,6 +154,7 @@ void AnalysisVisitor::visit(LambdaDefinition* a) {
         throw compile_error("can\'t resolve default value", a->file_offset);
       }
     }
+    new_arg.type_annotation = arg.type_annotation;
   }
   fn->varargs_name = a->args.varargs_name;
   fn->varkwargs_name = a->args.varkwargs_name;
@@ -1084,8 +1085,9 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
   int64_t prev_function_id = this->in_function_id;
   this->in_function_id = a->function_id;
 
-  // assign all the arguments as Indeterminate for now; we'll come back and
-  // fix them later
+  // assign types to the arguments based on the type annotations. if there are
+  // none, then assign the arguments as Indeterminate for now; we'll come back
+  // and fix them later
   for (size_t x = 0; x < a->args.args.size(); x++) {
     auto& arg = a->args.args[x];
 
@@ -1093,14 +1095,20 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
     fn->args.emplace_back();
     auto& new_arg = fn->args.back();
     new_arg.name = arg.name;
+    new_arg.type_annotation = arg.type_annotation;
 
     // if in a class definition, the first argument cannot have a default value
-    // and must be named "self"
+    // or type annotation and must be named "self"
     // TODO: when we support warnings, this should be a warning, not an error
     if (!x && this->in_class_id) {
       if (arg.default_value.get()) {
         throw compile_error(
             "first argument to instance method cannot have a default value",
+            a->file_offset);
+      }
+      if (arg.type_annotation.get()) {
+        throw compile_error(
+            "first argument to instance method cannot have a type annotation",
             a->file_offset);
       }
       if (arg.name != "self") {
@@ -1125,12 +1133,27 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
         throw compile_error("can\'t resolve default value", a->file_offset);
       }
 
+      // if there's a type annotation, it should agree with the default value
+      if (arg.type_annotation.get()) {
+        Value type_from_annotation = this->global->type_for_annotation(
+            this->module, arg.type_annotation);
+        if (!type_from_annotation.types_equal(new_arg.default_value)) {
+          throw compile_error("default value does not match type annotation", a->file_offset);
+        }
+      }
+
       fn->locals.at(arg.name) = new_arg.default_value.type_only();
+
+    // if the arg has a type annotation, use that as the type
+    } else if (arg.type_annotation.get()) {
+      fn->locals.at(arg.name) = this->global->type_for_annotation(this->module,
+          arg.type_annotation);
     }
 
-    // TODO: if the arg doesn't have a default value, use the type annotation to
-    // infer the type
+    // if none of the above, then we can't infer the type from anything; just
+    // leave it as Indeterminate for now
   }
+
   fn->varargs_name = a->args.varargs_name;
   fn->varkwargs_name = a->args.varkwargs_name;
 
@@ -1144,8 +1167,24 @@ void AnalysisVisitor::visit(FunctionDefinition* a) {
 
     fn->return_types.emplace(ValueType::Instance, fn->id, nullptr);
 
-  // if there's only one return type and it's None, delete it
   } else {
+    // check if the return types match the type annotation
+    if (a->return_type_annotation.get()) {
+      fn->annotated_return_type = this->global->type_for_annotation(
+          this->module, a->return_type_annotation);
+      for (const Value& return_type : fn->return_types) {
+        // allow Indeterminate. this just means we don't know the type yet;
+        // we'll check again when compiling the return statement
+        if (return_type.type == ValueType::Indeterminate) {
+          continue;
+        }
+        if (this->global->match_value_to_type(fn->annotated_return_type, return_type) < 0) {
+          throw compile_error("function return type does not match type annotation", a->file_offset);
+        }
+      }
+    }
+
+    // if there's only one return type and it's None, delete it
     if ((fn->return_types.size() == 1) && (fn->return_types.begin()->type == ValueType::None)) {
       fn->return_types.clear();
     }
