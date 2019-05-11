@@ -62,7 +62,7 @@ CompilationVisitor::CompilationVisitor(GlobalContext* global,
 
   if (this->fragment->function) {
     if (this->fragment->function->args.size() != this->fragment->arg_types.size()) {
-      throw compile_error("fragment and function take different argument counts");
+      throw compile_error("fragment and function take different argument counts", this->file_offset);
     }
 
     // populate local_variable_types with the argument types
@@ -1250,7 +1250,7 @@ void CompilationVisitor::visit(ListConstructor* a) {
 
   // we'll use rbx to store the list ptr while constructing items and I'm lazy
   if (this->target_register == rbx) {
-    throw compile_error("cannot use rbx as target register for list construction");
+    throw compile_error("cannot use rbx as target register for list construction", this->file_offset);
   }
   this->write_push(rbx);
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
@@ -1297,7 +1297,7 @@ void CompilationVisitor::visit(ListConstructor* a) {
     if (!a->value_type.types_equal(this->current_type)) {
       throw compile_error("list analysis produced different type than compilation: " +
           a->value_type.type_only().str() + " (analysis) vs " +
-          this->current_type.type_only().str() + " (compilation)");
+          this->current_type.type_only().str() + " (compilation)", this->file_offset);
     }
   }
 
@@ -1341,7 +1341,7 @@ void CompilationVisitor::visit(TupleConstructor* a) {
 
   // we'll use rbx to store the tuple ptr while constructing items and I'm lazy
   if (this->target_register == rbx) {
-    throw compile_error("cannot use rbx as target register for tuple construction");
+    throw compile_error("cannot use rbx as target register for tuple construction", this->file_offset);
   }
   this->write_push(rbx);
   int64_t previously_reserved_registers = this->write_push_reserved_registers();
@@ -1359,7 +1359,7 @@ void CompilationVisitor::visit(TupleConstructor* a) {
 
   // generate code for each item and track the extension type
   if (a->value_types.size() != a->items.size()) {
-    throw compile_error("tuple item count and type count do not match");
+    throw compile_error("tuple item count and type count do not match", this->file_offset);
   }
   for (size_t x = 0; x < a->items.size(); x++) {
     const auto& item = a->items[x];
@@ -1389,7 +1389,7 @@ void CompilationVisitor::visit(TupleConstructor* a) {
       throw compile_error(string_printf(
           "tuple analysis produced different type than compilation "
           "for item %zu: %s (analysis) vs %s (compilation)", x,
-          analysis_type_str.c_str(), compilation_type_str.c_str()));
+          analysis_type_str.c_str(), compilation_type_str.c_str()), this->file_offset);
     }
   }
 
@@ -1554,7 +1554,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
     auto& arg = arg_values.back();
 
     if (fn->is_class_init() != a->is_class_construction) {
-      throw compile_error("__init__ may not be called manually");
+      throw compile_error("__init__ may not be called manually", this->file_offset);
     }
 
     // if the function being called is __init__, allocate a class object first
@@ -1700,7 +1700,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
 
         auto* cls = this->global->context_for_class(fn->id);
         if (!cls) {
-          throw compile_error("__init__ call does not have an associated class");
+          throw compile_error("__init__ call does not have an associated class", this->file_offset);
         }
 
         this->as.write_label(string_printf("__FunctionCall_%p_evaluate_arg_%zu_alloc_instance",
@@ -1825,7 +1825,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
           args_str += v.str();
         }
         throw compile_error(string_printf("callee_fragment %s(%s) does not exist",
-            fn->name.c_str(), args_str.c_str()));
+            fn->name.c_str(), args_str.c_str()), this->file_offset);
       }
 
       // calling the compiler is a little complicated - we already set up the
@@ -2358,7 +2358,7 @@ void CompilationVisitor::visit(AttributeLValueReference* a) {
       target_variable = &this->local_variable_types.at(loc.name);
     }
     if (!target_variable) {
-      throw compile_error("target variable not found");
+      throw compile_error("target variable not found", this->file_offset);
     }
     if (target_variable->type == ValueType::Indeterminate) {
       *target_variable = this->current_type;
@@ -2498,7 +2498,7 @@ void CompilationVisitor::visit(ImportStatement* a) {
 
   // case 3
   if (a->import_star) {
-    throw compile_error("import * is not supported", a->file_offset);
+    throw compile_error("import * is not supported", this->file_offset);
   }
 
   // case 1: import entire modules, not specific names
@@ -2857,7 +2857,7 @@ void CompilationVisitor::visit(ForStatement* a) {
 
   // we'll use rbx for some loop state (e.g. the item index in lists)
   if (this->target_register == rbx) {
-    throw compile_error("cannot use rbx as target register for list iteration");
+    throw compile_error("cannot use rbx as target register for list iteration", this->file_offset);
   }
   this->write_push(rbx);
   this->as.write_xor(rbx, rbx);
@@ -3257,13 +3257,13 @@ void CompilationVisitor::visit(TryStatement* a) {
         target_variable = &this->local_variable_types.at(loc.name);
       }
       if (!target_variable) {
-        throw compile_error("target variable not found in exception block");
+        throw compile_error("target variable not found in exception block", a->file_offset);
       }
 
       if ((target_variable->type != ValueType::Instance) ||
           !except->class_ids.count(target_variable->class_id)) {
         throw compile_error(string_printf("variable %s is not an exception instance type",
-            loc.name.c_str()));
+            loc.name.c_str()), a->file_offset);
       }
 
       // delete the old value if present, save the new value, and clear the active
@@ -3331,7 +3331,7 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
     auto* declared_function_context = this->global->context_for_function(a->function_id);
     auto loc = this->location_for_variable(a->name);
     if (!loc.variable_mem_valid) {
-      throw compile_error("function definition reference not valid", a->file_offset);
+      throw compile_error("function definition reference not valid", this->file_offset);
     }
     this->as.write_label("__" + base_label);
     this->as.write_mov(this->target_register, reinterpret_cast<int64_t>(declared_function_context));
@@ -3369,7 +3369,7 @@ void CompilationVisitor::visit(FunctionDefinition* a) {
 
     VariableLocation loc = this->location_for_variable("self");
     if (!loc.variable_mem_valid) {
-      throw compile_error("self reference not valid", a->file_offset);
+      throw compile_error("self reference not valid", this->file_offset);
     }
     if (!type_has_refcount(loc.type.type)) {
       throw compile_error("self is not an object", this->file_offset);
@@ -3391,7 +3391,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
   // write the class' context to the variable
   auto loc = this->location_for_variable(a->name);
   if (!loc.variable_mem_valid) {
-    throw compile_error("self reference not valid", a->file_offset);
+    throw compile_error("self reference not valid", this->file_offset);
   }
 
   this->as.write_label(string_printf("__ClassDefinition_%p_assign", a));
@@ -3463,7 +3463,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
         // get or generate the Fragment object. this function should have at
         // most one fragment because __del__ cannot take arguments
         if (fn->fragments.size() > 1) {
-          throw compile_error("__del__ has multiple fragments");
+          throw compile_error("__del__ has multiple fragments", this->file_offset);
         }
         vector<Value> expected_arg_types({Value(ValueType::Instance, a->class_id, NULL)});
         if (fn->fragments.empty()) {
@@ -3473,7 +3473,7 @@ void CompilationVisitor::visit(ClassDefinition* a) {
         }
         auto fragment = fn->fragments.back();
         if (fragment.arg_types != expected_arg_types) {
-          throw compile_error("__del__ fragment takes incorrect argument types");
+          throw compile_error("__del__ fragment takes incorrect argument types", this->file_offset);
         }
 
         // generate the call to the fragment. note that the instance pointer is
@@ -3766,7 +3766,7 @@ void CompilationVisitor::write_function_call(
 
   // finally, call the function. the stack must be 16-byte aligned at this point
   if (this->stack_bytes_used & 0x0F) {
-    throw compile_error("stack not aligned at function call");
+    throw compile_error("stack not aligned at function call", this->file_offset);
   }
   this->as.write_call(function_loc);
 
@@ -4069,7 +4069,7 @@ void CompilationVisitor::write_raise_exception(int64_t class_id,
   if (message) {
     // this form can only be used for exceptions that take exactly one argument
     if (cls->instance_size() != sizeof(InstanceObject) + 2 * sizeof(void*)) {
-      throw compile_error("incorrect exception raise form generated");
+      throw compile_error("incorrect exception raise form generated", this->file_offset);
     }
 
     // set message
@@ -4082,7 +4082,7 @@ void CompilationVisitor::write_raise_exception(int64_t class_id,
   } else {
     // this form can only be used for exceptions that don't take an argument
     if (cls->instance_size() != sizeof(InstanceObject) + sizeof(void*)) {
-      throw compile_error("incorrect exception raise form generated");
+      throw compile_error("incorrect exception raise form generated", this->file_offset);
     }
   }
 
