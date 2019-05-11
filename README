@@ -6,22 +6,24 @@ this project are fun and learning, not necessarily to contribute anything of
 value to the world. If you're a student looking for an example of well-designed
 compiler, this is not such an example.
 
-See notes/design.md for specifics on how the compiler is implemented.
+See notes/design.md for specifics on how the compiler is implemented and its
+various behavioral quirks.
 
 Here's what nemesys does:
 - Function calls and control flow statements like if, for, while, etc.
 - Fast integer math.
 - Floating-point math.
 - Strings, lists, and tuples.
-- Classes and basic inheritance (no virtual functions yet).
+- Classes and basic inheritance (no multiple inheritance yet).
 - Refcounted garbage collection.
 - Custom class destructors (__del__).
 - Exceptions.
 - Lambdas and non-closure private functions.
 - Function polymorphism.
+- Dicts, kind of (a lot of features don't work).
 
 Here's what nemesys doesn't do yet, but will in the future:
-- Dicts and sets.
+- Sets.
 - Variadic functions.
 - Recursion.
 - Multiple inheritance.
@@ -44,4 +46,5 @@ Here's what nemesys will probably never be able to do:
 - Metaclasses.
 - Negative exponents for integer bases. Just do 1/(a**b) instead.
 
-Have fun. Don't complain to me if you run this and it breaks your computer.
+Have fun. If you try this and something doesn't work, feel free to complain at
+me unless it's already mentioned in the above lists.
