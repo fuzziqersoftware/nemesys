@@ -103,9 +103,9 @@ AttributeLValueReference::AttributeLValueReference(shared_ptr<Expression> base,
 string AttributeLValueReference::str() const {
   // TODO: add type annotations
   if (this->base.get()) {
-    return this->base->str() + "." + this->name + " /*lv*/";
+    return this->base->str() + "." + this->name + " $";
   }
-  return this->name + " /*lv*/";
+  return this->name + " $";
 }
 
 void AttributeLValueReference::accept(ASTVisitor* v) {
@@ -120,7 +120,7 @@ ArrayIndexLValueReference::ArrayIndexLValueReference(
     index(index) { }
 
 string ArrayIndexLValueReference::str() const {
-  return this->array->str() + "[" + this->index->str() + "] /*lv*/";
+  return this->array->str() + "[" + this->index->str() + "] $";
 }
 
 void ArrayIndexLValueReference::accept(ASTVisitor* v) {
@@ -148,7 +148,7 @@ string ArraySliceLValueReference::str() const {
     ret += ":";
     ret += this->step_size->str();
   }
-  ret += "] /*lv*/";
+  ret += "] $";
   return ret;
 }
 
@@ -198,7 +198,7 @@ static const char* unary_operator_names[] = {
 string UnaryOperation::str() const {
   auto expr_str = this->expr->str();
   if (this->oper == UnaryOperator::Yield) {
-    string split_id_str = (this->split_id >= 0) ? string_printf("/*split=%" PRIu64 "*/ ", this->split_id) : "";
+    string split_id_str = (this->split_id >= 0) ? string_printf("@%" PRIu64 " ", this->split_id) : "";
     return string_printf("(yield %s%s)", split_id_str.c_str(), expr_str.c_str());
   }
   return string_printf("(%s%s)",
@@ -285,7 +285,7 @@ ListConstructor::ListConstructor(vector<shared_ptr<Expression>>&& items,
 string ListConstructor::str() const {
   string ret = "[" + comma_str_list(this->items);
   if (this->value_type.type != ValueType::Indeterminate) {
-    ret += " /*value_type=" + this->value_type.str() + "*/";
+    ret += " &" + this->value_type.str();
   }
   return ret + "]";
 }
@@ -315,8 +315,7 @@ string DictConstructor::str() const {
   }
   if ((this->key_type.type != ValueType::Indeterminate) ||
       (this->value_type.type != ValueType::Indeterminate)) {
-    ret += " /*key_type=" + this->key_type.str() +
-           ",value_type=" + this->value_type.str() + "*/";
+    ret += " &" + this->key_type.str() + " &" + this->value_type.str();
   }
   return "{" + ret + "}";
 }
@@ -333,7 +332,7 @@ SetConstructor::SetConstructor(vector<shared_ptr<Expression>>&& items,
 string SetConstructor::str() const {
   string ret = "set([" + comma_str_list(this->items) + "]";
   if (this->value_type.type != ValueType::Indeterminate) {
-    ret += " /*value_type=" + this->value_type.str() + "*/";
+    ret += " &" + this->value_type.str();
   }
   return ret + ")";
 }
@@ -510,9 +509,9 @@ FunctionCall::FunctionCall(shared_ptr<Expression> function,
 
 string FunctionCall::str() const {
   string split_id_str = (this->split_id >= 0) ?
-      string_printf("/*split=%" PRId64 "*/", this->split_id) : "";
+      string_printf("@%" PRId64, this->split_id) : "";
   string callee_id_str = this->callee_function_id ?
-      string_printf("/*callee=%" PRId64 "*/", this->callee_function_id) : "";
+      string_printf("=%" PRId64, this->callee_function_id) : "";
   const char* method_str = this->is_class_method_call ? "/*classmethod*/": "";
   const char* construction_str = this->is_class_construction ? "/*construction*/": "";
   return this->function->str() + split_id_str + callee_id_str + method_str + construction_str + "(" + comma_str_list(this->args) + ")";
@@ -977,7 +976,7 @@ string YieldStatement::str() const {
   if (this->from) {
     prefix += "from ";
   }
-  string split_id_str = (this->split_id >= 0) ? string_printf("/*split=%" PRIu64 "*/ ", this->split_id) : "";
+  string split_id_str = (this->split_id >= 0) ? string_printf("@%" PRIu64 " ", this->split_id) : "";
   return prefix + split_id_str + str_or_null(this->expr);
 }
 
@@ -1236,11 +1235,11 @@ ClassDefinition::ClassDefinition(vector<shared_ptr<Expression>>&& decorators,
 
 string ClassDefinition::str() const {
   if (this->parent_types.size() == 0) {
-    return string_printf("class %s /*id=%" PRIu64 "*/:", this->name.c_str(),
+    return string_printf("class %s =%" PRIu64 ":", this->name.c_str(),
         this->class_id);
   }
   string base_str = comma_str_list(this->parent_types);
-  return string_printf("class %s(%s) /*id=%" PRIu64 "*/:", this->name.c_str(),
+  return string_printf("class %s(%s) =%" PRIu64 ":", this->name.c_str(),
       base_str.c_str(), this->class_id);
 }
 
