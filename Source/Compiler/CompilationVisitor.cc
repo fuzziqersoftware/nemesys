@@ -2965,10 +2965,12 @@ void CompilationVisitor::visit(ForStatement* a) {
         this->as.write_label(next_label);
         this->as.write_mov(rdi, MemoryReference(rsp,
             sizeof(DictionaryObject::SlotContents) + 8));
+        this->write_add_reference(rdi);
+        this->as.write_mov(rdi, MemoryReference(rsp,
+            sizeof(DictionaryObject::SlotContents) + 8));
         this->as.write_mov(rsi, rsp);
 
         // call dictionary_next_item
-        this->write_add_reference(rdi);
         this->write_function_call(
             common_object_reference(void_fn_ptr(&dictionary_next_item)), {rdi, rsi}, {});
 
