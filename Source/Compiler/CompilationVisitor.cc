@@ -1863,7 +1863,7 @@ void CompilationVisitor::visit(FunctionCall* a) {
       // we're done here - can't compile any more since we don't know the return
       // type of this function. but we have to compile the rest of the scope to
       // get the exception handlers
-      this->current_type = Value();
+      this->current_type = Value(ValueType::Indeterminate);
       this->holding_reference = false;
       throw terminated_by_split(callsite_token);
     }
