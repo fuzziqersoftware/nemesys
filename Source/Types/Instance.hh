@@ -13,6 +13,14 @@ struct InstanceObject {
   BasicObject basic;
   int64_t class_id;
   void* attributes[0];
+
+  int64_t get_attribute_int(size_t index);
+  double get_attribute_float(size_t index);
+  void* get_attribute_object(size_t index);
+
+  void set_attribute_int(size_t index, int64_t value);
+  void set_attribute_float(size_t index, double value);
+  void set_attribute_object(size_t index, void* value);
 };
 
 // shortcuts for common instance objects

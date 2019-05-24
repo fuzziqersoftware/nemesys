@@ -478,7 +478,8 @@ const void* jit_compile_scope(GlobalContext* global, int64_t callsite_token,
         callsite_token);
   }
 
-  auto create_compiler_error_exception = [&](const char* what) -> void* {
+  auto create_compiler_error_exception = [&](const char* what,
+      const SourceFile* src = NULL, ssize_t src_offset = -1) -> void* {
     if (debug_flags & DebugFlag::ShowJITEvents) {
       fprintf(stderr, "[jit_callsite:%" PRId64 "] failed: %s\n",
           callsite_token, what);
@@ -487,9 +488,24 @@ const void* jit_compile_scope(GlobalContext* global, int64_t callsite_token,
     // TODO: this is a memory leak! we need to call delete_reference
     // appropriately here based on the contents of int_args and their types
 
-    UnicodeObject* message = bytes_decode_ascii(what);
-    return create_single_attr_instance(global->NemesysCompilerError_class_id,
-        reinterpret_cast<int64_t>(message));
+    // TODO: make the missing-source message a constant
+    const string& filename = src ? src->filename() : "<missing-filename>";
+    UnicodeObject* message_obj = bytes_decode_ascii(what);
+    UnicodeObject* filename_obj = bytes_decode_ascii(filename.c_str());
+
+    int64_t line = -1;
+    if (src && (src_offset >= 0)) {
+      line = src->line_number_of_offset(src_offset);
+    }
+
+    // note: this procedure matches the definition of NemesysCompilerError in
+    // Modules/builtins.cc
+    InstanceObject* exc = create_instance(global->NemesysCompilerError_class_id, 4);
+    exc->set_attribute_int(0, callsite_token);
+    exc->set_attribute_object(1, filename_obj);
+    exc->set_attribute_int(2, line);
+    exc->set_attribute_object(3, message_obj);
+    return exc;
   };
 
   // get the callsite object
@@ -585,6 +601,10 @@ const void* jit_compile_scope(GlobalContext* global, int64_t callsite_token,
       // compile the thing
       try {
         compile_fragment(global, callee_fn->module, &new_fragment);
+      } catch (const compile_error& e) {
+        *raise_exception = create_compiler_error_exception(e.what(),
+            callee_fn->module->source.get(), e.where);
+        return NULL;
       } catch (const exception& e) {
         *raise_exception = create_compiler_error_exception(e.what());
         return NULL;
@@ -601,6 +621,10 @@ const void* jit_compile_scope(GlobalContext* global, int64_t callsite_token,
 
     try {
       compile_fragment(global, callsite->caller_module, caller_fragment);
+    } catch (const compile_error& e) {
+      *raise_exception = create_compiler_error_exception(e.what(),
+          callee_fn->module->source.get(), e.where);
+      return NULL;
     } catch (const exception& e) {
       *raise_exception = create_compiler_error_exception(e.what());
       return NULL;

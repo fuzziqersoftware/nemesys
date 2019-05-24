@@ -565,10 +565,28 @@ shared_ptr<ModuleContext> builtins_initialize(GlobalContext* global_context) {
         }, one_field_reference_destructor);
   };
 
-  vector<BuiltinClassDefinition> class_defs({
-    declare_message_exception("NemesysCompilerError"),
+  static auto NemesysCompilerError_destructor = void_fn_ptr([](uint8_t* o) {
+      // filename and message are Unicode, which have refcounts
+      delete_reference(*reinterpret_cast<void**>(o + sizeof(InstanceObject) + 8));
+      delete_reference(*reinterpret_cast<void**>(o + sizeof(InstanceObject) + 24));
+      delete_reference(o);
+    });
 
-    // TODO: probably all of these should have some attributes
+  vector<BuiltinClassDefinition> class_defs({
+    // note: the attrs are stored in a map (not unordered_map), and this
+    // determines the order in which they're stored in the instance object. so
+    // it's important that the attrs are declared in lexicographic order to
+    // avoid confusion at the construction callsite (since these are generated
+    // by the compiler itself, not by Python callers)
+    BuiltinClassDefinition("NemesysCompilerError",
+        {{"callsite_token", Int},
+         {"filename", Unicode},
+         {"line", Int},
+         {"message", Unicode},
+        },
+        {}, NemesysCompilerError_destructor),
+
+    // TODO: probably all of these should have some more attributes
     declare_message_exception("ArithmeticError"),
     declare_message_exception("AssertionError"),
     declare_message_exception("AttributeError"),

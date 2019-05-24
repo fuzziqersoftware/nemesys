@@ -9,6 +9,33 @@
 using namespace std;
 
 
+
+int64_t InstanceObject::get_attribute_int(size_t index) {
+  return *reinterpret_cast<int64_t*>(&this->attributes[index]);
+}
+
+double InstanceObject::get_attribute_float(size_t index) {
+  return *reinterpret_cast<double*>(&this->attributes[index]);
+}
+
+void* InstanceObject::get_attribute_object(size_t index) {
+  return *reinterpret_cast<void**>(&this->attributes[index]);
+}
+
+void InstanceObject::set_attribute_int(size_t index, int64_t value) {
+  *reinterpret_cast<int64_t*>(&this->attributes[index]) = value;
+}
+
+void InstanceObject::set_attribute_float(size_t index, double value) {
+  *reinterpret_cast<double*>(&this->attributes[index]) = value;
+}
+
+void InstanceObject::set_attribute_object(size_t index, void* value) {
+  *reinterpret_cast<void**>(&this->attributes[index]) = value;
+}
+
+
+
 // create an instance with no attributes
 
 InstanceObject* create_instance(int64_t class_id, size_t attribute_count) {
