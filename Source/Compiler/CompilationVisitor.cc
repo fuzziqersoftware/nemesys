@@ -762,12 +762,14 @@ void CompilationVisitor::visit(BinaryOperation* a) {
           this->as.write_mov(this->target_register, 1);
         }
 
+      // ints and floats aren't objects, so the `is` operator isn't well-defined
+      } else if (left_type.type == ValueType::Int || left_type.type == ValueType::Float) {
+        throw compile_error("operator `is` not well-defined for int and float values", this->file_offset);
+
       // for everything else, just compare the values directly. this exact same
       // code works for bools and all other types, since their values are
       // pointers and we just need to compare the pointers to know if they're
-      // the same object. note that this violates the python standard for
-      // integers and floats - these aren't objects at all in nemesys, so the
-      // operator isn't well-defined for them; we just do the same as ==/!=.
+      // the same object
       } else {
         this->as.write_xor(target_mem, target_mem);
         this->as.write_mov(temp_mem, left_mem);
