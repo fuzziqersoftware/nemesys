@@ -361,7 +361,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
           (this->current_type.type == ValueType::Bool)) {
         this->as.write_not(target_mem);
       } else {
-        throw compile_error("bitwise not can only be applied to ints and bools", this->file_offset);
+        throw compile_error("bitwise not operator can only be applied to ints and bools", this->file_offset);
       }
       this->current_type = Value(ValueType::Int);
       break;
@@ -372,7 +372,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         this->current_type = Value(ValueType::Int);
       } else if ((this->current_type.type != ValueType::Int) &&
                  (this->current_type.type != ValueType::Float)) {
-        throw compile_error("arithmetic positive can only be applied to numeric values", this->file_offset);
+        throw compile_error("arithmetic positive operator can only be applied to numeric values", this->file_offset);
       }
       break;
 
@@ -393,7 +393,7 @@ void CompilationVisitor::visit(UnaryOperation* a) {
         this->as.write_movq_to_xmm(this->float_target_register, tmp);
 
       } else {
-        throw compile_error("arithmetic negative can only be applied to numeric values", this->file_offset);
+        throw compile_error("arithmetic negative operator can only be applied to numeric values", this->file_offset);
       }
       break;
 
@@ -734,7 +734,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
 
       } else {
         // TODO
-        throw compile_error("In/NotIn not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+        throw compile_error("operator `in` not yet implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
       }
       if (a->oper == BinaryOperator::NotIn) {
         this->as.write_xor(target_mem, 1);
@@ -792,28 +792,28 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_or(target_mem, left_mem);
         break;
       }
-      throw compile_error("Or not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+      throw compile_error("operator `or` not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     case BinaryOperator::And:
       if (left_int && right_int) {
         this->as.write_and(target_mem, left_mem);
         break;
       }
-      throw compile_error("And not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+      throw compile_error("operator `and` not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     case BinaryOperator::Xor:
       if (left_int && right_int) {
         this->as.write_xor(target_mem, left_mem);
         break;
       }
-      throw compile_error("Xor not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+      throw compile_error("operator `xor` not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     case BinaryOperator::LeftShift:
     case BinaryOperator::RightShift:
       if (left_int && right_int) {
         // we can only use cl apparently
         if (this->available_register(rcx) != rcx) {
-          throw compile_error("RCX not available for shift operation", this->file_offset);
+          throw compile_error("rcx register not available for shift operation", this->file_offset);
         }
         this->as.write_mov(rcx, target_mem);
         this->as.write_mov(target_mem, left_mem);
@@ -824,7 +824,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         }
         break;
       }
-      throw compile_error("bit shift not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+      throw compile_error("bit shift operator not valid for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     case BinaryOperator::Addition:
       if (left_bytes && right_bytes) {
@@ -855,7 +855,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_addsd(this->float_target_register, left_mem);
 
       } else {
-        throw compile_error("Addition not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+        throw compile_error("addition operator not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
       }
       break;
 
@@ -881,7 +881,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_subsd(this->float_target_register, right_mem);
 
       } else {
-        throw compile_error("Subtraction not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+        throw compile_error("subtraction operator not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
       }
       break;
 
@@ -904,7 +904,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_mulsd(this->float_target_register, left_mem);
 
       } else {
-        throw compile_error("Multiplication not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+        throw compile_error("multiplication operator not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
       }
       break;
 
@@ -935,7 +935,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->as.write_divsd(this->float_target_register, right_mem);
 
       } else {
-        throw compile_error("Division not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+        throw compile_error("division operator not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
       }
 
       this->current_type = Value(ValueType::Float);
@@ -975,6 +975,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
         this->holding_reference = true;
         break;
       }
+      // intentional fallthrough to handle numeric modulus
 
     case BinaryOperator::IntegerDivision: {
       bool is_mod = (a->oper == BinaryOperator::Modulus);
@@ -1127,7 +1128,7 @@ void CompilationVisitor::visit(BinaryOperation* a) {
       }
 
       // TODO
-      throw compile_error("Exponentiation not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
+      throw compile_error("exponentiation operator not implemented for " + left_type.str() + " and " + right_type.str(), this->file_offset);
 
     default:
       throw compile_error("unhandled binary operator", this->file_offset);
@@ -1235,11 +1236,11 @@ void CompilationVisitor::visit(TernaryOperation* a) {
     if (!left_type.types_equal(this->current_type)) {
       string left_s = left_type.str();
       string right_s = this->current_type.str();
-      throw compile_error(string_printf("sides have different types (left is %s, right is %s)",
+      throw compile_error(string_printf("ternary operator sides have different types (left is %s, right is %s)",
           left_s.c_str(), right_s.c_str()), this->file_offset);
     }
     if (left_holding_reference != this->holding_reference) {
-      throw compile_error("sides have different reference semantics", this->file_offset);
+      throw compile_error("ternary operator sides have different reference semantics", this->file_offset);
     }
   }
 }
